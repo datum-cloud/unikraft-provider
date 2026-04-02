@@ -1,0 +1,21 @@
+apiVersion: apiserver.config.datumapis.com/v1alpha1
+kind: UnikraftProvider
+metricsServer:
+  bindAddress: "0"
+  secureServing: false
+webhookServer:
+  port: 9443
+discovery:
+  mode: single
+downstreamResourceManagement:
+  # Path to kubeconfig for the downstream cluster where Unikraft resources will be created
+  # Leave empty or set to same cluster kubeconfig if upstream and downstream are the same
+  kubeconfigPath: /Users/petar/projects/unikraft/datum/infra-provider-unikraft/edge-cluster-config.yaml
+  # Optional: Labels to filter which resources this operator manages in downstream cluster
+  managedResourceLabels:
+    managed-by: "infra-provider-unikraft"
+  # ProviderConfig strategy - how to select which ProviderConfig to use
+  providerConfigStrategy:
+    single:
+      name: default
+locationClassName: "self-managed"

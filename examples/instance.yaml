@@ -1,0 +1,30 @@
+apiVersion: compute.datumapis.com/v1alpha
+kind: Instance
+metadata:
+  name: example-sandbox-instance
+  namespace: default
+  annotations:
+    cloud.unikraft.v1.instances/scale_to_zero.policy: "on"
+    cloud.unikraft.v1.instances/scale_to_zero.stateful: "true"
+    cloud.unikraft.v1.instances/scale_to_zero.cooldown_time_ms: "1000"
+spec:
+  runtime:
+    resources:
+      instanceType: datumcloud/d1-standard-2 # unused in Unikraft provider
+    sandbox:
+      containers:
+      - name: app
+        image: datum/bun@sha256:13a3b306652d78df4230d57ca2404dc62788c6c9265e11d76d8f3bc05d1a4efc
+        env:
+        - name: ENVIRONMENT
+          value: production
+        ports:
+        - name: http
+          port: 3000
+          protocol: TCP
+        resources:
+          limits:
+            memory: 512Mi
+  networkInterfaces:
+  - network:
+      name: default
