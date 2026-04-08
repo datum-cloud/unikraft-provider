@@ -1,4 +1,4 @@
-module go.datum.net/infra-provider-unikraft
+module go.datum.net/unikraft-provider
 
 go 1.25.7
 

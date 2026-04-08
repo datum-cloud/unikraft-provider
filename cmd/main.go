@@ -32,8 +32,8 @@ import (
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 	mcsingle "sigs.k8s.io/multicluster-runtime/providers/single"
 
-	"go.datum.net/infra-provider-unikraft/internal/config"
-	"go.datum.net/infra-provider-unikraft/internal/controller"
+	"go.datum.net/unikraft-provider/internal/config"
+	"go.datum.net/unikraft-provider/internal/controller"
 	networkingv1alpha "go.datum.net/network-services-operator/api/v1alpha"
 	computev1alpha "go.datum.net/workload-operator/api/v1alpha"
 	mcproviders "go.miloapis.com/milo/pkg/multicluster-runtime"

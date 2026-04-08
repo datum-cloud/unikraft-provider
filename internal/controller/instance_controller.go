@@ -5,7 +5,7 @@ package controller
 import (
 	"context"
 	"fmt"
-	"go.datum.net/infra-provider-unikraft/internal/downstreamclient"
+	"go.datum.net/unikraft-provider/internal/downstreamclient"
 	milosource "go.miloapis.com/milo/pkg/multicluster-runtime/source"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
@@ -27,7 +27,7 @@ import (
 
 	unikraftv1alpha1 "github.com/unikraft-cloud/k8s-operator/api/v1alpha1"
 	"github.com/unikraft-cloud/k8s-operator/api/v1alpha1/platform"
-	"go.datum.net/infra-provider-unikraft/internal/config"
+	"go.datum.net/unikraft-provider/internal/config"
 	computev1alpha "go.datum.net/workload-operator/api/v1alpha"
 )
 
