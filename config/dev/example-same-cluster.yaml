@@ -1,0 +1,14 @@
+# Example: Upstream and downstream are the SAME cluster (for development)
+apiVersion: apiserver.config.datumapis.com/v1alpha1
+kind: UnikraftProvider
+metricsServer:
+  bindAddress: "0"
+  secureServing: false
+discovery:
+  mode: single
+downstreamResourceManagement:
+  # Empty kubeconfigPath means use the same cluster as upstream
+  kubeconfigPath: ""
+  managedResourceLabels:
+    managed-by: "infra-provider-unikraft"
+locationClassName: "self-managed"
