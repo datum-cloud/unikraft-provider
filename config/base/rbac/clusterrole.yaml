@@ -1,0 +1,43 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ufo-controller
+rules:
+  # Own API types
+  - apiGroups: ["functions.datumapis.com"]
+    resources:
+      - functions
+      - functions/status
+      - functionrevisions
+      - functionrevisions/status
+      - functionbuilds
+      - functionbuilds/status
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Workloads (compute)
+  - apiGroups: ["compute.datumapis.com"]
+    resources:
+      - workloads
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Networking: HTTPProxy and Connector
+  - apiGroups: ["networking.datumapis.com"]
+    resources:
+      - httpproxies
+      - connectors
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Build jobs
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # ConfigMaps, Secrets, Events
+  - apiGroups: [""]
+    resources:
+      - configmaps
+      - secrets
+      - events
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Leader election
+  - apiGroups: ["coordination.k8s.io"]
+    resources:
+      - leases
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

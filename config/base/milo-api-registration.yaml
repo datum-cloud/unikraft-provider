@@ -1,0 +1,14 @@
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1alpha1.functions.datumapis.com
+spec:
+  service:
+    name: ufo-apiserver
+    namespace: datum-system
+    port: 443
+  group: functions.datumapis.com
+  version: v1alpha1
+  insecureSkipTLSVerify: false
+  groupPriorityMinimum: 1000
+  versionPriority: 15

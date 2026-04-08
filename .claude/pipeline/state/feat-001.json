@@ -1,0 +1,38 @@
+{
+  "id": "feat-001",
+  "slug": "unikraft-functions",
+  "current_stage": "implementation",
+  "created": "2026-03-31T00:00:00Z",
+  "updated": "2026-04-08T00:00:00Z",
+  "artifacts": {
+    "request": ".claude/pipeline/requests/feat-001-unikraft-functions.md",
+    "brief": ".claude/pipeline/briefs/feat-001-discovery-brief.md",
+    "design": ".claude/pipeline/designs/feat-001-architecture.md"
+  },
+  "completed_stages": [
+    "request",
+    "discovery",
+    "architect",
+    "api-types",
+    "controllers",
+    "activator",
+    "sre-manifests",
+    "tests"
+  ],
+  "remaining_stages": [
+    "ci",
+    "iam",
+    "quota",
+    "fluxcd"
+  ],
+  "history": [
+    {"stage": "request",       "timestamp": "2026-03-31T00:00:00Z", "actor": "user"},
+    {"stage": "discovery",     "timestamp": "2026-03-31T00:00:00Z", "actor": "product-discovery"},
+    {"stage": "architect",     "timestamp": "2026-03-31T00:00:00Z", "actor": "user"},
+    {"stage": "api-types",     "timestamp": "2026-04-07T00:00:00Z", "actor": "api-dev"},
+    {"stage": "controllers",   "timestamp": "2026-04-07T00:00:00Z", "actor": "api-dev"},
+    {"stage": "activator",     "timestamp": "2026-04-08T00:00:00Z", "actor": "api-dev"},
+    {"stage": "sre-manifests", "timestamp": "2026-04-08T00:00:00Z", "actor": "sre"},
+    {"stage": "tests",         "timestamp": "2026-04-08T00:00:00Z", "actor": "test-engineer"}
+  ]
+}

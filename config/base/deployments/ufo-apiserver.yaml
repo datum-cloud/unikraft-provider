@@ -1,0 +1,115 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ufo-apiserver
+  namespace: datum-system
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ufo-apiserver
+  template:
+    metadata:
+      labels:
+        app: ufo-apiserver
+    spec:
+      serviceAccountName: ufo-apiserver
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: apiserver
+          image: ghcr.io/datum-cloud/ufo-apiserver:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop: ["ALL"]
+          args:
+            - --etcd-servers=http://etcd.datum-system.svc.cluster.local:2379
+            - --secure-port=443
+            - --tls-cert-file=/var/run/ufo-apiserver/tls/tls.crt
+            - --tls-private-key-file=/var/run/ufo-apiserver/tls/tls.key
+            - --authentication-kubeconfig=/etc/kubernetes/kubeconfig
+            - --authorization-kubeconfig=/etc/kubernetes/kubeconfig
+            - --authorization-always-allow-paths=/healthz,/readyz,/livez
+            - --requestheader-client-ca-file=/etc/kubernetes/pki/requestheader/ca.crt
+            - --requestheader-username-headers=X-Remote-User
+            - --requestheader-group-headers=X-Remote-Group
+            - --requestheader-uid-headers=X-Remote-Uid
+            - --requestheader-extra-headers-prefix=X-Remote-Extra-
+          ports:
+            - containerPort: 443
+              name: https
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: tls
+              mountPath: /var/run/ufo-apiserver/tls
+              readOnly: true
+            - name: control-plane-ca
+              mountPath: /etc/kubernetes/pki/requestheader
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tls
+          csi:
+            driver: csi.cert-manager.io
+            readOnly: true
+            volumeAttributes:
+              csi.cert-manager.io/issuer-name: datum-control-plane
+              csi.cert-manager.io/issuer-kind: ClusterIssuer
+              csi.cert-manager.io/common-name: ufo-apiserver.datum-system.svc
+              csi.cert-manager.io/dns-names: "ufo-apiserver,ufo-apiserver.datum-system,ufo-apiserver.datum-system.svc,ufo-apiserver.datum-system.svc.cluster.local"
+              csi.cert-manager.io/duration: "8760h"
+              csi.cert-manager.io/renew-before: "720h"
+              csi.cert-manager.io/fs-group: "65532"
+        - name: control-plane-ca
+          configMap:
+            name: control-plane-ca
+            optional: true
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ufo-apiserver
+  namespace: datum-system
+spec:
+  type: ClusterIP
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+      protocol: TCP
+  selector:
+    app: ufo-apiserver

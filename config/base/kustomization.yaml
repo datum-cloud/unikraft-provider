@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Namespace is set explicitly in each resource file.
+# We do not use the top-level namespace: transformer here because the
+# ufo-apiserver-auth-reader RoleBinding must remain in kube-system.
+
+labels:
+  - includeSelectors: false
+    includeTemplates: true
+    pairs:
+      app.kubernetes.io/part-of: ufo
+
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - milo-api-registration.yaml
+  - crds/
+  - rbac/
+  - deployments/
+  - secrets/

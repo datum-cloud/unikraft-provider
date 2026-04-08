@@ -1,0 +1,21 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ufo-activator
+rules:
+  # Read functions and functionrevisions to determine scale-from-zero targets
+  - apiGroups: ["functions.datumapis.com"]
+    resources:
+      - functions
+      - functionrevisions
+    verbs: ["get", "list", "watch"]
+  # Patch functions to trigger scale-up (scale-from-zero annotation)
+  - apiGroups: ["functions.datumapis.com"]
+    resources:
+      - functions
+    verbs: ["patch"]
+  # Read workloads to find the target endpoint once scaled up
+  - apiGroups: ["compute.datumapis.com"]
+    resources:
+      - workloads
+    verbs: ["get", "list", "watch"]
