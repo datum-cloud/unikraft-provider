@@ -18,6 +18,8 @@ jobs:
       - uses: datum-cloud/test-infra/.github/actions/kind-bootstrap@v0.6.3
         with:
           cluster-name: test-infra
+      - name: Link kubeconfig for Taskfile
+        run: mkdir -p .test-infra && ln -s "$KUBECONFIG" .test-infra/kubeconfig
       - run: task test:install-dependencies
       - run: task dev:build
       - run: task dev:load
