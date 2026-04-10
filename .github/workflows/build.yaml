@@ -1,0 +1,14 @@
+name: build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+jobs:
+  build:
+    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@main
+    with:
+      image-name: unikraft-provider
+      platforms: linux/amd64,linux/arm64
