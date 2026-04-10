@@ -55,7 +55,7 @@ tasks:
       - task test-infra:kubectl -- apply -k config/dependencies/compute
       - task test-infra:kubectl -- apply -k config/dependencies/unikraft-k8s-operator
       - task test-infra:kubectl -- wait -n flux-system kustomization/compute --for=condition=Ready --timeout=300s
-      - task test-infra:kubectl -- wait -n ukc-operator helmrelease/k8s-operator --for=condition=Ready --timeout=180s
+      - task test-infra:kubectl -- wait -n ukc-operator helmrelease/unikraft-k8s-operator --for=condition=Ready --timeout=180s
 
   test:deploy:
     desc: Deploy the unikraft-provider via the test-infra overlay
