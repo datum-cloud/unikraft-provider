@@ -3,7 +3,7 @@ version: '3'
 dotenv: ['.env']
 
 vars:
-  TEST_INFRA_REPO_REF: 'v0.6.3'
+  TEST_INFRA_REPO_REF: 'v0.6.4'
   TEST_INFRA_CLUSTER_NAME: 'test-infra'
   IMG_NAME: 'ghcr.io/datum-cloud/unikraft-provider'
   IMG_TAG: 'dev'
@@ -12,7 +12,7 @@ vars:
 includes:
   test-infra:
     taskfile: https://raw.githubusercontent.com/datum-cloud/test-infra/{{.TEST_INFRA_REPO_REF}}/Taskfile.yml
-    checksum: 73145536896b5204c241f16b75cdff03a085638a66edd4c7efac1dcde3288815
+    checksum: fe14263f3d0c3f246f1d8bc7fb90b3d82f0069792e1a46cdb49e761624051223
     vars:
       REPO_REF: '{{.TEST_INFRA_REPO_REF}}'
 
