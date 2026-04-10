@@ -15,7 +15,7 @@ jobs:
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: datum-cloud/test-infra/.github/actions/kind-bootstrap@v0.6.0
+      - uses: datum-cloud/test-infra/.github/actions/kind-bootstrap@v0.6.3
         with:
           cluster-name: test-infra
       - run: task test:install-dependencies
