@@ -62,11 +62,14 @@ spec:
         - /manager
         args:
           - --leader-elect=$(LEADER_ELECT)
+          - --leader-elect-namespace=$(LEADER_ELECT_NAMESPACE)
           - --health-probe-bind-address=$(HEALTH_PROBE_BIND_ADDRESS)
           - --server-config=$(SERVER_CONFIG)
         env:
           - name: LEADER_ELECT
             value: "true"
+          - name: LEADER_ELECT_NAMESPACE
+            value: ""
           - name: HEALTH_PROBE_BIND_ADDRESS
             value: ":8081"
           - name: SERVER_CONFIG
