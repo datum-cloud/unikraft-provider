@@ -60,7 +60,6 @@ spec:
       containers:
       - command:
         - /manager
-        args: []
         env:
           - name: LEADER_ELECT
             value: "true"
