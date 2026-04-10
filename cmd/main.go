@@ -61,6 +61,13 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
+func envOrDefault(key, fallback string) string {
+	if v, ok := os.LookupEnv(key); ok {
+		return v
+	}
+	return fallback
+}
+
 func main() {
 
 	var enableLeaderElection bool
@@ -68,17 +75,17 @@ func main() {
 	var probeAddr string
 	var serverConfigFile string
 
-	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
-	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
+	flag.StringVar(&probeAddr, "health-probe-bind-address", envOrDefault("HEALTH_PROBE_BIND_ADDRESS", ":8081"), "The address the probe endpoint binds to.")
+	flag.BoolVar(&enableLeaderElection, "leader-elect", envOrDefault("LEADER_ELECT", "") == "true",
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
-	flag.StringVar(&leaderElectionNamespace, "leader-elect-namespace", "", "The namespace to use for leader election.")
+	flag.StringVar(&leaderElectionNamespace, "leader-elect-namespace", envOrDefault("LEADER_ELECT_NAMESPACE", ""), "The namespace to use for leader election.")
 
 	opts := zap.Options{
 		Development: true,
 	}
 
-	flag.StringVar(&serverConfigFile, "server-config", "", "path to the server config file")
+	flag.StringVar(&serverConfigFile, "server-config", envOrDefault("SERVER_CONFIG", ""), "path to the server config file")
 
 	opts.BindFlags(flag.CommandLine)
 
