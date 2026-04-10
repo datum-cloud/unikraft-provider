@@ -3,8 +3,8 @@
   value:
     name: LEADER_ELECT
     value: "false"
-- op: add
-  path: /spec/template/spec/containers/0/env/-
+- op: replace
+  path: /spec/template/spec/containers/0/env/2
   value:
     name: SERVER_CONFIG
     value: /etc/unikraft-provider/config.yaml

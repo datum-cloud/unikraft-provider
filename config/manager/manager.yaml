@@ -60,9 +60,17 @@ spec:
       containers:
       - command:
         - /manager
+        args:
+          - --leader-elect=$(LEADER_ELECT)
+          - --health-probe-bind-address=$(HEALTH_PROBE_BIND_ADDRESS)
+          - --server-config=$(SERVER_CONFIG)
         env:
           - name: LEADER_ELECT
             value: "true"
+          - name: HEALTH_PROBE_BIND_ADDRESS
+            value: ":8081"
+          - name: SERVER_CONFIG
+            value: ""
         image: controller:latest
         name: manager
         securityContext:
