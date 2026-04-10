@@ -1,22 +1,22 @@
-- op: replace
-  path: /spec/template/spec/containers/0/env/0
-  value:
-    name: LEADER_ELECT
-    value: "false"
-- op: replace
-  path: /spec/template/spec/containers/0/env/3
-  value:
-    name: SERVER_CONFIG
-    value: /etc/unikraft-provider/config.yaml
-- op: add
-  path: /spec/template/spec/containers/0/volumeMounts
-  value:
-    - name: manager-config
-      mountPath: /etc/unikraft-provider
-      readOnly: true
-- op: add
-  path: /spec/template/spec/volumes
-  value:
-    - name: manager-config
-      configMap:
-        name: manager-config
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller-manager
+spec:
+  template:
+    spec:
+      containers:
+        - name: manager
+          env:
+            - name: LEADER_ELECT
+              value: "false"
+            - name: SERVER_CONFIG
+              value: /etc/unikraft-provider/config.yaml
+          volumeMounts:
+            - name: manager-config
+              mountPath: /etc/unikraft-provider
+              readOnly: true
+      volumes:
+        - name: manager-config
+          configMap:
+            name: manager-config
