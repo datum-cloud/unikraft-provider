@@ -1,0 +1,17 @@
+- op: remove
+  path: /spec/template/spec/containers/0/args/0
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: --server-config=/etc/unikraft-provider/config.yaml
+- op: add
+  path: /spec/template/spec/containers/0/volumeMounts
+  value:
+    - name: manager-config
+      mountPath: /etc/unikraft-provider
+      readOnly: true
+- op: add
+  path: /spec/template/spec/volumes
+  value:
+    - name: manager-config
+      configMap:
+        name: manager-config

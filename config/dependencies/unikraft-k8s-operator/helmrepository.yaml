@@ -1,0 +1,9 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: unikraft-cloud
+  namespace: ukc-operator
+spec:
+  type: oci
+  interval: 1h
+  url: oci://ghcr.io/unikraft-cloud/helm-charts

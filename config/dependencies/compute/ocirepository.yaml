@@ -1,0 +1,10 @@
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: OCIRepository
+metadata:
+  name: compute
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: oci://ghcr.io/datum-cloud/compute-kustomize
+  ref:
+    tag: v0.6.0

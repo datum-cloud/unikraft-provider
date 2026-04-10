@@ -55,3 +55,27 @@ The operator will process the Instance and create corresponding resources in the
 ```bash
 kubectl get instances.compute.datumapis.com
 ```
+
+## Testing
+
+End-to-end tests run against a hermetic kind cluster provisioned by
+[`datum-cloud/test-infra`](https://github.com/datum-cloud/test-infra) and
+driven by [Task](https://taskfile.dev) + [Chainsaw](https://kyverno.github.io/chainsaw/).
+
+### Prerequisites
+
+- `docker`, `kind`
+- `task` (>= 3.x), with `TASK_X_REMOTE_TASKFILES=1` exported
+- `chainsaw`
+- Downstream CRDs for `github.com/unikraft-cloud/k8s-operator` dropped into
+  `config/dependencies/unikraft-k8s-operator-crds/` (the upstream repo is
+  private so the CRDs cannot be fetched automatically)
+
+### Local flow
+
+```bash
+export TASK_X_REMOTE_TASKFILES=1
+task test:setup    # kind up, install CRDs, build + load image, deploy provider
+task e2e           # run chainsaw tests
+task test:teardown # delete kind cluster
+```
