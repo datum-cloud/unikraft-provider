@@ -2,7 +2,7 @@
 apiVersion: apiserver.config.datumapis.com/v1alpha1
 kind: UnikraftProvider
 metricsServer:
-  bindAddress: "0"
+  bindAddress: ":8080"
   secureServing: false
 discovery:
   mode: single

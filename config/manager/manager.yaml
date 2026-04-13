@@ -74,8 +74,12 @@ spec:
             value: ":8081"
           - name: SERVER_CONFIG
             value: ""
-        image: controller:latest
+        image: ghcr.io/datum-cloud/unikraft-provider:latest
         name: manager
+        ports:
+          - containerPort: 8080
+            name: metrics
+            protocol: TCP
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

@@ -74,7 +74,7 @@ func (w *WebhookServerConfig) Options(_ context.Context, _ client.Client) webhoo
 // MetricsServerConfig configures the metrics server
 type MetricsServerConfig struct {
 	// BindAddress is the TCP address that the server should bind to.
-	// +default="0"
+	// +default=":8080"
 	BindAddress string `json:"bindAddress"`
 
 	// SecureServing configures the secure serving options.

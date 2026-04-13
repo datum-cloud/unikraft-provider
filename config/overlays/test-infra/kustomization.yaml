@@ -5,8 +5,7 @@ resources:
   - ../../default
 
 images:
-  - name: controller
-    newName: ghcr.io/datum-cloud/unikraft-provider
+  - name: ghcr.io/datum-cloud/unikraft-provider
     newTag: dev
 
 generatorOptions:
