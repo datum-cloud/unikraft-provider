@@ -17,7 +17,7 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: datum-cloud/test-infra/.github/actions/kind-bootstrap@v0.6.4
         with:
-          cluster-name: test-infra
+          cluster_name: test-infra
       - run: task test:install-dependencies
       - run: task dev:build
       - run: task dev:load
