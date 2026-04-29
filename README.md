@@ -55,3 +55,37 @@ The operator will process the Instance and create corresponding resources in the
 ```bash
 kubectl get instances.compute.datumapis.com
 ```
+
+## Kraftlet
+
+Unikraft Cloud integrates seamlessly with any Kubernetes cluster through a virtual kubelet known as Kraftlet. More information in [Unikraft docs](https://unikraft.com/docs/integrations/kubernetes).
+
+### Prerequisites
+
+1. **Kubernetes cluster** - A running Kubernetes cluster for Kraftlet to join as node
+2. **Helm** - For installing Kraftlet
+3. **kubectl** - For managing Kubernetes resources
+
+### 1. Install Kraftlet via Helm
+
+```bash
+helm install kraftlet \
+  --namespace kraftlet \
+  --create-namespace \
+  --set ukc.metro=$UKC_METRO \
+  --set ukc.token=$UKC_TOKEN \
+  --set image.tag=0.4.0 \
+  --set kraftlet.podSyncWorkers=64 \
+  --set kraftlet.podStatusUpdateInterval="5s" \
+  oci://ghcr.io/unikraft-cloud/helm-charts/kraftlet
+```
+
+### 2. Apply Kubernetes resources
+
+You can apply a Kubernetes Service and a Deployment to a cluster. Check the `examples/kraftlet` for resource configuration.
+
+```bash
+kubectl apply -f examples/kraftlet/service.yaml && kubectl apply -f examples/kraftlet/deployment.yaml
+```
+
+Pods are scheduled to Kraftlet via nodeSelector. Kraftlet then deploys each container defined by a pod as an instance, and creates a UKC service based on the Kubernetes service configuration.
