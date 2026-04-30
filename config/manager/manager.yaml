@@ -61,10 +61,25 @@ spec:
       - command:
         - /manager
         args:
-          - --leader-elect
-          - --health-probe-bind-address=:8081
-        image: controller:latest
+          - --leader-elect=$(LEADER_ELECT)
+          - --leader-elect-namespace=$(LEADER_ELECT_NAMESPACE)
+          - --health-probe-bind-address=$(HEALTH_PROBE_BIND_ADDRESS)
+          - --server-config=$(SERVER_CONFIG)
+        env:
+          - name: LEADER_ELECT
+            value: "true"
+          - name: LEADER_ELECT_NAMESPACE
+            value: ""
+          - name: HEALTH_PROBE_BIND_ADDRESS
+            value: ":8081"
+          - name: SERVER_CONFIG
+            value: ""
+        image: ghcr.io/datum-cloud/unikraft-provider:latest
         name: manager
+        ports:
+          - containerPort: 8080
+            name: metrics
+            protocol: TCP
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
