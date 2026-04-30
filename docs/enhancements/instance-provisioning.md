@@ -22,7 +22,6 @@ sequenceDiagram
     participant GO as Galactic Operator<br/>(Webhook + Controller)
     participant KL as Kraftlet<br/>(Virtual Kubelet)
     participant GCNI as Galactic CNI
-    participant GA as Galactic Agent
     participant BGP as milo-os BGP<br/>Control Plane
     participant UK as Unikraft Runtime
 
@@ -56,7 +55,7 @@ sequenceDiagram
     UP->>API: CreateOrPatch Pod<br/>(with VPCAttachment annotation)
     deactivate UP
 
-    Note over API,GA: Galactic wires instance into VPC
+    Note over API,BGP: Galactic wires instance into VPC
 
     API->>GO: VPCAttachment created
     activate GO
@@ -80,14 +79,11 @@ sequenceDiagram
     GCNI->>GCNI: Create veth pair<br/>(host: G{vpc}{att}H,<br/> guest: G{vpc}{att}G)
     GCNI->>GCNI: Assign IP address to<br/>guest interface
     GCNI->>GCNI: Configure routes in VRF<br/>(proxy ARP/NDP)
-    GCNI->>GA: Register attachment<br/>(gRPC: vpc_id, attachment_id,<br/>SRv6 endpoint)
-    activate GA
-    GA->>GA: Program SRv6<br/>encap/decap routes
-    GA->>BGP: Announce SRv6 endpoint<br/>via BGP control plane
+    GCNI->>GCNI: Program SRv6<br/>encap/decap routes
+    GCNI->>BGP: Announce SRv6 endpoint<br/>via BGP control plane
     activate BGP
     BGP->>BGP: Advertise route to peers<br/>("VPC X reachable at<br/>SRv6 endpoint Y")
     deactivate BGP
-    deactivate GA
     GCNI-->>KL: CNI Result<br/>(IPs, routes, DNS)
     deactivate GCNI
 
@@ -124,7 +120,6 @@ sequenceDiagram
     participant UP as Unikraft Provider
     participant KL as Kraftlet
     participant GCNI as Galactic CNI
-    participant GA as Galactic Agent
     participant BGP as milo-os BGP<br/>Control Plane
     participant UK as Unikraft Runtime
 
@@ -143,14 +138,11 @@ sequenceDiagram
 
     KL->>GCNI: CNI DEL<br/>(release network resources)
     activate GCNI
-    GCNI->>GA: Deregister attachment<br/>(gRPC: vpc_id, attachment_id)
-    activate GA
-    GA->>GA: Remove SRv6 routes
-    GA->>BGP: Withdraw route announcement
+    GCNI->>GCNI: Remove SRv6 routes
+    GCNI->>BGP: Withdraw route announcement
     activate BGP
     BGP->>BGP: Remove route from peers
     deactivate BGP
-    deactivate GA
     GCNI->>GCNI: Remove veth pair
     GCNI->>GCNI: Remove VRF interface
     GCNI-->>KL: Cleanup complete
