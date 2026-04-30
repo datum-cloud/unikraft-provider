@@ -19,7 +19,7 @@ func RegisterDefaults(scheme *runtime.Scheme) error {
 
 func SetObjectDefaults_UnikraftProvider(in *UnikraftProvider) {
 	if in.MetricsServer.BindAddress == "" {
-		in.MetricsServer.BindAddress = "0"
+		in.MetricsServer.BindAddress = ":8080"
 	}
 	if in.WebhookServer.Port == 0 {
 		in.WebhookServer.Port = 9443

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"go.datum.net/workload-operator/api/v1alpha"
+	"go.datum.net/compute/api/v1alpha"
 	"unikraft.com/cloud/sdk/pkg/ptr"
 
 	"github.com/unikraft-cloud/k8s-operator/api/v1alpha1/platform"

@@ -1,0 +1,33 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: create-instance
+spec:
+  steps:
+    - name: create upstream Instance
+      try:
+        - apply:
+            file: instance.yaml
+        - assert:
+            resource:
+              apiVersion: compute.datumapis.com/v1alpha
+              kind: Instance
+              metadata:
+                name: e2e-sandbox-instance
+              status:
+                (conditions[?type == 'Running']):
+                  - status: "True"
+    - name: assert downstream Unikraft Instance materializes
+      try:
+        - assert:
+            resource:
+              apiVersion: unikraft.com/v1alpha1
+              kind: Instance
+              metadata:
+                labels:
+                  managed-by: infra-provider-unikraft
+                  upstream.instance: e2e-sandbox-instance
+                  upstream.container: app
+              spec:
+                (name != null): true
+                (memory_mb != null): true

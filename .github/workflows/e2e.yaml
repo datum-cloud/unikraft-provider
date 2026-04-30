@@ -1,0 +1,26 @@
+name: e2e
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    env:
+      TASK_X_REMOTE_TASKFILES: '1'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: datum-cloud/test-infra/.github/actions/kind-bootstrap@v0.6.4
+        with:
+          cluster_name: test-infra
+      - run: task test:install-dependencies
+      - run: task dev:build
+      - run: task dev:load
+      - run: task test:deploy
+      - uses: kyverno/action-install-chainsaw@v0.2.12
+      - run: task e2e

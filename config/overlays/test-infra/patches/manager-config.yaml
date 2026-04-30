@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller-manager
+spec:
+  template:
+    spec:
+      containers:
+        - name: manager
+          env:
+            - name: LEADER_ELECT
+              value: "false"
+            - name: SERVER_CONFIG
+              value: /etc/unikraft-provider/config.yaml
+          volumeMounts:
+            - name: manager-config
+              mountPath: /etc/unikraft-provider
+              readOnly: true
+      volumes:
+        - name: manager-config
+          configMap:
+            name: manager-config

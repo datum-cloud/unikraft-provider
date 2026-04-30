@@ -28,7 +28,7 @@ import (
 	unikraftv1alpha1 "github.com/unikraft-cloud/k8s-operator/api/v1alpha1"
 	"github.com/unikraft-cloud/k8s-operator/api/v1alpha1/platform"
 	"go.datum.net/unikraft-provider/internal/config"
-	computev1alpha "go.datum.net/workload-operator/api/v1alpha"
+	computev1alpha "go.datum.net/compute/api/v1alpha"
 )
 
 const (
