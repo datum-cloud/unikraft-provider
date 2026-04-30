@@ -13,18 +13,18 @@ spec:
       instanceType: datumcloud/d1-standard-2 # unused in Unikraft provider
     sandbox:
       containers:
-      - name: app
-        image: datum/bun@sha256:13a3b306652d78df4230d57ca2404dc62788c6c9265e11d76d8f3bc05d1a4efc
-        env:
-        - name: ENVIRONMENT
-          value: production
-        ports:
-        - name: http
-          port: 3000
-          protocol: TCP
-        resources:
-          limits:
-            memory: 512Mi
+        - name: app
+          image: datum/bun@sha256:13a3b306652d78df4230d57ca2404dc62788c6c9265e11d76d8f3bc05d1a4efc
+          env:
+            - name: ENVIRONMENT
+              value: production
+          ports:
+            - name: http
+              port: 3000
+              protocol: TCP
+          resources:
+            limits:
+              memory: 512Mi
   networkInterfaces:
-  - network:
-      name: default
+    - network:
+        name: default

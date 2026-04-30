@@ -7,7 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	unikraftv1alpha1 "github.com/unikraft-cloud/k8s-operator/api/v1alpha1"
+
 	"os"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -32,9 +32,9 @@ import (
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 	mcsingle "sigs.k8s.io/multicluster-runtime/providers/single"
 
+	networkingv1alpha "go.datum.net/network-services-operator/api/v1alpha"
 	"go.datum.net/unikraft-provider/internal/config"
 	"go.datum.net/unikraft-provider/internal/controller"
-	networkingv1alpha "go.datum.net/network-services-operator/api/v1alpha"
 	computev1alpha "go.datum.net/workload-operator/api/v1alpha"
 	mcproviders "go.miloapis.com/milo/pkg/multicluster-runtime"
 	mcmilo "go.miloapis.com/milo/pkg/multicluster-runtime/milo"
@@ -54,9 +54,6 @@ func init() {
 
 	utilruntime.Must(config.AddToScheme(scheme))
 	utilruntime.Must(config.RegisterDefaults(scheme))
-
-	// Add Unikraft CRDs
-	utilruntime.Must(unikraftv1alpha1.AddToScheme(scheme))
 
 	// +kubebuilder:scaffold:scheme
 }
