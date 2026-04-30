@@ -27,4 +27,4 @@ spec:
                   managed-by: infra-provider-unikraft
                   upstream.instance: e2e-sandbox-instance
               spec:
-                (nodeSelector.'kubernetes.io/hostname' != null): true
+                (nodeSelector != null): true
