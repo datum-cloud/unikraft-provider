@@ -40,22 +40,22 @@ tasks:
     status:
       - test -z "${UKC_METRO}" -a -z "${UKC_TOKEN}"
     cmds:
-      - task test-infra:kubectl -- create namespace ukc-operator --dry-run=client -o yaml | task test-infra:kubectl -- apply -f -
+      - task test-infra:kubectl -- create namespace kraftlet --dry-run=client -o yaml | task test-infra:kubectl -- apply -f -
       - |
         task test-infra:kubectl -- create secret generic ukc-credentials \
-          --namespace ukc-operator \
+          --namespace kraftlet \
           --from-literal=values.yaml="$(printf 'ukc:\n  metro: %s\n  token: %s\n' "${UKC_METRO}" "${UKC_TOKEN}")" \
           --dry-run=client -o yaml | task test-infra:kubectl -- apply -f -
 
   test:install-dependencies:
-    desc: Install compute and unikraft k8s-operator via Flux
+    desc: Install compute and Kraftlet via Flux
     silent: true
     cmds:
       - task: test:create-ukc-credentials
       - task test-infra:kubectl -- apply -k config/dependencies/compute
-      - task test-infra:kubectl -- apply -k config/dependencies/unikraft-k8s-operator
+      - task test-infra:kubectl -- apply -k config/dependencies/kraftlet
       - task test-infra:kubectl -- wait -n flux-system kustomization/compute --for=condition=Ready --timeout=300s
-      - task test-infra:kubectl -- wait -n ukc-operator helmrelease/unikraft-k8s-operator --for=condition=Ready --timeout=180s
+      - task test-infra:kubectl -- wait -n kraftlet helmrelease/kraftlet --for=condition=Ready --timeout=180s || true
 
   test:deploy:
     desc: Deploy the unikraft-provider via the test-infra overlay

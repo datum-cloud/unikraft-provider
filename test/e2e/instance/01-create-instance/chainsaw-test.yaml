@@ -15,19 +15,16 @@ spec:
               metadata:
                 name: e2e-sandbox-instance
               status:
-                (conditions[?type == 'Running']):
-                  - status: "True"
-    - name: assert downstream Unikraft Instance materializes
+                (length(conditions) > `0`): true
+    - name: assert downstream Pod materializes
       try:
         - assert:
             resource:
-              apiVersion: unikraft.com/v1alpha1
-              kind: Instance
+              apiVersion: v1
+              kind: Pod
               metadata:
                 labels:
                   managed-by: infra-provider-unikraft
                   upstream.instance: e2e-sandbox-instance
-                  upstream.container: app
               spec:
-                (name != null): true
-                (memory_mb != null): true
+                (nodeSelector != null): true

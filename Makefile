@@ -141,7 +141,7 @@ endif
 
 .PHONY: install
 install: kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
-	$(KUSTOMIZE) build "github.com/datum-cloud/workload-operator//config/crd?ref=main" | $(KUBECTL) apply -f -
+	$(KUSTOMIZE) build "github.com/datum-cloud/workload-operator//config/base/crd?ref=main" | $(KUBECTL) apply -f -
 
 .PHONY: uninstall
 uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.

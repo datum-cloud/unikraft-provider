@@ -8,9 +8,9 @@ metadata:
 rules:
 - apiGroups: [""]
   resources: ["pods"]
-  verbs: ["get", "list", "watch"]
-- apiGroups: ["unikraft.com"]
-  resources: ["instances", "instances/status", "volumes", "volumes/status"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["services"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 - apiGroups: ["compute.datumapis.com"]
   resources: ["instances", "instances/status"]

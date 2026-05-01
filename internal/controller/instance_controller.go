@@ -5,14 +5,17 @@ package controller
 import (
 	"context"
 	"fmt"
+
 	"go.datum.net/unikraft-provider/internal/downstreamclient"
 	milosource "go.miloapis.com/milo/pkg/multicluster-runtime/source"
+	core "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
-	"unikraft.com/cloud/sdk/pkg/ptr"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,8 +28,6 @@ import (
 	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
 	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 
-	unikraftv1alpha1 "github.com/unikraft-cloud/k8s-operator/api/v1alpha1"
-	"github.com/unikraft-cloud/k8s-operator/api/v1alpha1/platform"
 	"go.datum.net/unikraft-provider/internal/config"
 	computev1alpha "go.datum.net/compute/api/v1alpha"
 )
@@ -39,10 +40,7 @@ const (
 	ukcScaleToZeroCoolDownTimeMsAnnotation = "cloud.unikraft.v1.instances/scale_to_zero.cooldown_time_ms"
 	ukcInstanceTemplate                    = "cloud.unikraft.v1.instances/template"
 
-	defaultInstanceMemoryMB          = 1024
-	defaultScaleToZeroPolicy         = platform.CreateInstanceRequestScaleToZeroPolicyOn
-	defaultScaleToZeroStateful       = false
-	defaultScaleToZeroCooldownTimeMs = int32(1000)
+	defaultInstanceMemoryMB = 1024
 )
 
 type InstanceReconciler struct {
@@ -115,175 +113,233 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 		return ctrl.Result{}, fmt.Errorf("sandbox runtime is nil")
 	}
 
-	var unikraftInstance *unikraftv1alpha1.Instance
+	instancePod := &core.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      string(instance.UID),
+			Namespace: instance.Namespace,
+		},
+	}
 
-	// Create one Unikraft Instance per container
-	for idx, container := range instance.Spec.Runtime.Sandbox.Containers {
-		unikraftInstance = &unikraftv1alpha1.Instance{
-			ObjectMeta: metav1.ObjectMeta{
-				// Use a unique name based on upstream instance UID and container index
-				Name:      fmt.Sprintf("instance-%s-container-%d", instance.UID, idx),
-				Namespace: instance.Namespace,
-				Annotations: map[string]string{
-					downstreamclient.UpstreamOwnerClusterName: clusterName,
-					downstreamclient.UpstreamOwnerName:        instance.Name,
-					downstreamclient.UpstreamOwnerNamespace:   instance.Namespace,
-				},
-				Labels: map[string]string{
-					"managed-by":         "infra-provider-unikraft",
-					"upstream.instance":  instance.Name,
-					"upstream.container": container.Name,
-				},
-			},
+	result, err := controllerutil.CreateOrPatch(ctx, downstreamClient, instancePod, func() error {
+		if instancePod.Labels == nil {
+			instancePod.Labels = map[string]string{}
 		}
+		instancePod.Labels["managed-by"] = "infra-provider-unikraft"
+		instancePod.Labels["upstream.instance"] = instance.Name
 
-		var unikraftVolume *unikraftv1alpha1.Volume
-		for _, volume := range instance.Spec.Volumes {
-			unikraftVolume = &unikraftv1alpha1.Volume{
-				ObjectMeta: metav1.ObjectMeta{
-					// Use a unique name based on upstream instance UID and container index
-					Name:      volume.Name,
-					Namespace: instance.Namespace,
-					Annotations: map[string]string{
-						downstreamclient.UpstreamOwnerClusterName: clusterName,
-						downstreamclient.UpstreamOwnerName:        instance.Name,
-						downstreamclient.UpstreamOwnerNamespace:   instance.Namespace,
-					},
-					Labels: map[string]string{
-						"managed-by":         "infra-provider-unikraft",
-						"upstream.instance":  instance.Name,
-						"upstream.container": container.Name,
-					},
-				},
-			}
-
-			_, err := controllerutil.CreateOrPatch(ctx, downstreamClient, unikraftVolume, func() error {
-				unikraftVolume.Spec.Name = ptr.Ptr(volume.Name)
-				unikraftVolume.Spec.SizeMb = 100
-				return nil
-			})
-
-			if err != nil {
-				return ctrl.Result{}, fmt.Errorf("failed to create/update unikraft instance for container %s: %w", container.Name, err)
-			}
+		if instancePod.Annotations == nil {
+			instancePod.Annotations = map[string]string{}
 		}
+		instancePod.Annotations[downstreamclient.UpstreamOwnerClusterName] = clusterName
+		instancePod.Annotations[downstreamclient.UpstreamOwnerName] = instance.Name
+		instancePod.Annotations[downstreamclient.UpstreamOwnerNamespace] = instance.Namespace
 
-		result, err := controllerutil.CreateOrPatch(ctx, downstreamClient, unikraftInstance, func() error {
-			// Convert container to Unikraft CreateInstanceRequest
-			unikraftSpec, err := r.buildUnikraftSpecFromContainer(instance, &container)
+		if instancePod.CreationTimestamp.IsZero() {
+			logger.Info("building pod spec for new instance pod", "name", instancePod.Name)
+			podSpec, err := r.buildPodSpecFromContainers(instance, instance.Spec.Runtime.Sandbox.Containers)
 			if err != nil {
 				return err
 			}
-
-			unikraftInstance.Spec = unikraftSpec
+			instancePod.Spec = podSpec
 			return nil
-		})
-
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to create/update unikraft instance for container %s: %w", container.Name, err)
 		}
 
-		logger.Info("reconciled unikraft instance",
-			"result", result,
-			"name", unikraftInstance.Name,
-			"container", container.Name,
-			"status", unikraftInstance.Status.Status,
-			"message", unikraftInstance.Status.Message,
+		logger.Info("skipping pod spec reconciliation; pod already exists",
+			"name", instancePod.Name,
+			"creationTimestamp", instancePod.CreationTimestamp,
 		)
-
-		// TODO: Sync status from unikraftInstance back to upstream instance
-		// After CreateOrPatch, unikraftInstance contains the full state from the cluster
-		// including unikraftInstance.Status which has the Unikraft instance state
+		return nil
+	})
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to create/update pod for instance %s: %w", instance.Name, err)
 	}
 
-	if err := r.syncInstancePowerState(ctx, upstreamClient, instance, unikraftInstance); err != nil {
+	logger.Info("reconciled instance pod",
+		"result", result,
+		"name", instancePod.Name,
+		"containers", len(instance.Spec.Runtime.Sandbox.Containers),
+		"phase", instancePod.Status.Phase,
+		"message", instancePod.Status.Message,
+	)
+
+	if err := r.reconcileInstanceService(ctx, downstreamClient, clusterName, instance); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to reconcile service for instance %s: %w", instance.Name, err)
+	}
+
+	if err := r.syncInstancePowerState(ctx, upstreamClient, instance, instancePod); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to sync instance power state: %w", err)
 	}
 
 	return ctrl.Result{}, nil
 }
 
-func (r *InstanceReconciler) buildUnikraftSpecFromContainer(
+func (r *InstanceReconciler) buildPodSpecFromContainers(
 	instance *computev1alpha.Instance,
-	container *computev1alpha.SandboxContainer,
-) (platform.CreateInstanceRequest, error) {
-	name := ptr.Ptr(unikraftInstanceName(instance.Name, container.Name))
+	sandboxContainers []computev1alpha.SandboxContainer,
+) (core.PodSpec, error) {
+	containers := make([]core.Container, 0, len(sandboxContainers))
+	for i := range sandboxContainers {
+		sc := &sandboxContainers[i]
 
-	scaleToZero, err := mapInstanceScaleToZero(instance.Annotations, assignContainerServices(container.Ports))
-	if err != nil {
-		return platform.CreateInstanceRequest{}, err
-	}
-
-	if instanceTemplate, ok := instance.Annotations[ukcInstanceTemplate]; ok {
-		var serviceGroup *platform.CreateInstanceRequestServiceGroup
-
-		if len(container.Ports) > 0 {
-			serviceGroup = &platform.CreateInstanceRequestServiceGroup{
-				Services: assignContainerServices(container.Ports),
-			}
+		// Map environment variables from container
+		envVars := make([]core.EnvVar, 0, len(sc.Env))
+		for _, env := range sc.Env {
+			envVars = append(envVars, core.EnvVar{
+				Name:  env.Name,
+				Value: env.Value,
+			})
 		}
 
-		return platform.CreateInstanceRequest{
-			Name:         name,
-			ScaleToZero:  scaleToZero,
-			ServiceGroup: serviceGroup,
-			Template:     &platform.CreateInstanceRequestTemplate{NameOrUUID: &platform.CreateInstanceRequestTemplateNameOrUUID{Name: instanceTemplate}},
-			Roms:         mapInstanceRoms(instance),
-		}, nil
-	}
-
-	image := container.Image
-
-	spec := platform.CreateInstanceRequest{
-		Name:      ptr.Ptr(unikraftInstanceName(instance.Name, container.Name)),
-		Image:     &image,
-		Autostart: ptr.Ptr(true),
-	}
-
-	// Map instance type to memory/vcpus
-	if instance.Spec.Runtime.Resources.InstanceType != "" {
-		// TODO: Add instance type mapping
-		// For now, use defaults
-		spec.MemoryMb = ptr.Ptr(int64(128))
-		spec.Vcpus = ptr.Ptr(int32(1))
-	}
-
-	// Map environment variables from container
-	spec.Env = make(map[string]string)
-	for _, env := range container.Env {
-		spec.Env[env.Name] = env.Value
-	}
-
-	if len(container.Ports) > 0 {
-		spec.ServiceGroup = &platform.CreateInstanceRequestServiceGroup{
-			Services: assignContainerServices(container.Ports),
-		}
-	}
-
-	spec.MemoryMb = ptr.Ptr(mapContainerMemory(container))
-	spec.ScaleToZero = scaleToZero
-
-	for _, attachment := range container.VolumeAttachments {
-		if attachment.MountPath == nil {
-			continue
+		// Map ports from container
+		ports := make([]core.ContainerPort, 0, len(sc.Ports))
+		for _, p := range sc.Ports {
+			ports = append(ports, core.ContainerPort{
+				Name:          p.Name,
+				ContainerPort: p.Port,
+			})
 		}
 
-		spec.Volumes = append(spec.Volumes, platform.CreateInstanceRequestVolume{
-			Name: ptr.Ptr(attachment.Name),
-			At:   *attachment.MountPath,
+		// Map memory limit
+		memoryMB := mapContainerMemory(sc)
+		resources := core.ResourceRequirements{
+			Limits: core.ResourceList{
+				core.ResourceMemory: *resource.NewQuantity(memoryMB*1024*1024, resource.BinarySI),
+			},
+		}
+
+		containers = append(containers, core.Container{
+			Name:      sc.Name,
+			Image:     sc.Image,
+			Env:       envVars,
+			Ports:     ports,
+			Resources: resources,
 		})
 	}
 
-	spec.Args = []string{"/usr/bin/bun run /usr/src/server.ts"}
+	spec := core.PodSpec{
+		Containers:    containers,
+		RestartPolicy: core.RestartPolicyAlways,
+		NodeSelector: map[string]string{
+			"kubernetes.io/hostname": "kraftlet",
+		},
+		Tolerations: []core.Toleration{
+			{
+				Key:      "virtual-kubelet.io/provider",
+				Operator: "Equal",
+				Value:    "ukc",
+				Effect:   "NoSchedule",
+			},
+		},
+	}
 
 	return spec, nil
+}
+
+func (r *InstanceReconciler) reconcileInstanceService(
+	ctx context.Context,
+	downstreamClient client.Client,
+	clusterName string,
+	instance *computev1alpha.Instance,
+) error {
+	logger := log.FromContext(ctx)
+
+	type containerPort struct {
+		name string
+		port int32
+	}
+
+	var allPorts []containerPort
+	if instance.Spec.Runtime.Sandbox != nil {
+		for _, c := range instance.Spec.Runtime.Sandbox.Containers {
+			for _, p := range c.Ports {
+				allPorts = append(allPorts, containerPort{name: p.Name, port: p.Port})
+			}
+		}
+	}
+
+	svc := &core.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      instance.Name,
+			Namespace: instance.Namespace,
+		},
+	}
+
+	if len(allPorts) == 0 {
+		if err := downstreamClient.Delete(ctx, svc); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete obsolete service: %w", err)
+		}
+		return nil
+	}
+
+	servicePorts := make([]core.ServicePort, 0, len(allPorts))
+	if len(allPorts) == 1 {
+		p := allPorts[0]
+		name := p.name
+		if name == "" {
+			name = "http"
+		}
+		servicePorts = append(servicePorts, core.ServicePort{
+			Name:       name,
+			Port:       443,
+			TargetPort: intstr.FromInt32(p.port),
+			Protocol:   core.ProtocolTCP,
+		})
+	} else {
+		for _, p := range allPorts {
+			name := p.name
+			if name == "" {
+				name = fmt.Sprintf("port-%d", p.port)
+			}
+			servicePorts = append(servicePorts, core.ServicePort{
+				Name:       name,
+				Port:       p.port,
+				TargetPort: intstr.FromInt32(p.port),
+				Protocol:   core.ProtocolTCP,
+			})
+		}
+	}
+
+	result, err := controllerutil.CreateOrPatch(ctx, downstreamClient, svc, func() error {
+		if svc.Annotations == nil {
+			svc.Annotations = map[string]string{}
+		}
+		svc.Annotations[downstreamclient.UpstreamOwnerClusterName] = clusterName
+		svc.Annotations[downstreamclient.UpstreamOwnerName] = instance.Name
+		svc.Annotations[downstreamclient.UpstreamOwnerNamespace] = instance.Namespace
+
+		if svc.Labels == nil {
+			svc.Labels = map[string]string{}
+		}
+		svc.Labels["managed-by"] = "infra-provider-unikraft"
+		svc.Labels["upstream.instance"] = instance.Name
+
+		svc.Spec.Selector = map[string]string{
+			"upstream.instance": instance.Name,
+		}
+		svc.Spec.Ports = servicePorts
+		if svc.Spec.Type == "" {
+			svc.Spec.Type = core.ServiceTypeClusterIP
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create/update service: %w", err)
+	}
+
+	logger.Info("reconciled instance service",
+		"result", result,
+		"name", svc.Name,
+		"ports", len(servicePorts),
+	)
+
+	return nil
 }
 
 func (r *InstanceReconciler) syncInstancePowerState(
 	ctx context.Context,
 	upstreamClient client.Client,
 	instance *computev1alpha.Instance,
-	ukcInstance *unikraftv1alpha1.Instance,
+	instancePod *core.Pod,
 ) error {
 	runningCondition := metav1.Condition{
 		Type:               computev1alpha.InstanceRunning,
@@ -301,40 +357,85 @@ func (r *InstanceReconciler) syncInstancePowerState(
 
 	statusChanged := false
 
-	if !instance.DeletionTimestamp.IsZero() {
+	switch {
+	case !instance.DeletionTimestamp.IsZero():
+		runningCondition.Status = metav1.ConditionFalse
 		runningCondition.Reason = computev1alpha.InstanceRunningReasonStopping
 		runningCondition.Message = "Instance is being deleted"
 		readyCondition.Status = metav1.ConditionFalse
 		readyCondition.Reason = "Terminating"
 		readyCondition.Message = "Instance is being deleted"
-	} else {
-		if ukcInstance.Status.Status != nil && *ukcInstance.Status.Status == platform.ResponseStatusSUCCESS {
+
+	default:
+		// Derive running condition from the pod phase.
+		switch instancePod.Status.Phase {
+		case core.PodRunning:
 			runningCondition.Status = metav1.ConditionTrue
-			runningCondition.Message = "Instance is running"
-			readyCondition.Status = metav1.ConditionTrue
-			readyCondition.Message = "Instance is ready"
+			runningCondition.Reason = computev1alpha.InstanceRunningReasonRunning
+			runningCondition.Message = "Pod is running"
+		case core.PodPending:
+			runningCondition.Status = metav1.ConditionUnknown
+			runningCondition.Reason = "Pending"
+			runningCondition.Message = "Pod is pending"
+			// Surface a more useful message from container waiting states, if any.
+			for _, cs := range instancePod.Status.ContainerStatuses {
+				if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
+					runningCondition.Reason = cs.State.Waiting.Reason
+					if cs.State.Waiting.Message != "" {
+						runningCondition.Message = cs.State.Waiting.Message
+					}
+					break
+				}
+			}
+		case core.PodSucceeded:
+			runningCondition.Status = metav1.ConditionFalse
+			runningCondition.Reason = computev1alpha.InstanceRunningReasonStopping
+			runningCondition.Message = "Pod completed"
+		case core.PodFailed:
+			runningCondition.Status = metav1.ConditionFalse
+			runningCondition.Reason = "Failed"
+			runningCondition.Message = instancePod.Status.Message
+			if runningCondition.Message == "" {
+				runningCondition.Message = "Pod failed"
+			}
+		default:
+			runningCondition.Status = metav1.ConditionUnknown
+			runningCondition.Reason = "Unknown"
+			runningCondition.Message = "Pod phase is unknown"
 		}
 
-		if ukcInstance.Status.Status != nil && *ukcInstance.Status.Status == platform.ResponseStatusERROR {
-			runningCondition.Status = metav1.ConditionFalse
-			runningCondition.Message = "Instance is not running"
-			readyCondition.Status = metav1.ConditionFalse
-			readyCondition.Reason = "Error"
-			readyCondition.Message = "Instance is not ready"
+		readyCondition.Status = metav1.ConditionUnknown
+		readyCondition.Reason = "Unknown"
+		for _, c := range instancePod.Status.Conditions {
+			if c.Type != core.PodReady {
+				continue
+			}
+			readyCondition.Status = metav1.ConditionStatus(c.Status)
+			if c.Reason != "" {
+				readyCondition.Reason = c.Reason
+			} else {
+				readyCondition.Reason = "PodReady"
+			}
+			readyCondition.Message = c.Message
+			break
 		}
 	}
 
 	statusChanged = meta.SetStatusCondition(&instance.Status.Conditions, runningCondition) || statusChanged
 	statusChanged = meta.SetStatusCondition(&instance.Status.Conditions, readyCondition) || statusChanged
 
-	if externalIP := r.extractExternalIPFromUnikraftInstance(ukcInstance); externalIP != "" {
+	var networkIP string
+	if len(instancePod.Status.PodIPs) > 0 {
+		networkIP = instancePod.Status.PodIPs[0].IP
+	}
+	if networkIP != "" {
 		if len(instance.Status.NetworkInterfaces) == 0 {
 			instance.Status.NetworkInterfaces = make([]computev1alpha.InstanceNetworkInterfaceStatus, 1)
 			statusChanged = true
 		}
-		if instance.Status.NetworkInterfaces[0].Assignments.ExternalIP == nil ||
-			*instance.Status.NetworkInterfaces[0].Assignments.ExternalIP != externalIP {
-			instance.Status.NetworkInterfaces[0].Assignments.ExternalIP = &externalIP
+		if instance.Status.NetworkInterfaces[0].Assignments.NetworkIP == nil ||
+			*instance.Status.NetworkInterfaces[0].Assignments.NetworkIP != networkIP {
+			instance.Status.NetworkInterfaces[0].Assignments.NetworkIP = &networkIP
 			statusChanged = true
 		}
 	}
@@ -348,24 +449,6 @@ func (r *InstanceReconciler) syncInstancePowerState(
 	return nil
 }
 
-func (r *InstanceReconciler) extractExternalIPFromUnikraftInstance(ukcInstance *unikraftv1alpha1.Instance) string {
-	if ukcInstance.Status.Data == nil || len(ukcInstance.Status.Data.Instances) == 0 {
-		return ""
-	}
-
-	instance := ukcInstance.Status.Data.Instances[0]
-	if instance.ServiceGroup == nil || len(instance.ServiceGroup.Domains) == 0 {
-		return ""
-	}
-
-	domain := instance.ServiceGroup.Domains[0]
-	if domain.Fqdn != nil {
-		return *domain.Fqdn
-	}
-
-	return ""
-}
-
 func (r *InstanceReconciler) handleDeletion(
 	ctx context.Context,
 	upstreamClient client.Client,
@@ -377,14 +460,14 @@ func (r *InstanceReconciler) handleDeletion(
 	// Delete all downstream Unikraft instances for all containers
 	if instance.Spec.Runtime.Sandbox != nil {
 		for idx := range instance.Spec.Runtime.Sandbox.Containers {
-			unikraftInstance := &unikraftv1alpha1.Instance{
+			podInstance := &core.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      fmt.Sprintf("instance-%s-container-%d", instance.UID, idx),
+					Name:      fmt.Sprintf("%s", instance.UID),
 					Namespace: instance.Namespace,
 				},
 			}
 
-			if err := downstreamClient.Delete(ctx, unikraftInstance); err != nil {
+			if err := downstreamClient.Delete(ctx, podInstance); err != nil {
 				if !apierrors.IsNotFound(err) {
 					return ctrl.Result{}, fmt.Errorf("failed to delete unikraft instance for container %d: %w", idx, err)
 				}
@@ -393,22 +476,19 @@ func (r *InstanceReconciler) handleDeletion(
 		}
 	}
 
-	if instance.Spec.Volumes != nil {
-		for idx, volume := range instance.Spec.Volumes {
-			unikraftVolume := &unikraftv1alpha1.Volume{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      volume.Name,
-					Namespace: instance.Namespace,
-				},
-			}
-
-			if err := downstreamClient.Delete(ctx, unikraftVolume); err != nil {
-				if !apierrors.IsNotFound(err) {
-					return ctrl.Result{}, fmt.Errorf("failed to delete unikraft volume %d: %w", idx, err)
-				}
-			}
-			logger.Info("deleted downstream unikraft instance", "container-idx", idx)
+	// Delete the downstream Service that was created alongside the pod (if any).
+	svc := &core.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      instance.Name,
+			Namespace: instance.Namespace,
+		},
+	}
+	if err := downstreamClient.Delete(ctx, svc); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, fmt.Errorf("failed to delete downstream service: %w", err)
 		}
+	} else {
+		logger.Info("deleted downstream service", "name", svc.Name)
 	}
 
 	// Remove finalizer
@@ -420,23 +500,19 @@ func (r *InstanceReconciler) handleDeletion(
 	return ctrl.Result{}, nil
 }
 
-func unikraftInstanceName(instanceName, containerName string) string {
-	return fmt.Sprintf("%s-%s", instanceName, containerName)
-}
-
 // SetupWithManager sets up the controller with the Manager.
 func (r *InstanceReconciler) SetupWithManager(mgr mcmanager.Manager) error {
 	r.mgr = mgr
 
 	return mcbuilder.ControllerManagedBy(mgr).
 		For(&computev1alpha.Instance{}).
-		WatchesRawSource(milosource.MustNewClusterSource(r.DownstreamCluster, &unikraftv1alpha1.Instance{}, func(clusterName string, cl cluster.Cluster) handler.TypedEventHandler[*unikraftv1alpha1.Instance, mcreconcile.Request] {
-			return handler.TypedEnqueueRequestsFromMapFunc(func(ctx context.Context, instance *unikraftv1alpha1.Instance) []mcreconcile.Request {
+		WatchesRawSource(milosource.MustNewClusterSource(r.DownstreamCluster, &core.Pod{}, func(clusterName string, cl cluster.Cluster) handler.TypedEventHandler[*core.Pod, mcreconcile.Request] {
+			return handler.TypedEnqueueRequestsFromMapFunc(func(ctx context.Context, instancePod *core.Pod) []mcreconcile.Request {
 				logger := log.FromContext(ctx)
 
-				upstreamClusterName := instance.Annotations[downstreamclient.UpstreamOwnerClusterName]
-				upstreamName := instance.Annotations[downstreamclient.UpstreamOwnerName]
-				upstreamNamespace := instance.Annotations[downstreamclient.UpstreamOwnerNamespace]
+				upstreamClusterName := instancePod.Annotations[downstreamclient.UpstreamOwnerClusterName]
+				upstreamName := instancePod.Annotations[downstreamclient.UpstreamOwnerName]
+				upstreamNamespace := instancePod.Annotations[downstreamclient.UpstreamOwnerNamespace]
 
 				if upstreamClusterName == "" || upstreamName == "" || upstreamNamespace == "" {
 					logger.Info("Unikraft instance is missing upstream ownership metadata")
@@ -459,12 +535,3 @@ func (r *InstanceReconciler) SetupWithManager(mgr mcmanager.Manager) error {
 		Named("instance").
 		Complete(r)
 }
-
-//func (r *InstanceReconciler) SetupWithManager(mgr mcmanager.Manager) error {
-//	r.mgr = mgr
-//
-//	return mcbuilder.ControllerManagedBy(mgr).
-//		For(&computev1alpha.Instance{}).
-//		Named("instance").
-//		Complete(r)
-//}
