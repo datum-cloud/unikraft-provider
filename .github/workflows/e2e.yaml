@@ -22,5 +22,5 @@ jobs:
       - run: task dev:build
       - run: task dev:load
       - run: task test:deploy
-      - uses: kyverno/action-install-chainsaw@v0.2.12
+      - uses: kyverno/action-install-chainsaw@v0.2.14
       - run: task e2e
