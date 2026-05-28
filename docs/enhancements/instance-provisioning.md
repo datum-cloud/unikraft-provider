@@ -15,13 +15,13 @@ stage: alpha
 }}%%
 sequenceDiagram
     box rgb(199,228,255) Datum Cloud
-        participant API as Cluster API Server
+        participant API as API Server
         participant CO as Compute Operator
-        participant NSO as Network Services<br/>Operator
-        participant IPAM as IPAM Service<br/>(Datum Cloud)
-        participant UP as Unikraft Provider<br/>(Instance Controller)
-        participant GO as Galactic Operator<br/>(Webhook + Controller)
-        participant KL as Kraftlet<br/>(Virtual Kubelet)
+        participant NSO as Network Services
+        participant IPAM as IPAM Service
+        participant UP as Unikraft Provider
+        participant GO as Galactic Operator
+        participant KL as Kraftlet
     end
     box rgb(220,255,220) Unikraft Host
         participant MULTUS as Multus CNI<br/>(Meta-CNI)
@@ -148,10 +148,10 @@ sequenceDiagram
 }}%%
 sequenceDiagram
     box rgb(199,228,255) Datum Cloud
-        participant API as Cluster API Server
+        participant API as API Server
         participant CO as Compute Operator
-        participant NSO as Network Services<br/>Operator
-        participant IPAM as IPAM Service<br/>(Datum Cloud)
+        participant NSO as Network Services
+        participant IPAM as IPAM Service
         participant UP as Unikraft Provider
         participant KL as Kraftlet
     end
