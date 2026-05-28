@@ -27,7 +27,7 @@ sequenceDiagram
         participant MULTUS as Multus CNI<br/>(Meta-CNI)
         participant ICNI as IPAM CNI
         participant GCNI as Galactic CNI
-        participant BGP as milo-os BGP<br/>Control Plane
+        participant BGP as BGP
         participant HOST as Linux Network<br/>Stack
         participant UK as Unikraft Runtime
     end
@@ -159,7 +159,7 @@ sequenceDiagram
         participant MULTUS as Multus CNI<br/>(Meta-CNI)
         participant ICNI as IPAM CNI
         participant GCNI as Galactic CNI
-        participant BGP as milo-os BGP<br/>Control Plane
+        participant BGP as BGP
         participant HOST as Linux Network<br/>Stack
         participant UK as Unikraft Runtime
     end
