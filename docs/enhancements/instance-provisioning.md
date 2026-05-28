@@ -21,9 +21,9 @@ sequenceDiagram
         participant IPAM as IPAM Service<br/>(Datum Cloud)
         participant UP as Unikraft Provider<br/>(Instance Controller)
         participant GO as Galactic Operator<br/>(Webhook + Controller)
+        participant KL as Kraftlet<br/>(Virtual Kubelet)
     end
     box rgb(220,255,220) Unikraft Host
-        participant KL as Kraftlet<br/>(Virtual Kubelet)
         participant MULTUS as Multus CNI<br/>(Meta-CNI)
         participant ICNI as IPAM CNI
         participant GCNI as Galactic CNI
@@ -141,9 +141,9 @@ sequenceDiagram
         participant NSO as Network Services<br/>Operator
         participant IPAM as IPAM Service<br/>(Datum Cloud)
         participant UP as Unikraft Provider
+        participant KL as Kraftlet
     end
     box rgb(220,255,220) Unikraft Host
-        participant KL as Kraftlet
         participant MULTUS as Multus CNI<br/>(Meta-CNI)
         participant ICNI as IPAM CNI
         participant GCNI as Galactic CNI
