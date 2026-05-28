@@ -14,18 +14,22 @@ stage: alpha
   }
 }}%%
 sequenceDiagram
-    participant API as Cluster API Server
-    participant CO as Compute Operator
-    participant NSO as Network Services<br/>Operator
-    participant IPAM as IPAM Service<br/>(Datum Cloud)
-    participant UP as Unikraft Provider<br/>(Instance Controller)
-    participant GO as Galactic Operator<br/>(Webhook + Controller)
-    participant KL as Kraftlet<br/>(Virtual Kubelet)
-    participant MULTUS as Multus CNI<br/>(Meta-CNI)
-    participant ICNI as IPAM CNI
-    participant GCNI as Galactic CNI
-    participant BGP as milo-os BGP<br/>Control Plane
-    participant UK as Unikraft Runtime
+    box rgb(199,228,255) Datum Cloud
+        participant API as Cluster API Server
+        participant CO as Compute Operator
+        participant NSO as Network Services<br/>Operator
+        participant IPAM as IPAM Service<br/>(Datum Cloud)
+        participant UP as Unikraft Provider<br/>(Instance Controller)
+        participant GO as Galactic Operator<br/>(Webhook + Controller)
+    end
+    box rgb(220,255,220) Unikraft Host
+        participant KL as Kraftlet<br/>(Virtual Kubelet)
+        participant MULTUS as Multus CNI<br/>(Meta-CNI)
+        participant ICNI as IPAM CNI
+        participant GCNI as Galactic CNI
+        participant BGP as milo-os BGP<br/>Control Plane
+        participant UK as Unikraft Runtime
+    end
 
     Note over API,IPAM: Compute operator provisions network resources
 
@@ -131,17 +135,21 @@ sequenceDiagram
   }
 }}%%
 sequenceDiagram
-    participant API as Cluster API Server
-    participant CO as Compute Operator
-    participant NSO as Network Services<br/>Operator
-    participant IPAM as IPAM Service<br/>(Datum Cloud)
-    participant UP as Unikraft Provider
-    participant KL as Kraftlet
-    participant MULTUS as Multus CNI<br/>(Meta-CNI)
-    participant ICNI as IPAM CNI
-    participant GCNI as Galactic CNI
-    participant BGP as milo-os BGP<br/>Control Plane
-    participant UK as Unikraft Runtime
+    box rgb(199,228,255) Datum Cloud
+        participant API as Cluster API Server
+        participant CO as Compute Operator
+        participant NSO as Network Services<br/>Operator
+        participant IPAM as IPAM Service<br/>(Datum Cloud)
+        participant UP as Unikraft Provider
+    end
+    box rgb(220,255,220) Unikraft Host
+        participant KL as Kraftlet
+        participant MULTUS as Multus CNI<br/>(Meta-CNI)
+        participant ICNI as IPAM CNI
+        participant GCNI as Galactic CNI
+        participant BGP as milo-os BGP<br/>Control Plane
+        participant UK as Unikraft Runtime
+    end
 
     API->>UP: Watch: Instance deleted
     activate UP
