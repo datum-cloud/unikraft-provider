@@ -95,6 +95,8 @@ sequenceDiagram
     MULTUS->>GCNI: CNI ADD<br/>(ifname, IP config from IPAM CNI)
     activate GCNI
     GCNI->>GCNI: Create VRF interface<br/>(network isolation)
+    GCNI->>GCNI: Create TAP device<br/>(unikernel network interface)
+    GCNI->>GCNI: Attach TAP device to VRF
     GCNI->>GCNI: Create veth pair<br/>(host: G{vpc}{att}H,<br/> guest: G{vpc}{att}G)
     GCNI->>GCNI: Assign IP address to<br/>guest interface
     GCNI->>GCNI: Configure routes in VRF<br/>(proxy ARP/NDP)
@@ -175,6 +177,7 @@ sequenceDiagram
     BGP->>BGP: Remove route from peers
     deactivate BGP
     GCNI->>GCNI: Remove veth pair
+    GCNI->>GCNI: Remove TAP device
     GCNI->>GCNI: Remove VRF interface
     GCNI-->>MULTUS: Cleanup complete
     deactivate GCNI
