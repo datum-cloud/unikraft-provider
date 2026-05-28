@@ -17,10 +17,12 @@ sequenceDiagram
     participant API as Cluster API Server
     participant CO as Compute Operator
     participant NSO as Network Services<br/>Operator
-    participant IPAM as IPAM Service
+    participant IPAM as IPAM Service<br/>(Datum Cloud)
     participant UP as Unikraft Provider<br/>(Instance Controller)
     participant GO as Galactic Operator<br/>(Webhook + Controller)
     participant KL as Kraftlet<br/>(Virtual Kubelet)
+    participant MULTUS as Multus CNI<br/>(Meta-CNI)
+    participant ICNI as IPAM CNI
     participant GCNI as Galactic CNI
     participant BGP as milo-os BGP<br/>Control Plane
     participant UK as Unikraft Runtime
@@ -55,12 +57,12 @@ sequenceDiagram
     UP->>API: CreateOrPatch Pod<br/>(with VPCAttachment annotation)
     deactivate UP
 
-    Note over API,BGP: Galactic wires instance into VPC
+    Note over API,BGP: Galactic operator wires instance into VPC
 
     API->>GO: VPCAttachment created
     activate GO
     GO->>GO: Assign VPCAttachment identifier<br/>(used in SRv6 encoding)
-    GO->>API: Create NetworkAttachmentDefinition<br/>(Multus NAD for galactic CNI)
+    GO->>API: Create NetworkAttachmentDefinition<br/>(Multus NAD: IPAM CNI + Galactic CNI chain)
     deactivate GO
 
     API->>GO: Pod created with<br/>VPCAttachment annotation
@@ -73,7 +75,20 @@ sequenceDiagram
 
     KL->>KL: Parse Pod spec into<br/>unikernel instance config
 
-    KL->>GCNI: CNI ADD<br/>(namespace, container ID, ifname)
+    KL->>MULTUS: CNI ADD<br/>(namespace, container ID, ifname)
+    activate MULTUS
+
+    MULTUS->>ICNI: CNI ADD<br/>(IPAM plugin invocation)
+    activate ICNI
+    ICNI->>IPAM: Request IP allocation<br/>(VPCAttachment ref)
+    activate IPAM
+    IPAM->>IPAM: Lookup AddressClaim<br/>confirm allocation
+    IPAM-->>ICNI: Allocated IP + prefix + gateway
+    deactivate IPAM
+    ICNI-->>MULTUS: IPAM Result<br/>(IP, routes)
+    deactivate ICNI
+
+    MULTUS->>GCNI: CNI ADD<br/>(ifname, IP config from IPAM CNI)
     activate GCNI
     GCNI->>GCNI: Create VRF interface<br/>(network isolation)
     GCNI->>GCNI: Create veth pair<br/>(host: G{vpc}{att}H,<br/> guest: G{vpc}{att}G)
@@ -84,8 +99,11 @@ sequenceDiagram
     activate BGP
     BGP->>BGP: Advertise route to peers<br/>("VPC X reachable at<br/>SRv6 endpoint Y")
     deactivate BGP
-    GCNI-->>KL: CNI Result<br/>(IPs, routes, DNS)
+    GCNI-->>MULTUS: CNI Result<br/>(interfaces, routes)
     deactivate GCNI
+
+    MULTUS-->>KL: CNI Result<br/>(IPs, routes, DNS)
+    deactivate MULTUS
 
     KL->>UK: Create unikernel instance<br/>(image, resources,<br/>attached network interface)
     activate UK
@@ -116,9 +134,11 @@ sequenceDiagram
     participant API as Cluster API Server
     participant CO as Compute Operator
     participant NSO as Network Services<br/>Operator
-    participant IPAM as IPAM Service
+    participant IPAM as IPAM Service<br/>(Datum Cloud)
     participant UP as Unikraft Provider
     participant KL as Kraftlet
+    participant MULTUS as Multus CNI<br/>(Meta-CNI)
+    participant ICNI as IPAM CNI
     participant GCNI as Galactic CNI
     participant BGP as milo-os BGP<br/>Control Plane
     participant UK as Unikraft Runtime
@@ -136,7 +156,10 @@ sequenceDiagram
     UK-->>KL: Instance stopped
     deactivate UK
 
-    KL->>GCNI: CNI DEL<br/>(release network resources)
+    KL->>MULTUS: CNI DEL<br/>(release network resources)
+    activate MULTUS
+
+    MULTUS->>GCNI: CNI DEL<br/>(release VPC resources)
     activate GCNI
     GCNI->>GCNI: Remove SRv6 routes
     GCNI->>BGP: Withdraw route announcement
@@ -145,8 +168,21 @@ sequenceDiagram
     deactivate BGP
     GCNI->>GCNI: Remove veth pair
     GCNI->>GCNI: Remove VRF interface
-    GCNI-->>KL: Cleanup complete
+    GCNI-->>MULTUS: Cleanup complete
     deactivate GCNI
+
+    MULTUS->>ICNI: CNI DEL<br/>(release IP allocation)
+    activate ICNI
+    ICNI->>IPAM: Release IP allocation<br/>(VPCAttachment ref)
+    activate IPAM
+    IPAM->>IPAM: Return IP to AddressPool
+    IPAM-->>ICNI: Released
+    deactivate IPAM
+    ICNI-->>MULTUS: Released
+    deactivate ICNI
+
+    MULTUS-->>KL: Cleanup complete
+    deactivate MULTUS
 
     KL->>API: Pod terminated
     deactivate KL
@@ -156,7 +192,7 @@ sequenceDiagram
     UP->>API: Remove finalizer from Instance
     deactivate UP
 
-    Note over CO,IPAM: Compute operator cleans up network resources
+    Note over CO,NSO: Compute operator cleans up network resources
 
     API->>CO: Watch: Instance deleted
     activate CO
@@ -165,7 +201,7 @@ sequenceDiagram
     activate NSO
     NSO->>IPAM: Delete AddressClaim
     activate IPAM
-    IPAM->>IPAM: Return IP to AddressPool
+    IPAM->>IPAM: Confirm IP returned<br/>to AddressPool
     IPAM-->>NSO: Released
     deactivate IPAM
     NSO-->>CO: Released
