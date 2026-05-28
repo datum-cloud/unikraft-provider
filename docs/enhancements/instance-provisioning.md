@@ -28,6 +28,7 @@ sequenceDiagram
         participant ICNI as IPAM CNI
         participant GCNI as Galactic CNI
         participant BGP as milo-os BGP<br/>Control Plane
+        participant HOST as Linux Network<br/>Stack
         participant UK as Unikraft Runtime
     end
 
@@ -94,25 +95,34 @@ sequenceDiagram
 
     MULTUS->>GCNI: CNI ADD<br/>(ifname, IP config from IPAM CNI)
     activate GCNI
-    GCNI->>GCNI: Create VRF interface<br/>(network isolation)
-    GCNI->>GCNI: Create TAP device<br/>(unikernel network interface)
-    GCNI->>GCNI: Attach TAP device to VRF
-    GCNI->>GCNI: Create veth pair<br/>(host: G{vpc}{att}H,<br/> guest: G{vpc}{att}G)
-    GCNI->>GCNI: Assign IP address to<br/>guest interface
-    GCNI->>GCNI: Configure routes in VRF<br/>(proxy ARP/NDP)
-    GCNI->>GCNI: Program SRv6<br/>encap/decap routes
+    GCNI->>HOST: Create VRF interface<br/>(network isolation)
+    activate HOST
+    HOST-->>GCNI: VRF created
+    GCNI->>HOST: Create TAP device<br/>(unikernel network interface)
+    HOST-->>GCNI: TAP device created<br/>(tap name)
+    GCNI->>HOST: Attach TAP device to VRF
+    GCNI->>HOST: Create veth pair<br/>(host: G{vpc}{att}H,<br/> guest: G{vpc}{att}G)
+    GCNI->>HOST: Assign IP address to<br/>guest interface
+    GCNI->>HOST: Configure routes in VRF<br/>(proxy ARP/NDP)
+    GCNI->>HOST: Program SRv6<br/>encap/decap routes
+    HOST-->>GCNI: Host network provisioned
+    deactivate HOST
     GCNI->>BGP: Announce SRv6 endpoint<br/>via BGP control plane
     activate BGP
     BGP->>BGP: Advertise route to peers<br/>("VPC X reachable at<br/>SRv6 endpoint Y")
     deactivate BGP
-    GCNI-->>MULTUS: CNI Result<br/>(interfaces, routes)
+    GCNI-->>MULTUS: CNI Result<br/>(TAP device name, IP, routes)
     deactivate GCNI
 
-    MULTUS-->>KL: CNI Result<br/>(IPs, routes, DNS)
+    MULTUS-->>KL: CNI Result<br/>(TAP device name, IPs, routes, DNS)
     deactivate MULTUS
 
-    KL->>UK: Create unikernel instance<br/>(image, resources,<br/>attached network interface)
+    KL->>UK: Create unikernel instance<br/>(image, resources, TAP device name)
     activate UK
+    UK->>HOST: Bind TAP device<br/>(attach instance to VRF)
+    activate HOST
+    HOST-->>UK: TAP device bound
+    deactivate HOST
     UK-->>KL: Instance running
     deactivate UK
 
@@ -150,6 +160,7 @@ sequenceDiagram
         participant ICNI as IPAM CNI
         participant GCNI as Galactic CNI
         participant BGP as milo-os BGP<br/>Control Plane
+        participant HOST as Linux Network<br/>Stack
         participant UK as Unikraft Runtime
     end
 
@@ -163,6 +174,10 @@ sequenceDiagram
 
     KL->>UK: Stop unikernel instance
     activate UK
+    UK->>HOST: Detach from TAP device / VRF
+    activate HOST
+    HOST-->>UK: Detached
+    deactivate HOST
     UK-->>KL: Instance stopped
     deactivate UK
 
@@ -171,14 +186,17 @@ sequenceDiagram
 
     MULTUS->>GCNI: CNI DEL<br/>(release VPC resources)
     activate GCNI
-    GCNI->>GCNI: Remove SRv6 routes
+    GCNI->>HOST: Remove SRv6 routes
+    activate HOST
     GCNI->>BGP: Withdraw route announcement
     activate BGP
     BGP->>BGP: Remove route from peers
     deactivate BGP
-    GCNI->>GCNI: Remove veth pair
-    GCNI->>GCNI: Remove TAP device
-    GCNI->>GCNI: Remove VRF interface
+    GCNI->>HOST: Remove veth pair
+    GCNI->>HOST: Remove TAP device
+    GCNI->>HOST: Remove VRF interface
+    HOST-->>GCNI: Host network cleaned up
+    deactivate HOST
     GCNI-->>MULTUS: Cleanup complete
     deactivate GCNI
 
