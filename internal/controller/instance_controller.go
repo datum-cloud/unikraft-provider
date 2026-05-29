@@ -35,6 +35,15 @@ import (
 const (
 	unikraftFinalizer = "unikraft.datumapis.com/finalizer"
 
+	// Annotation keys for UKC scale-to-zero and instance-template configuration.
+	// These are the intended interface contract for the feature; not yet wired on
+	// the Kraftlet Pod path but preserved so the mapping code can be re-introduced
+	// without re-discovering the correct annotation names.
+	ukcScaleToZeroPolicyAnnotation         = "cloud.unikraft.v1.instances/scale_to_zero.policy"         //nolint:unused
+	ukcScaleToZeroStatefulAnnotation       = "cloud.unikraft.v1.instances/scale_to_zero.stateful"       //nolint:unused
+	ukcScaleToZeroCoolDownTimeMsAnnotation = "cloud.unikraft.v1.instances/scale_to_zero.cooldown_time_ms" //nolint:unused
+	ukcInstanceTemplate                    = "cloud.unikraft.v1.instances/template"                     //nolint:unused
+
 	defaultInstanceMemoryMB = 1024
 )
 

@@ -13,3 +13,20 @@ func mapContainerMemory(container *v1alpha.SandboxContainer) int64 {
 	return memBytes / (1024 * 1024)
 }
 
+// optionalPtr parses val using parser and returns a pointer to the result.
+// Returns nil (no error) when val is empty. Used by scale-to-zero annotation
+// parsing when that path is re-wired on the Kraftlet Pod path.
+//
+//nolint:unused
+func optionalPtr[T any](val string, parser func(string) (T, error)) (*T, error) {
+	if len(val) == 0 {
+		return nil, nil
+	}
+
+	v, err := parser(val)
+	if err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
