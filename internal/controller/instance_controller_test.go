@@ -60,8 +60,8 @@ func testScheme(t *testing.T) *runtime.Scheme {
 }
 
 // TestSyncInstancePowerState_ProgrammedCondition verifies that syncInstancePowerState
-// sets the Programmed condition according to the Pod phase, matching the contract
-// expected by compute's reconcileInstanceReadyCondition.
+// sets the Programmed condition according to the underlying runtime phase, matching
+// the contract expected by compute's reconcileInstanceReadyCondition.
 func TestSyncInstancePowerState_ProgrammedCondition(t *testing.T) {
 	tests := []struct {
 		name                 string
@@ -70,31 +70,31 @@ func TestSyncInstancePowerState_ProgrammedCondition(t *testing.T) {
 		wantProgrammedReason string
 	}{
 		{
-			name:                 "Pod running sets Programmed=True",
+			name:                 "instance running sets Programmed=True",
 			pod:                  podWithPhase(core.PodRunning),
 			wantProgrammed:       metav1.ConditionTrue,
 			wantProgrammedReason: computev1alpha.InstanceProgrammedReasonProgrammed,
 		},
 		{
-			name:                 "Pod pending keeps Programmed=Unknown",
+			name:                 "instance provisioning keeps Programmed=Unknown",
 			pod:                  podWithPhase(core.PodPending),
 			wantProgrammed:       metav1.ConditionUnknown,
 			wantProgrammedReason: computev1alpha.InstanceProgrammedReasonProgrammingInProgress,
 		},
 		{
-			name:                 "Pod failed sets Programmed=False",
+			name:                 "instance failed sets Programmed=False",
 			pod:                  podWithPhase(core.PodFailed),
 			wantProgrammed:       metav1.ConditionFalse,
 			wantProgrammedReason: "Failed",
 		},
 		{
-			name:                 "Pod succeeded sets Programmed=False",
+			name:                 "instance stopped sets Programmed=False",
 			pod:                  podWithPhase(core.PodSucceeded),
 			wantProgrammed:       metav1.ConditionFalse,
 			wantProgrammedReason: computev1alpha.InstanceRunningReasonStopping,
 		},
 		{
-			name:                 "Pod phase empty (unscheduled) keeps Programmed=Unknown",
+			name:                 "instance state unknown keeps Programmed=Unknown",
 			pod:                  podWithPhase(""),
 			wantProgrammed:       metav1.ConditionUnknown,
 			wantProgrammedReason: computev1alpha.InstanceProgrammedReasonProgrammingInProgress,
@@ -147,8 +147,8 @@ func TestSyncInstancePowerState_NoReadyConditionWritten(t *testing.T) {
 		WithStatusSubresource(&computev1alpha.Instance{}).
 		Build()
 
-	pod := podWithPhase(core.PodRunning)
-	if err := r.syncInstancePowerState(context.Background(), fakeClient, instance, pod); err != nil {
+	// Use a running instance; if Ready were ever written it would appear here.
+	if err := r.syncInstancePowerState(context.Background(), fakeClient, instance, podWithPhase(core.PodRunning)); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -158,10 +158,10 @@ func TestSyncInstancePowerState_NoReadyConditionWritten(t *testing.T) {
 	}
 }
 
-// TestSyncInstancePowerState_PodRunning_RunningConditionTrue verifies the
-// Running condition is also set correctly when the Pod is running, since compute
+// TestSyncInstancePowerState_InstanceRunning_RunningConditionTrue verifies the
+// Running condition is set correctly when the instance is running, since compute
 // requires Running=True (after Programmed=True) to set Ready=True.
-func TestSyncInstancePowerState_PodRunning_RunningConditionTrue(t *testing.T) {
+func TestSyncInstancePowerState_InstanceRunning_RunningConditionTrue(t *testing.T) {
 	instance := newTestInstance()
 	r := &InstanceReconciler{}
 	fakeClient := fake.NewClientBuilder().

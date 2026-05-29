@@ -362,7 +362,7 @@ func (r *InstanceReconciler) syncInstancePowerState(
 		ObservedGeneration: instance.Generation,
 		Status:             metav1.ConditionUnknown,
 		Reason:             computev1alpha.InstanceProgrammedReasonProgrammingInProgress,
-		Message:            "Waiting for Pod to be scheduled",
+		Message:            "Instance is provisioning",
 	}
 
 	statusChanged := false
@@ -371,27 +371,27 @@ func (r *InstanceReconciler) syncInstancePowerState(
 	case !instance.DeletionTimestamp.IsZero():
 		runningCondition.Status = metav1.ConditionFalse
 		runningCondition.Reason = computev1alpha.InstanceRunningReasonStopping
-		runningCondition.Message = "Instance is being deleted"
+		runningCondition.Message = "Instance is terminating"
 		programmedCondition.Status = metav1.ConditionFalse
 		programmedCondition.Reason = computev1alpha.InstanceRunningReasonStopping
-		programmedCondition.Message = "Instance is being deleted"
+		programmedCondition.Message = "Instance is terminating"
 
 	default:
-		// Derive running and programmed conditions from the pod phase.
-		// Programmed=True means the Pod has been accepted by the scheduler and
-		// is running; it transitions to False only on terminal pod failures.
+		// Derive running and programmed conditions from the underlying runtime phase.
+		// Programmed=True means the instance has been accepted and is running;
+		// it transitions to False only on terminal failures.
 		switch instancePod.Status.Phase {
 		case core.PodRunning:
 			runningCondition.Status = metav1.ConditionTrue
 			runningCondition.Reason = computev1alpha.InstanceRunningReasonRunning
-			runningCondition.Message = "Pod is running"
+			runningCondition.Message = "Instance is running"
 			programmedCondition.Status = metav1.ConditionTrue
 			programmedCondition.Reason = computev1alpha.InstanceProgrammedReasonProgrammed
-			programmedCondition.Message = "Pod is running"
+			programmedCondition.Message = "Instance is running"
 		case core.PodPending:
 			runningCondition.Status = metav1.ConditionUnknown
 			runningCondition.Reason = "Pending"
-			runningCondition.Message = "Pod is pending"
+			runningCondition.Message = "Instance is provisioning"
 			// Surface a more useful message from container waiting states, if any.
 			for _, cs := range instancePod.Status.ContainerStatuses {
 				if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
@@ -408,16 +408,16 @@ func (r *InstanceReconciler) syncInstancePowerState(
 		case core.PodSucceeded:
 			runningCondition.Status = metav1.ConditionFalse
 			runningCondition.Reason = computev1alpha.InstanceRunningReasonStopping
-			runningCondition.Message = "Pod completed"
+			runningCondition.Message = "Instance has stopped"
 			programmedCondition.Status = metav1.ConditionFalse
 			programmedCondition.Reason = computev1alpha.InstanceRunningReasonStopping
-			programmedCondition.Message = "Pod completed"
+			programmedCondition.Message = "Instance has stopped"
 		case core.PodFailed:
 			runningCondition.Status = metav1.ConditionFalse
 			runningCondition.Reason = "Failed"
 			runningCondition.Message = instancePod.Status.Message
 			if runningCondition.Message == "" {
-				runningCondition.Message = "Pod failed"
+				runningCondition.Message = "Instance failed"
 			}
 			programmedCondition.Status = metav1.ConditionFalse
 			programmedCondition.Reason = "Failed"
@@ -425,10 +425,10 @@ func (r *InstanceReconciler) syncInstancePowerState(
 		default:
 			runningCondition.Status = metav1.ConditionUnknown
 			runningCondition.Reason = "Unknown"
-			runningCondition.Message = "Pod phase is unknown"
+			runningCondition.Message = "Instance state is unknown"
 			programmedCondition.Status = metav1.ConditionUnknown
 			programmedCondition.Reason = computev1alpha.InstanceProgrammedReasonProgrammingInProgress
-			programmedCondition.Message = "Pod phase is unknown"
+			programmedCondition.Message = "Instance state is unknown"
 		}
 	}
 
