@@ -345,6 +345,8 @@ func (r *InstanceReconciler) syncInstancePowerState(
 	instance *computev1alpha.Instance,
 	instancePod *core.Pod,
 ) error {
+	logger := log.FromContext(ctx)
+
 	runningCondition := metav1.Condition{
 		Type:               computev1alpha.InstanceRunning,
 		ObservedGeneration: instance.Generation,
@@ -390,15 +392,18 @@ func (r *InstanceReconciler) syncInstancePowerState(
 			programmedCondition.Message = "Instance is running"
 		case core.PodPending:
 			runningCondition.Status = metav1.ConditionUnknown
-			runningCondition.Reason = "Pending"
+			runningCondition.Reason = "Provisioning"
 			runningCondition.Message = "Instance is provisioning"
-			// Surface a more useful message from container waiting states, if any.
+			// Translate the first non-empty container waiting reason into
+			// Instance-domain language. Log the raw k8s detail for operators.
 			for _, cs := range instancePod.Status.ContainerStatuses {
 				if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
-					runningCondition.Reason = cs.State.Waiting.Reason
-					if cs.State.Waiting.Message != "" {
-						runningCondition.Message = cs.State.Waiting.Message
-					}
+					logger.Info("container waiting",
+						"k8sReason", cs.State.Waiting.Reason,
+						"k8sMessage", cs.State.Waiting.Message,
+					)
+					runningCondition.Reason, runningCondition.Message =
+						translateWaitingReason(cs.State.Waiting.Reason, cs.State.Waiting.Message)
 					break
 				}
 			}
