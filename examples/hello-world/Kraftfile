@@ -1,0 +1,9 @@
+spec: v0.6
+
+name: hello-world
+
+runtime: base:latest
+
+rootfs: ./Dockerfile
+
+cmd: ["/server"]
