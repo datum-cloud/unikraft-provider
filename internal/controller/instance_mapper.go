@@ -13,14 +13,3 @@ func mapContainerMemory(container *v1alpha.SandboxContainer) int64 {
 	return memBytes / (1024 * 1024)
 }
 
-func optionalPtr[T any](val string, parser func(string) (T, error)) (*T, error) {
-	if len(val) == 0 {
-		return nil, nil
-	}
-
-	v, err := parser(val)
-	if err != nil {
-		return nil, err
-	}
-	return &v, nil
-}

@@ -241,7 +241,7 @@ func main() {
 
 	setupLog.Info("starting cluster discovery provider")
 	g.Go(func() error {
-		return ignoreCanceled(provider.Run(ctx, mgr))
+		return ignoreCanceled(provider.Start(ctx, mgr))
 	})
 
 	g.Go(func() error {
@@ -261,7 +261,7 @@ func main() {
 
 type runnableProvider interface {
 	multicluster.Provider
-	Run(context.Context, mcmanager.Manager) error
+	multicluster.ProviderRunnable
 }
 
 // Needed until we contribute the patch in the following PR again (need to sign CLA):
@@ -272,11 +272,11 @@ type wrappedSingleClusterProvider struct {
 	cluster cluster.Cluster
 }
 
-func (p *wrappedSingleClusterProvider) Run(ctx context.Context, mgr mcmanager.Manager) error {
-	if err := mgr.Engage(ctx, "single", p.cluster); err != nil {
+func (p *wrappedSingleClusterProvider) Start(ctx context.Context, aware multicluster.Aware) error {
+	if err := aware.Engage(ctx, multicluster.ClusterName("single"), p.cluster); err != nil {
 		return err
 	}
-	return p.Provider.(runnableProvider).Run(ctx, mgr)
+	return p.Provider.(runnableProvider).Start(ctx, aware)
 }
 
 func initializeClusterDiscovery(
