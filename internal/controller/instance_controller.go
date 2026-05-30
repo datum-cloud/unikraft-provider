@@ -391,11 +391,7 @@ func (r *InstanceReconciler) syncInstancePowerState(
 			programmedCondition.Reason = computev1alpha.InstanceProgrammedReasonProgrammed
 			programmedCondition.Message = "Instance is running"
 
-			// The instance has been programmed, so record the template hash the
-			// provider acted on. Compute counts an instance toward its current
-			// replicas only when ObservedTemplateHash matches the desired hash
-			// it stamped on Spec.Controller.TemplateHash, so echo that value
-			// back to keep rolling-update/template-version tracking accurate.
+			// Compute matches this against the desired Spec.Controller.TemplateHash to count current replicas.
 			if instance.Spec.Controller != nil {
 				if instance.Status.Controller == nil {
 					instance.Status.Controller = &computev1alpha.InstanceControllerStatus{}
