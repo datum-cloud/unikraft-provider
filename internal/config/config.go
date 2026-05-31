@@ -118,6 +118,15 @@ type DownstreamResourceManagementConfig struct {
 
 	// ManagedResourceLabels are labels applied to downstream resources for filtering.
 	ManagedResourceLabels map[string]string `json:"managedResourceLabels,omitempty"`
+
+	// SameCluster indicates that the downstream kraftlet cluster is the same as
+	// the upstream cell cluster. When true, companion ConfigMaps/Secrets delivered
+	// by the resolver are already present where the Pod runs, so the provider
+	// skips mirroring entirely. Set to false (the default) for separate kraftlet
+	// clusters that require companion objects to be mirrored before Pod creation.
+	//
+	// +default=false
+	SameCluster bool `json:"sameCluster,omitempty"`
 }
 
 func (d *DownstreamResourceManagementConfig) RestConfig() (*rest.Config, error) {
