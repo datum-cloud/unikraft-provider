@@ -108,7 +108,15 @@ func (m *MetricsServerConfig) Options(ctx context.Context, c client.Client) metr
 
 // +k8s:deepcopy-gen=true
 
-// DownstreamResourceManagementConfig configures downstream resource management
+// DownstreamResourceManagementConfig configures downstream resource management.
+//
+// Downstream RBAC requirements: the provider's service account in the downstream
+// kraftlet cluster must have create, update, and delete permissions on
+// ConfigMaps and Secrets in the Pod namespace (typically the instance namespace).
+// These are required for companion mirroring — the provider writes ConfigMaps and
+// Secrets derived from upstream cell companions so that kraftlet Pods can resolve
+// volume and env-from references at runtime. Without these permissions the provider
+// cannot create or prune mirrored companions and Pod creation will stall.
 type DownstreamResourceManagementConfig struct {
 	// KubeconfigPath is the path to the kubeconfig for the downstream cluster.
 	KubeconfigPath string `json:"kubeconfigPath"`

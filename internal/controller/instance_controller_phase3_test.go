@@ -517,6 +517,7 @@ func TestDeletion_MirroredCompanionsDeleted(t *testing.T) {
 		Data: map[string][]byte{"pw": []byte("x")},
 	}
 
+	// Upstream has the deleting instance only — no surviving siblings.
 	upstreamClient := fake.NewClientBuilder().
 		WithScheme(s).
 		WithObjects(instance).
@@ -581,5 +582,189 @@ func TestDeletion_SameCluster_CompanionsNotDeleted(t *testing.T) {
 	var cm core.ConfigMap
 	if err := downstreamClient.Get(ctx, client.ObjectKey{Namespace: "default", Name: "companion.my-config"}, &cm); err != nil {
 		t.Errorf("companion ConfigMap should still exist when SameCluster=true, but got: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fix 2: Over-deletion of shared companions (TestDeletion_SharedCompanion_NotDeleted)
+// ---------------------------------------------------------------------------
+
+// TestDeletion_SharedCompanion_NotDeleted verifies that deleting one Instance
+// does NOT delete a mirrored companion that is still referenced upstream by a
+// surviving sibling Instance in the same namespace.
+func TestDeletion_SharedCompanion_NotDeleted(t *testing.T) {
+	ctx := context.Background()
+	s := testScheme(t)
+
+	now := metav1.Now()
+
+	// The deleting instance.
+	deletingInstance := newTestInstance()
+	deletingInstance.Name = "instance-a"
+	deletingInstance.UID = types.UID("del-uid-a")
+	deletingInstance.DeletionTimestamp = &now
+	deletingInstance.Finalizers = []string{unikraftFinalizer}
+
+	// A surviving sibling in the same namespace — not deleting.
+	siblingInstance := newTestInstance()
+	siblingInstance.Name = "instance-b"
+	siblingInstance.UID = types.UID("sib-uid-b")
+	// No DeletionTimestamp — sibling is alive.
+
+	// Upstream companions labeled with referencedDataLabel (shared by both instances).
+	upstreamCM := &core.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "companion.shared-config",
+			Namespace: "default",
+			Labels:    map[string]string{referencedDataLabel: "true"},
+		},
+		Data: map[string]string{"key": "value"},
+	}
+	upstreamSecret := &core.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "companion.shared-secret",
+			Namespace: "default",
+			Labels:    map[string]string{referencedDataLabel: "true"},
+		},
+		Data: map[string][]byte{"pw": []byte("x")},
+	}
+
+	// Upstream holds both instances and companions.
+	upstreamClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(deletingInstance, siblingInstance, upstreamCM, upstreamSecret).
+		Build()
+
+	// Downstream mirrors of the shared companions.
+	mirroredCM := &core.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "companion.shared-config",
+			Namespace: "default",
+			Labels:    map[string]string{referencedDataLabel: "true"},
+		},
+		Data: map[string]string{"key": "value"},
+	}
+	mirroredSecret := &core.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "companion.shared-secret",
+			Namespace: "default",
+			Labels:    map[string]string{referencedDataLabel: "true"},
+		},
+		Data: map[string][]byte{"pw": []byte("x")},
+	}
+	downstreamClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(mirroredCM, mirroredSecret).
+		Build()
+
+	r := reconcilerWithConfig(config.DownstreamResourceManagementConfig{SameCluster: false})
+
+	_, err := r.handleDeletion(ctx, upstreamClient, downstreamClient, deletingInstance)
+	if err != nil {
+		t.Fatalf("handleDeletion returned error: %v", err)
+	}
+
+	// The shared companion ConfigMap must NOT be deleted — sibling still needs it.
+	var cm core.ConfigMap
+	if err := downstreamClient.Get(ctx, client.ObjectKey{Namespace: "default", Name: "companion.shared-config"}, &cm); err != nil {
+		t.Errorf("shared companion ConfigMap should NOT be deleted (sibling still references it), but got: %v", err)
+	}
+
+	// The shared companion Secret must NOT be deleted either.
+	var sec core.Secret
+	if err := downstreamClient.Get(ctx, client.ObjectKey{Namespace: "default", Name: "companion.shared-secret"}, &sec); err != nil {
+		t.Errorf("shared companion Secret should NOT be deleted (sibling still references it), but got: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fix 3: Orphan mirror pruning (TestMirrorCompanions_PrunesOrphans)
+// ---------------------------------------------------------------------------
+
+// TestMirrorCompanions_PrunesOrphans verifies that mirrorCompanions removes a
+// downstream mirror whose source companion no longer exists upstream (e.g.
+// the user removed the ConfigMap reference), provided no sibling Instance still
+// references it.
+func TestMirrorCompanions_PrunesOrphans(t *testing.T) {
+	ctx := context.Background()
+	s := testScheme(t)
+
+	instance := newTestInstance()
+	instance.UID = types.UID("prune-uid")
+
+	// Upstream has only one current companion; the previously-mirrored second
+	// companion is gone from upstream (it was removed).
+	currentCM := &core.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "companion.current",
+			Namespace: "default",
+			Labels:    map[string]string{referencedDataLabel: "true"},
+		},
+		Data: map[string]string{"alive": "true"},
+	}
+
+	upstreamClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(instance, currentCM).
+		WithStatusSubresource(&computev1alpha.Instance{}).
+		Build()
+
+	// Downstream has both the current mirror AND a stale orphan mirror.
+	currentMirror := &core.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "companion.current",
+			Namespace: "default",
+			Labels:    map[string]string{referencedDataLabel: "true"},
+		},
+		Data: map[string]string{"alive": "true"},
+	}
+	orphanMirror := &core.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "companion.orphan",
+			Namespace: "default",
+			Labels:    map[string]string{referencedDataLabel: "true"},
+		},
+		Data: map[string]string{"stale": "true"},
+	}
+
+	downstreamClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(currentMirror, orphanMirror).
+		Build()
+
+	r := reconcilerWithConfig(config.DownstreamResourceManagementConfig{SameCluster: false})
+
+	_, err := r.reconcileSandboxContainers(ctx, "test-cluster", upstreamClient, downstreamClient, instance)
+	if err != nil {
+		t.Fatalf("reconcileSandboxContainers returned error: %v", err)
+	}
+
+	// The current mirror must still exist.
+	var cm core.ConfigMap
+	if err := downstreamClient.Get(ctx, client.ObjectKey{Namespace: "default", Name: "companion.current"}, &cm); err != nil {
+		t.Errorf("current companion mirror should still exist, but got: %v", err)
+	}
+
+	// The orphan mirror must have been pruned.
+	var orphan core.ConfigMap
+	if err := downstreamClient.Get(ctx, client.ObjectKey{Namespace: "default", Name: "companion.orphan"}, &orphan); err == nil {
+		t.Error("orphan companion mirror should have been pruned, but it still exists")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fix 6: referencedDataLabel value assertion
+// ---------------------------------------------------------------------------
+
+// TestReferencedDataLabelValue asserts the exact string value of referencedDataLabel.
+// This constant is copied from compute's (not-yet-exported) ReferencedDataLabel in
+// v0.6.0. If it changes in a future compute release this test will catch the drift.
+//
+// TODO: Replace the literal with a direct import of compute.ReferencedDataLabel
+// once the compute dependency is bumped to a version that exports it.
+func TestReferencedDataLabelValue(t *testing.T) {
+	const want = "compute.datumapis.com/referenced-data"
+	if referencedDataLabel != want {
+		t.Errorf("referencedDataLabel = %q, want %q — update after bumping the compute dep", referencedDataLabel, want)
 	}
 }
