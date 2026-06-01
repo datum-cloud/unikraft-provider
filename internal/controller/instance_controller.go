@@ -4,7 +4,10 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	"go.datum.net/unikraft-provider/internal/downstreamclient"
 	milosource "go.miloapis.com/milo/pkg/multicluster-runtime/source"
@@ -29,14 +32,17 @@ import (
 	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
 	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 
-	"go.datum.net/unikraft-provider/internal/config"
 	computev1alpha "go.datum.net/compute/api/v1alpha"
+	"go.datum.net/unikraft-provider/internal/config"
 )
 
 const (
 	unikraftFinalizer = "unikraft.datumapis.com/finalizer"
 
 	defaultInstanceMemoryMB = 1024
+
+	unikraftAnnotationPrefix   = "cloud.unikraft.v1"
+	ukcInstanceFqdnsAnnotation = "cloud.unikraft.v1.instances/fqdns"
 )
 
 type InstanceReconciler struct {
@@ -111,7 +117,7 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 
 	instancePod := &core.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      string(instance.UID),
+			Name:      instance.Name,
 			Namespace: instance.Namespace,
 		},
 	}
@@ -129,6 +135,10 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 		instancePod.Annotations[downstreamclient.UpstreamOwnerClusterName] = clusterName
 		instancePod.Annotations[downstreamclient.UpstreamOwnerName] = instance.Name
 		instancePod.Annotations[downstreamclient.UpstreamOwnerNamespace] = instance.Namespace
+
+		// Mirror any cloud.unikraft.v1.* annotations from the upstream
+		// Instance onto the downstream Pod.
+		copyUnikraftAnnotations(instance.Annotations, instancePod.Annotations)
 
 		if instancePod.CreationTimestamp.IsZero() {
 			logger.Info("building pod spec for new instance pod", "name", instancePod.Name)
@@ -305,6 +315,10 @@ func (r *InstanceReconciler) reconcileInstanceService(
 		svc.Annotations[downstreamclient.UpstreamOwnerName] = instance.Name
 		svc.Annotations[downstreamclient.UpstreamOwnerNamespace] = instance.Namespace
 
+		// Mirror any cloud.unikraft.v1.* annotations from the upstream
+		// Instance onto the downstream Pod.
+		copyUnikraftAnnotations(instance.Annotations, svc.Annotations)
+
 		if svc.Labels == nil {
 			svc.Labels = map[string]string{}
 		}
@@ -339,6 +353,8 @@ func (r *InstanceReconciler) syncInstancePowerState(
 	instance *computev1alpha.Instance,
 	instancePod *core.Pod,
 ) error {
+	logger := log.FromContext(ctx)
+
 	runningCondition := metav1.Condition{
 		Type:               computev1alpha.InstanceRunning,
 		ObservedGeneration: instance.Generation,
@@ -346,11 +362,17 @@ func (r *InstanceReconciler) syncInstancePowerState(
 		Status:             metav1.ConditionTrue,
 	}
 
-	readyCondition := metav1.Condition{
-		Type:               computev1alpha.InstanceReady,
+	// programmedCondition reflects whether the infrastructure provider has
+	// successfully provisioned the underlying compute resource. The compute
+	// InstanceReconciler derives Ready from Programmed=True + Running=True, so
+	// this provider is responsible for setting Programmed and must NOT write
+	// the Ready condition directly (that would race with compute's derivation).
+	programmedCondition := metav1.Condition{
+		Type:               computev1alpha.InstanceProgrammed,
 		ObservedGeneration: instance.Generation,
-		Reason:             "Ready",
 		Status:             metav1.ConditionUnknown,
+		Reason:             computev1alpha.InstanceProgrammedReasonProgrammingInProgress,
+		Message:            "Instance is provisioning",
 	}
 
 	statusChanged := false
@@ -359,83 +381,99 @@ func (r *InstanceReconciler) syncInstancePowerState(
 	case !instance.DeletionTimestamp.IsZero():
 		runningCondition.Status = metav1.ConditionFalse
 		runningCondition.Reason = computev1alpha.InstanceRunningReasonStopping
-		runningCondition.Message = "Instance is being deleted"
-		readyCondition.Status = metav1.ConditionFalse
-		readyCondition.Reason = "Terminating"
-		readyCondition.Message = "Instance is being deleted"
+		runningCondition.Message = "Instance is terminating"
+		programmedCondition.Status = metav1.ConditionFalse
+		programmedCondition.Reason = computev1alpha.InstanceRunningReasonStopping
+		programmedCondition.Message = "Instance is terminating"
 
 	default:
-		// Derive running condition from the pod phase.
+		// Derive running and programmed conditions from the underlying runtime phase.
+		// Programmed=True means the instance has been accepted and is running;
+		// it transitions to False only on terminal failures.
 		switch instancePod.Status.Phase {
 		case core.PodRunning:
 			runningCondition.Status = metav1.ConditionTrue
 			runningCondition.Reason = computev1alpha.InstanceRunningReasonRunning
-			runningCondition.Message = "Pod is running"
+			runningCondition.Message = "Instance is running"
+			programmedCondition.Status = metav1.ConditionTrue
+			programmedCondition.Reason = computev1alpha.InstanceProgrammedReasonProgrammed
+			programmedCondition.Message = "Instance is running"
+
+			// The instance has been programmed, so record the template hash the
+			// provider acted on. Compute counts an instance toward its current
+			// replicas only when ObservedTemplateHash matches the desired hash
+			// it stamped on Spec.Controller.TemplateHash, so echo that value
+			// back to keep rolling-update/template-version tracking accurate.
+			if instance.Spec.Controller != nil {
+				if instance.Status.Controller == nil {
+					instance.Status.Controller = &computev1alpha.InstanceControllerStatus{}
+				}
+				if instance.Status.Controller.ObservedTemplateHash != instance.Spec.Controller.TemplateHash {
+					instance.Status.Controller.ObservedTemplateHash = instance.Spec.Controller.TemplateHash
+					statusChanged = true
+				}
+			}
 		case core.PodPending:
 			runningCondition.Status = metav1.ConditionUnknown
-			runningCondition.Reason = "Pending"
-			runningCondition.Message = "Pod is pending"
-			// Surface a more useful message from container waiting states, if any.
+			runningCondition.Reason = "Provisioning"
+			runningCondition.Message = "Instance is provisioning"
+			// Translate the first non-empty container waiting reason into
+			// Instance-domain language. Log the raw k8s detail for operators.
 			for _, cs := range instancePod.Status.ContainerStatuses {
 				if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
-					runningCondition.Reason = cs.State.Waiting.Reason
-					if cs.State.Waiting.Message != "" {
-						runningCondition.Message = cs.State.Waiting.Message
-					}
+					logger.Info("container waiting",
+						"k8sReason", cs.State.Waiting.Reason,
+						"k8sMessage", cs.State.Waiting.Message,
+					)
+					runningCondition.Reason, runningCondition.Message =
+						translateWaitingReason(cs.State.Waiting.Reason, cs.State.Waiting.Message)
 					break
 				}
 			}
+			programmedCondition.Status = metav1.ConditionUnknown
+			programmedCondition.Reason = computev1alpha.InstanceProgrammedReasonProgrammingInProgress
+			programmedCondition.Message = runningCondition.Message
 		case core.PodSucceeded:
 			runningCondition.Status = metav1.ConditionFalse
 			runningCondition.Reason = computev1alpha.InstanceRunningReasonStopping
-			runningCondition.Message = "Pod completed"
+			runningCondition.Message = "Instance has stopped"
+			programmedCondition.Status = metav1.ConditionFalse
+			programmedCondition.Reason = computev1alpha.InstanceRunningReasonStopping
+			programmedCondition.Message = "Instance has stopped"
 		case core.PodFailed:
 			runningCondition.Status = metav1.ConditionFalse
 			runningCondition.Reason = "Failed"
 			runningCondition.Message = instancePod.Status.Message
 			if runningCondition.Message == "" {
-				runningCondition.Message = "Pod failed"
+				runningCondition.Message = "Instance failed"
 			}
+			programmedCondition.Status = metav1.ConditionFalse
+			programmedCondition.Reason = "Failed"
+			programmedCondition.Message = runningCondition.Message
 		default:
 			runningCondition.Status = metav1.ConditionUnknown
 			runningCondition.Reason = "Unknown"
-			runningCondition.Message = "Pod phase is unknown"
-		}
-
-		readyCondition.Status = metav1.ConditionUnknown
-		readyCondition.Reason = "Unknown"
-		for _, c := range instancePod.Status.Conditions {
-			if c.Type != core.PodReady {
-				continue
-			}
-			readyCondition.Status = metav1.ConditionStatus(c.Status)
-			if c.Reason != "" {
-				readyCondition.Reason = c.Reason
-			} else {
-				readyCondition.Reason = "PodReady"
-			}
-			readyCondition.Message = c.Message
-			break
+			runningCondition.Message = "Instance state is unknown"
+			programmedCondition.Status = metav1.ConditionUnknown
+			programmedCondition.Reason = computev1alpha.InstanceProgrammedReasonProgrammingInProgress
+			programmedCondition.Message = "Instance state is unknown"
 		}
 	}
 
 	statusChanged = meta.SetStatusCondition(&instance.Status.Conditions, runningCondition) || statusChanged
-	statusChanged = meta.SetStatusCondition(&instance.Status.Conditions, readyCondition) || statusChanged
+	statusChanged = meta.SetStatusCondition(&instance.Status.Conditions, programmedCondition) || statusChanged
 
 	var networkIP string
 	if len(instancePod.Status.PodIPs) > 0 {
 		networkIP = instancePod.Status.PodIPs[0].IP
 	}
-	if networkIP != "" {
-		if len(instance.Status.NetworkInterfaces) == 0 {
-			instance.Status.NetworkInterfaces = make([]computev1alpha.InstanceNetworkInterfaceStatus, 1)
-			statusChanged = true
-		}
-		if instance.Status.NetworkInterfaces[0].Assignments.NetworkIP == nil ||
-			*instance.Status.NetworkInterfaces[0].Assignments.NetworkIP != networkIP {
-			instance.Status.NetworkInterfaces[0].Assignments.NetworkIP = &networkIP
-			statusChanged = true
-		}
+
+	serviceFqdns := extractServiceFqdnsFromPod(instance, instancePod)
+
+	desiredInterfaces := buildNetworkInterfaceStatus(networkIP, serviceFqdns)
+	if !networkInterfacesEqual(instance.Status.NetworkInterfaces, desiredInterfaces) {
+		instance.Status.NetworkInterfaces = desiredInterfaces
+		statusChanged = true
 	}
 
 	if statusChanged {
@@ -460,7 +498,7 @@ func (r *InstanceReconciler) handleDeletion(
 		for idx := range instance.Spec.Runtime.Sandbox.Containers {
 			podInstance := &core.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      string(instance.UID),
+					Name:      instance.Name,
 					Namespace: instance.Namespace,
 				},
 			}
@@ -496,6 +534,129 @@ func (r *InstanceReconciler) handleDeletion(
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func copyUnikraftAnnotations(src, dst map[string]string) {
+	for k, v := range src {
+		if strings.HasPrefix(k, unikraftAnnotationPrefix) {
+			dst[k] = v
+		}
+	}
+}
+
+type podFqdns map[string]struct {
+	PrivateFqdn string `json:"privateFqdn"`
+	ServiceFqdn string `json:"serviceFqdn"`
+}
+
+func extractServiceFqdnsFromPod(instance *computev1alpha.Instance, pod *core.Pod) []string {
+	if pod == nil {
+		return nil
+	}
+	raw, ok := pod.Annotations[ukcInstanceFqdnsAnnotation]
+	if !ok || raw == "" {
+		return nil
+	}
+
+	var fqdns podFqdns
+	if err := json.Unmarshal([]byte(raw), &fqdns); err != nil {
+		return nil
+	}
+
+	out := make([]string, 0, len(fqdns))
+	seen := make(map[string]struct{}, len(fqdns))
+
+	add := func(name string) {
+		if _, dup := seen[name]; dup {
+			return
+		}
+		entry, found := fqdns[name]
+		if !found || entry.ServiceFqdn == "" {
+			return
+		}
+		seen[name] = struct{}{}
+		out = append(out, entry.ServiceFqdn)
+	}
+
+	if instance != nil && instance.Spec.Runtime.Sandbox != nil {
+		for _, c := range instance.Spec.Runtime.Sandbox.Containers {
+			add(c.Name)
+		}
+	}
+
+	remaining := make([]string, 0, len(fqdns))
+	for name := range fqdns {
+		if _, alreadyConsumed := seen[name]; alreadyConsumed {
+			continue
+		}
+		remaining = append(remaining, name)
+	}
+	sort.Strings(remaining)
+	for _, name := range remaining {
+		add(name)
+	}
+
+	return out
+}
+
+func buildNetworkInterfaceStatus(networkIP string, serviceFqdns []string) []computev1alpha.InstanceNetworkInterfaceStatus {
+	if networkIP == "" && len(serviceFqdns) == 0 {
+		return nil
+	}
+
+	var ipPtr *string
+	if networkIP != "" {
+		ip := networkIP
+		ipPtr = &ip
+	}
+
+	if len(serviceFqdns) == 0 {
+		return []computev1alpha.InstanceNetworkInterfaceStatus{
+			{
+				Assignments: computev1alpha.InstanceNetworkInterfaceAssignmentsStatus{
+					NetworkIP: ipPtr,
+				},
+			},
+		}
+	}
+
+	out := make([]computev1alpha.InstanceNetworkInterfaceStatus, 0, len(serviceFqdns))
+	for _, fqdn := range serviceFqdns {
+		f := fqdn
+		out = append(out, computev1alpha.InstanceNetworkInterfaceStatus{
+			Assignments: computev1alpha.InstanceNetworkInterfaceAssignmentsStatus{
+				NetworkIP:  ipPtr,
+				ExternalIP: &f,
+			},
+		})
+	}
+	return out
+}
+
+func networkInterfacesEqual(a, b []computev1alpha.InstanceNetworkInterfaceStatus) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !strPtrEqual(a[i].Assignments.NetworkIP, b[i].Assignments.NetworkIP) {
+			return false
+		}
+		if !strPtrEqual(a[i].Assignments.ExternalIP, b[i].Assignments.ExternalIP) {
+			return false
+		}
+	}
+	return true
+}
+
+func strPtrEqual(a, b *string) bool {
+	switch {
+	case a == nil && b == nil:
+		return true
+	case a == nil || b == nil:
+		return false
+	default:
+		return *a == *b
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.

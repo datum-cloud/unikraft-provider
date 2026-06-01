@@ -2,10 +2,6 @@ module go.datum.net/unikraft-provider
 
 go 1.25.7
 
-//replace unikraft.com/cloud/sdk => /Users/petar/projects/unikraft/cloud/go-sdk
-
-//replace github.com/unikraft-cloud/k8s-operator => /Users/petar/projects/unikraft/cloud/k8s-operator
-
 require (
 	// TEMP: pseudo-version of datum-cloud/compute feat/federated-deployment-scheduling
 	// (commit fa711b9, includes compute#125: SandboxContainer.Command/Args).
