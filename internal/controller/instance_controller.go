@@ -16,9 +16,10 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
+	mchandler "sigs.k8s.io/multicluster-runtime/pkg/handler"
+	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -98,7 +99,7 @@ func (r *InstanceReconciler) Reconcile(ctx context.Context, req mcreconcile.Requ
 	}
 
 	// Create one Unikraft instance per container in the sandbox
-	return r.reconcileSandboxContainers(ctx, req.ClusterName, upstreamClient, downstreamClient, &instance)
+	return r.reconcileSandboxContainers(ctx, string(req.ClusterName), upstreamClient, downstreamClient, &instance)
 }
 
 func (r *InstanceReconciler) reconcileSandboxContainers(
@@ -215,6 +216,8 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 		containers = append(containers, core.Container{
 			Name:      sc.Name,
 			Image:     sc.Image,
+			Command:   sc.Command,
+			Args:      sc.Args,
 			Env:       envVars,
 			Ports:     ports,
 			Resources: resources,
@@ -660,34 +663,36 @@ func strPtrEqual(a, b *string) bool {
 func (r *InstanceReconciler) SetupWithManager(mgr mcmanager.Manager) error {
 	r.mgr = mgr
 
+	watchHandler := mchandler.TypedEnqueueRequestsFromMapFunc(
+		func(ctx context.Context, instancePod *core.Pod) []mcreconcile.Request {
+			logger := log.FromContext(ctx)
+
+			upstreamClusterName := instancePod.Annotations[downstreamclient.UpstreamOwnerClusterName]
+			upstreamName := instancePod.Annotations[downstreamclient.UpstreamOwnerName]
+			upstreamNamespace := instancePod.Annotations[downstreamclient.UpstreamOwnerNamespace]
+
+			if upstreamClusterName == "" || upstreamName == "" || upstreamNamespace == "" {
+				logger.Info("Pod is missing upstream ownership metadata")
+				return nil
+			}
+
+			return []mcreconcile.Request{
+				{
+					Request: reconcile.Request{
+						NamespacedName: types.NamespacedName{
+							Namespace: upstreamNamespace,
+							Name:      upstreamName,
+						},
+					},
+					ClusterName: multicluster.ClusterName(upstreamClusterName),
+				},
+			}
+		},
+	)
+
 	return mcbuilder.ControllerManagedBy(mgr).
 		For(&computev1alpha.Instance{}).
-		WatchesRawSource(milosource.MustNewClusterSource(r.DownstreamCluster, &core.Pod{}, func(clusterName string, cl cluster.Cluster) handler.TypedEventHandler[*core.Pod, mcreconcile.Request] {
-			return handler.TypedEnqueueRequestsFromMapFunc(func(ctx context.Context, instancePod *core.Pod) []mcreconcile.Request {
-				logger := log.FromContext(ctx)
-
-				upstreamClusterName := instancePod.Annotations[downstreamclient.UpstreamOwnerClusterName]
-				upstreamName := instancePod.Annotations[downstreamclient.UpstreamOwnerName]
-				upstreamNamespace := instancePod.Annotations[downstreamclient.UpstreamOwnerNamespace]
-
-				if upstreamClusterName == "" || upstreamName == "" || upstreamNamespace == "" {
-					logger.Info("Unikraft instance is missing upstream ownership metadata")
-					return nil
-				}
-
-				return []mcreconcile.Request{
-					{
-						Request: reconcile.Request{
-							NamespacedName: types.NamespacedName{
-								Namespace: upstreamNamespace,
-								Name:      upstreamName,
-							},
-						},
-						ClusterName: upstreamClusterName,
-					},
-				}
-			})
-		})).
+		WatchesRawSource(milosource.MustNewClusterSource(r.DownstreamCluster, &core.Pod{}, watchHandler)).
 		Named("instance").
 		Complete(r)
 }
