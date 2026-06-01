@@ -4,6 +4,7 @@ metadata:
   name: example-sandbox-instance
   namespace: default
   annotations:
+    cloud.unikraft.v1.services/domain: "my-subdomain"
     cloud.unikraft.v1.instances/scale_to_zero.policy: "on"
     cloud.unikraft.v1.instances/scale_to_zero.stateful: "true"
     cloud.unikraft.v1.instances/scale_to_zero.cooldown_time_ms: "1000"
@@ -14,7 +15,7 @@ spec:
     sandbox:
       containers:
         - name: app
-          image: datum/bun@sha256:13a3b306652d78df4230d57ca2404dc62788c6c9265e11d76d8f3bc05d1a4efc
+          image: datum/http-node26-test:latest
           env:
             - name: ENVIRONMENT
               value: production

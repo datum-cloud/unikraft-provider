@@ -21,9 +21,9 @@ helm install kraftlet \
   --create-namespace \
   --set ukc.metro=$UKC_METRO \
   --set ukc.token=$UKC_TOKEN \
-  --set image.tag=0.4.0 \
   --set kraftlet.podSyncWorkers=64 \
   --set kraftlet.podStatusUpdateInterval="5s" \
+  --set kraftlet.enableInstanceFqdnAnnotations=true \
   oci://ghcr.io/unikraft-cloud/helm-charts/kraftlet
 ```
 
@@ -66,7 +66,7 @@ Should return:
 
 ```
 NAME                       AGE     READY   REASON     NETWORK IP   EXTERNAL IP
-example-sandbox-instance   4m57s   True    PodReady   10.0.0.9 
+example-sandbox-instance   4m57s   True    PodReady   10.0.0.9     my-subdomain.ash-sore-hamster.unikraft.app
 ```
 
 ## Testing
