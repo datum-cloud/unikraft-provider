@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	mcproviders "go.miloapis.com/milo/pkg/multicluster-runtime"
+	core "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -135,6 +136,24 @@ type DownstreamResourceManagementConfig struct {
 	//
 	// +default=false
 	SameCluster bool `json:"sameCluster,omitempty"`
+
+	// NodeSelector overrides the node selector applied to every Instance Pod.
+	// When unset, the provider defaults to {"kubernetes.io/hostname": "kraftlet"},
+	// which is the standard target node label for a single-node kraftlet deployment.
+	// Set this field to select a different node or to use a label-based selector
+	// (e.g. {"node-role": "kraftlet"}) in multi-node deployments.
+	//
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// Tolerations overrides the tolerations applied to every Instance Pod.
+	// When unset, the provider applies a single default toleration for the
+	// virtual-kubelet.io/provider=ukc:NoSchedule taint that kraftlet nodes carry.
+	// Set this field to add or replace tolerations (e.g. for custom taint keys
+	// or to support nodes without the ukc taint in lab/testing environments).
+	//
+	// +optional
+	Tolerations []core.Toleration `json:"tolerations,omitempty"`
 }
 
 func (d *DownstreamResourceManagementConfig) RestConfig() (*rest.Config, error) {
