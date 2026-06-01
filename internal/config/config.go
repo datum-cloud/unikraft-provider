@@ -111,13 +111,11 @@ func (m *MetricsServerConfig) Options(ctx context.Context, c client.Client) metr
 
 // DownstreamResourceManagementConfig configures downstream resource management.
 //
-// Downstream RBAC requirements: the provider's service account in the downstream
-// kraftlet cluster must have create, update, and delete permissions on
-// ConfigMaps and Secrets in the Pod namespace (typically the instance namespace).
-// These are required for companion mirroring — the provider writes ConfigMaps and
-// Secrets derived from upstream cell companions so that kraftlet Pods can resolve
-// volume and env-from references at runtime. Without these permissions the provider
-// cannot create or prune mirrored companions and Pod creation will stall.
+// The downstream kraftlet cluster is always the same cluster as the upstream cell
+// cluster (kraftlet runs as a virtual-kubelet node in the cell). ConfigMap and
+// Secret volumes are referenced by name in the Pod spec; kraftlet resolves and
+// mounts them using its own node/kubelet identity at runtime. The provider never
+// reads or writes ConfigMap/Secret data.
 type DownstreamResourceManagementConfig struct {
 	// KubeconfigPath is the path to the kubeconfig for the downstream cluster.
 	KubeconfigPath string `json:"kubeconfigPath"`
@@ -127,15 +125,6 @@ type DownstreamResourceManagementConfig struct {
 
 	// ManagedResourceLabels are labels applied to downstream resources for filtering.
 	ManagedResourceLabels map[string]string `json:"managedResourceLabels,omitempty"`
-
-	// SameCluster indicates that the downstream kraftlet cluster is the same as
-	// the upstream cell cluster. When true, companion ConfigMaps/Secrets delivered
-	// by the resolver are already present where the Pod runs, so the provider
-	// skips mirroring entirely. Set to false (the default) for separate kraftlet
-	// clusters that require companion objects to be mirrored before Pod creation.
-	//
-	// +default=false
-	SameCluster bool `json:"sameCluster,omitempty"`
 
 	// NodeSelector overrides the node selector applied to every Instance Pod.
 	// When unset, the provider defaults to {"kubernetes.io/hostname": "kraftlet"},

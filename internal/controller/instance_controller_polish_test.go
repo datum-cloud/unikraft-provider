@@ -6,98 +6,10 @@ import (
 	"context"
 	"testing"
 
-	computev1alpha "go.datum.net/compute/api/v1alpha"
 	"go.datum.net/unikraft-provider/internal/config"
 	core "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
-
-// ---------------------------------------------------------------------------
-// Task 1: listInstanceRequests — cluster-name unit test
-// ---------------------------------------------------------------------------
-
-// TestListInstanceRequests_CarriesClusterName verifies that listInstanceRequests
-// enqueues one mcreconcile.Request per Instance in the namespace and that each
-// request carries the supplied cluster name verbatim.
-//
-// This directly tests the seam extracted from instancesInNamespace; the earlier
-// bug was an empty clusterName reaching the mapper because
-// TypedEnqueueRequestsFromMapFunc's ctx does not carry the cluster name.
-// listInstanceRequests takes clusterName as an explicit parameter and stamps it
-// on every returned request, so the test exercises that contract.
-func TestListInstanceRequests_CarriesClusterName(t *testing.T) {
-	ctx := context.Background()
-	s := testScheme(t)
-	const clusterName = "project-abc123"
-	const namespace = "default"
-
-	inst1 := &computev1alpha.Instance{
-		ObjectMeta: metav1.ObjectMeta{Name: "inst-1", Namespace: namespace},
-	}
-	inst2 := &computev1alpha.Instance{
-		ObjectMeta: metav1.ObjectMeta{Name: "inst-2", Namespace: namespace},
-	}
-	// Instance in a different namespace — must NOT appear in results.
-	instOther := &computev1alpha.Instance{
-		ObjectMeta: metav1.ObjectMeta{Name: "inst-other", Namespace: "other-ns"},
-	}
-
-	cl := fake.NewClientBuilder().
-		WithScheme(s).
-		WithObjects(inst1, inst2, instOther).
-		Build()
-
-	reqs, err := listInstanceRequests(ctx, cl, clusterName, namespace)
-	if err != nil {
-		t.Fatalf("listInstanceRequests returned unexpected error: %v", err)
-	}
-
-	if len(reqs) != 2 {
-		t.Fatalf("expected 2 requests (one per Instance in namespace %q), got %d", namespace, len(reqs))
-	}
-
-	reqsByName := make(map[string]struct{}, len(reqs))
-	for _, r := range reqs {
-		if r.ClusterName != clusterName {
-			t.Errorf("request for %q has ClusterName = %q, want %q",
-				r.Name, r.ClusterName, clusterName)
-		}
-		if r.Namespace != namespace {
-			t.Errorf("request for %q has Namespace = %q, want %q",
-				r.Name, r.Namespace, namespace)
-		}
-		reqsByName[r.Name] = struct{}{}
-	}
-
-	for _, name := range []string{"inst-1", "inst-2"} {
-		if _, ok := reqsByName[name]; !ok {
-			t.Errorf("expected request for Instance %q, not found in results", name)
-		}
-	}
-
-	if _, ok := reqsByName["inst-other"]; ok {
-		t.Error("Instance from a different namespace must not appear in results")
-	}
-}
-
-// TestListInstanceRequests_EmptyNamespace verifies that an empty namespace
-// returns zero requests without error.
-func TestListInstanceRequests_EmptyNamespace(t *testing.T) {
-	ctx := context.Background()
-	s := testScheme(t)
-
-	cl := fake.NewClientBuilder().WithScheme(s).Build()
-
-	reqs, err := listInstanceRequests(ctx, cl, "cluster-xyz", "no-instances-here")
-	if err != nil {
-		t.Fatalf("unexpected error for empty namespace: %v", err)
-	}
-	if len(reqs) != 0 {
-		t.Errorf("expected 0 requests for empty namespace, got %d", len(reqs))
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Task 3: NodeSelector / Tolerations override

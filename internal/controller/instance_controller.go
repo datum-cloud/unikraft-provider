@@ -14,13 +14,11 @@ import (
 	core "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
-	mchandler "sigs.k8s.io/multicluster-runtime/pkg/handler"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,14 +37,6 @@ import (
 
 const (
 	unikraftFinalizer = "unikraft.datumapis.com/finalizer"
-
-	// referencedDataLabel is the label applied by the compute resolver to
-	// companion ConfigMaps and Secrets that have been delivered to the cell
-	// namespace. The provider uses this label to discover and mirror companions
-	// into the downstream kraftlet cluster.
-	//
-	// Tracks compute's ReferencedDataLabel constant (not yet exported in v0.6.0).
-	referencedDataLabel = "compute.datumapis.com/referenced-data"
 
 	defaultInstanceMemoryMB = 1024
 
@@ -134,19 +124,6 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 		return ctrl.Result{}, fmt.Errorf("sandbox runtime is nil")
 	}
 
-	// Mirror companion ConfigMaps/Secrets from the upstream cell namespace into
-	// the downstream Pod namespace before creating the Pod. Kraftlet resolves
-	// volume/env references from the cluster where the Pod runs (the downstream
-	// cluster), so companions must be present there first.
-	//
-	// When SameCluster=true (lab/single-cluster), the downstream IS the upstream;
-	// companions are already reachable and mirroring would be a no-op — skip it.
-	if !r.Config.DownstreamResourceManagement.SameCluster {
-		if err := r.mirrorCompanions(ctx, upstreamClient, downstreamClient, instance); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to mirror companion objects for instance %s: %w", instance.Name, err)
-		}
-	}
-
 	instancePod := &core.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      instance.Name,
@@ -220,6 +197,10 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 //   - Disk sources are skipped — kraftlet does not support them at this time.
 //   - Per-container VolumeAttachments with a non-nil MountPath → VolumeMounts.
 //   - Container env vars carry both Value and ValueFrom through faithfully.
+//
+// Volume and env references (ConfigMap/Secret names) are resolved at mount time
+// by kraftlet using its own node/kubelet identity. The provider only references
+// them by name in the Pod spec; no data is read or mirrored by the provider.
 //
 // TODO(Phase 3b): EnvFrom mapping is deferred. compute's SandboxContainer does
 // not yet expose an EnvFrom field. When it is added (planned for v1 API), the
@@ -354,328 +335,6 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 	}
 
 	return spec, nil
-}
-
-// mirrorCompanions copies labeled companion ConfigMaps and Secrets from the
-// upstream cell namespace into the downstream Pod namespace. The resolver stamps
-// companions with the referencedDataLabel; listing by that label finds exactly
-// the set this Instance needs without any name recomputation.
-//
-// If listing upstream companions fails, an error is returned and Pod creation is
-// deferred until the next reconcile. Completeness enforcement (blocking Instance
-// scheduling until all referenced companions are present) is handled by the
-// ReferencedData scheduling gate on the upstream cell side, not here.
-//
-// After mirroring, any downstream companion that no longer exists upstream is
-// pruned — but only if no other surviving (non-deleting) Instance in the
-// namespace still references it.
-//
-// ownerReferences are stripped from mirrored copies: the downstream cluster has
-// no knowledge of upstream objects and GC should be driven by the provider's own
-// deletion path.
-func (r *InstanceReconciler) mirrorCompanions(
-	ctx context.Context,
-	upstreamClient client.Client,
-	downstreamClient client.Client,
-	instance *computev1alpha.Instance,
-) error {
-	logger := log.FromContext(ctx)
-
-	companionSelector := labels.SelectorFromSet(labels.Set{referencedDataLabel: "true"})
-	listOpts := &client.ListOptions{
-		Namespace:     instance.Namespace,
-		LabelSelector: companionSelector,
-	}
-
-	// Mirror ConfigMaps and track which names are required upstream.
-	var cmList core.ConfigMapList
-	if err := upstreamClient.List(ctx, &cmList, listOpts); err != nil {
-		return fmt.Errorf("failed to list companion ConfigMaps in namespace %s: %w", instance.Namespace, err)
-	}
-	requiredCMs := make(map[string]struct{}, len(cmList.Items))
-	for i := range cmList.Items {
-		src := &cmList.Items[i]
-		requiredCMs[src.Name] = struct{}{}
-		mirror := &core.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      src.Name,
-				Namespace: instance.Namespace,
-			},
-		}
-		_, err := controllerutil.CreateOrPatch(ctx, downstreamClient, mirror, func() error {
-			if mirror.Labels == nil {
-				mirror.Labels = map[string]string{}
-			}
-			mirror.Labels[referencedDataLabel] = "true"
-			mirror.Data = src.Data
-			mirror.BinaryData = src.BinaryData
-			// Strip ownerReferences: upstream owners don't exist in the downstream cluster.
-			mirror.OwnerReferences = nil
-			return nil
-		})
-		if err != nil {
-			return fmt.Errorf("failed to mirror companion ConfigMap %s/%s: %w", instance.Namespace, src.Name, err)
-		}
-		logger.V(1).Info("mirrored companion ConfigMap",
-			"name", src.Name,
-			"namespace", instance.Namespace,
-		)
-	}
-
-	// Mirror Secrets and track which names are required upstream.
-	var secretList core.SecretList
-	if err := upstreamClient.List(ctx, &secretList, listOpts); err != nil {
-		return fmt.Errorf("failed to list companion Secrets in namespace %s: %w", instance.Namespace, err)
-	}
-	requiredSecrets := make(map[string]struct{}, len(secretList.Items))
-	for i := range secretList.Items {
-		src := &secretList.Items[i]
-		requiredSecrets[src.Name] = struct{}{}
-		mirror := &core.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      src.Name,
-				Namespace: instance.Namespace,
-			},
-		}
-		_, err := controllerutil.CreateOrPatch(ctx, downstreamClient, mirror, func() error {
-			if mirror.Labels == nil {
-				mirror.Labels = map[string]string{}
-			}
-			mirror.Labels[referencedDataLabel] = "true"
-			mirror.Data = src.Data
-			mirror.Type = src.Type
-			// Strip ownerReferences: upstream owners don't exist in the downstream cluster.
-			mirror.OwnerReferences = nil
-			return nil
-		})
-		if err != nil {
-			return fmt.Errorf("failed to mirror companion Secret %s/%s: %w", instance.Namespace, src.Name, err)
-		}
-		logger.V(1).Info("mirrored companion Secret",
-			"name", src.Name,
-			"namespace", instance.Namespace,
-		)
-	}
-
-	// Prune downstream mirrors that no longer exist upstream, but only when no
-	// other surviving (non-deleting) Instance in the namespace still references
-	// them. This ensures that companions shared across multiple Instances are
-	// not removed while siblings still need them.
-	if err := r.pruneOrphanMirrors(ctx, upstreamClient, downstreamClient, instance, requiredCMs, requiredSecrets); err != nil {
-		return fmt.Errorf("failed to prune orphan mirrors for instance %s: %w", instance.Name, err)
-	}
-
-	return nil
-}
-
-// pruneOrphanMirrors deletes downstream mirrored companions that are no longer
-// present upstream (i.e. their names are not in requiredCMs / requiredSecrets),
-// provided no other surviving Instance in the namespace still references them.
-func (r *InstanceReconciler) pruneOrphanMirrors(
-	ctx context.Context,
-	upstreamClient client.Client,
-	downstreamClient client.Client,
-	instance *computev1alpha.Instance,
-	requiredCMs map[string]struct{},
-	requiredSecrets map[string]struct{},
-) error {
-	logger := log.FromContext(ctx)
-
-	// Build the union of companion names referenced by all surviving
-	// (non-deleting) Instances in the same namespace, excluding the current
-	// instance (whose required set is already reflected in requiredCMs /
-	// requiredSecrets passed in). This prevents deleting a companion that a
-	// sibling Instance still needs.
-	survivingCMs, survivingSecrets, err := r.companionsReferencedBySurvivingInstances(ctx, upstreamClient, instance)
-	if err != nil {
-		return err
-	}
-
-	companionSelector := labels.SelectorFromSet(labels.Set{referencedDataLabel: "true"})
-
-	// Prune orphan ConfigMaps.
-	var downstreamCMs core.ConfigMapList
-	if err := downstreamClient.List(ctx, &downstreamCMs, &client.ListOptions{
-		Namespace:     instance.Namespace,
-		LabelSelector: companionSelector,
-	}); err != nil {
-		return fmt.Errorf("failed to list downstream ConfigMaps for pruning: %w", err)
-	}
-	for i := range downstreamCMs.Items {
-		cm := &downstreamCMs.Items[i]
-		if _, required := requiredCMs[cm.Name]; required {
-			continue // still needed by this instance
-		}
-		if _, sibling := survivingCMs[cm.Name]; sibling {
-			continue // still needed by a sibling instance
-		}
-		if err := downstreamClient.Delete(ctx, cm); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("failed to prune orphan companion ConfigMap %s/%s: %w", cm.Namespace, cm.Name, err)
-		}
-		logger.V(1).Info("pruned orphan companion ConfigMap",
-			"name", cm.Name,
-			"namespace", cm.Namespace,
-		)
-	}
-
-	// Prune orphan Secrets.
-	var downstreamSecrets core.SecretList
-	if err := downstreamClient.List(ctx, &downstreamSecrets, &client.ListOptions{
-		Namespace:     instance.Namespace,
-		LabelSelector: companionSelector,
-	}); err != nil {
-		return fmt.Errorf("failed to list downstream Secrets for pruning: %w", err)
-	}
-	for i := range downstreamSecrets.Items {
-		s := &downstreamSecrets.Items[i]
-		if _, required := requiredSecrets[s.Name]; required {
-			continue // still needed by this instance
-		}
-		if _, sibling := survivingSecrets[s.Name]; sibling {
-			continue // still needed by a sibling instance
-		}
-		if err := downstreamClient.Delete(ctx, s); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("failed to prune orphan companion Secret %s/%s: %w", s.Namespace, s.Name, err)
-		}
-		logger.V(1).Info("pruned orphan companion Secret",
-			"name", s.Name,
-			"namespace", s.Namespace,
-		)
-	}
-
-	return nil
-}
-
-// deleteDownstreamCompanions removes mirrored companion ConfigMaps and Secrets
-// from the downstream namespace during Instance deletion. Only companions that
-// are no longer referenced by any other surviving (non-deleting) Instance in
-// the namespace are deleted — companions shared with siblings are preserved.
-func (r *InstanceReconciler) deleteDownstreamCompanions(
-	ctx context.Context,
-	upstreamClient client.Client,
-	downstreamClient client.Client,
-	instance *computev1alpha.Instance,
-) error {
-	logger := log.FromContext(ctx)
-
-	// Compute the union of companion names still referenced by surviving sibling
-	// Instances. The current instance is already deleting (DeletionTimestamp is
-	// set), so it is excluded from the sibling list; its companions are candidates
-	// for deletion unless a sibling also references them.
-	survivingCMs, survivingSecrets, err := r.companionsReferencedBySurvivingInstances(ctx, upstreamClient, instance)
-	if err != nil {
-		return err
-	}
-
-	companionSelector := labels.SelectorFromSet(labels.Set{referencedDataLabel: "true"})
-	listOpts := &client.ListOptions{
-		Namespace:     instance.Namespace,
-		LabelSelector: companionSelector,
-	}
-
-	var cmList core.ConfigMapList
-	if err := downstreamClient.List(ctx, &cmList, listOpts); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to list downstream companion ConfigMaps: %w", err)
-	}
-	for i := range cmList.Items {
-		cm := &cmList.Items[i]
-		if _, sibling := survivingCMs[cm.Name]; sibling {
-			logger.V(1).Info("skipping companion ConfigMap deletion — still referenced by a sibling instance",
-				"name", cm.Name, "namespace", cm.Namespace)
-			continue
-		}
-		if err := downstreamClient.Delete(ctx, cm); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("failed to delete downstream companion ConfigMap %s/%s: %w", cm.Namespace, cm.Name, err)
-		}
-		logger.V(1).Info("deleted downstream companion ConfigMap", "name", cm.Name, "namespace", cm.Namespace)
-	}
-
-	var secretList core.SecretList
-	if err := downstreamClient.List(ctx, &secretList, listOpts); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to list downstream companion Secrets: %w", err)
-	}
-	for i := range secretList.Items {
-		s := &secretList.Items[i]
-		if _, sibling := survivingSecrets[s.Name]; sibling {
-			logger.V(1).Info("skipping companion Secret deletion — still referenced by a sibling instance",
-				"name", s.Name, "namespace", s.Namespace)
-			continue
-		}
-		if err := downstreamClient.Delete(ctx, s); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("failed to delete downstream companion Secret %s/%s: %w", s.Namespace, s.Name, err)
-		}
-		logger.V(1).Info("deleted downstream companion Secret", "name", s.Name, "namespace", s.Namespace)
-	}
-
-	return nil
-}
-
-// companionsReferencedBySurvivingInstances returns the namespace-wide union of
-// companion ConfigMap names and Secret names that are referenced (labeled with
-// referencedDataLabel) upstream by any surviving (non-deleting) Instance in the
-// same namespace, excluding the provided instance itself.
-//
-// This is a namespace-union computation, not per-instance accounting. The
-// function lists all labeled companions found upstream for each surviving sibling
-// and merges them into a single set. It is intentionally conservative: it favors
-// a companion leak (leaving an object behind) over an over-deletion (removing an
-// object that a sibling still needs). This invariant makes both the pruning path
-// (mirrorCompanions) and the deletion path (handleDeletion) safe to call
-// independently — neither can remove a companion while any sibling references it.
-//
-// "Surviving" means the Instance does not have a DeletionTimestamp set.
-func (r *InstanceReconciler) companionsReferencedBySurvivingInstances(
-	ctx context.Context,
-	upstreamClient client.Client,
-	instance *computev1alpha.Instance,
-) (cms map[string]struct{}, secrets map[string]struct{}, err error) {
-	var siblingList computev1alpha.InstanceList
-	if err := upstreamClient.List(ctx, &siblingList, client.InNamespace(instance.Namespace)); err != nil {
-		return nil, nil, fmt.Errorf("failed to list sibling instances in namespace %s: %w", instance.Namespace, err)
-	}
-
-	companionSelector := labels.SelectorFromSet(labels.Set{referencedDataLabel: "true"})
-
-	cms = make(map[string]struct{})
-	secrets = make(map[string]struct{})
-
-	for i := range siblingList.Items {
-		sibling := &siblingList.Items[i]
-		// Skip the deleting instance itself and any other instances that are
-		// also being deleted.
-		if sibling.Name == instance.Name {
-			continue
-		}
-		if !sibling.DeletionTimestamp.IsZero() {
-			continue
-		}
-
-		// List the companions that exist upstream in the sibling's namespace and
-		// add them to the surviving sets.
-		var sibCMs core.ConfigMapList
-		if err := upstreamClient.List(ctx, &sibCMs, &client.ListOptions{
-			Namespace:     sibling.Namespace,
-			LabelSelector: companionSelector,
-		}); err != nil {
-			return nil, nil, fmt.Errorf("failed to list upstream ConfigMaps for sibling %s: %w", sibling.Name, err)
-		}
-		for j := range sibCMs.Items {
-			cms[sibCMs.Items[j].Name] = struct{}{}
-		}
-
-		var sibSecrets core.SecretList
-		if err := upstreamClient.List(ctx, &sibSecrets, &client.ListOptions{
-			Namespace:     sibling.Namespace,
-			LabelSelector: companionSelector,
-		}); err != nil {
-			return nil, nil, fmt.Errorf("failed to list upstream Secrets for sibling %s: %w", sibling.Name, err)
-		}
-		for j := range sibSecrets.Items {
-			secrets[sibSecrets.Items[j].Name] = struct{}{}
-		}
-	}
-
-	return cms, secrets, nil
 }
 
 func (r *InstanceReconciler) reconcileInstanceService(
@@ -962,14 +621,6 @@ func (r *InstanceReconciler) handleDeletion(
 		logger.Info("deleted downstream service", "name", svc.Name)
 	}
 
-	// Delete mirrored companion ConfigMaps/Secrets from the downstream namespace.
-	// Only needed when companions were actually mirrored (SameCluster=false).
-	if !r.Config.DownstreamResourceManagement.SameCluster {
-		if err := r.deleteDownstreamCompanions(ctx, upstreamClient, downstreamClient, instance); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to delete downstream companions for instance %s: %w", instance.Name, err)
-		}
-	}
-
 	// Remove finalizer
 	controllerutil.RemoveFinalizer(instance, unikraftFinalizer)
 	if err := upstreamClient.Update(ctx, instance); err != nil {
@@ -1136,90 +787,6 @@ func (r *InstanceReconciler) SetupWithManager(mgr mcmanager.Manager) error {
 				}
 			})
 		})).
-		// Watch upstream (cell) companion ConfigMaps labeled with referencedDataLabel
-		// and enqueue all Instances in the same namespace. Companions live in the
-		// upstream cell clusters (same clusters as Instances), so this watch engages
-		// with all provider clusters via the standard mcbuilder.Watches path.
-		// When a companion is rotated or newly delivered, mirroring is re-triggered.
-		//
-		// We use the raw TypedEventHandlerFunc form (func(clusterName, cl) → handler)
-		// rather than mchandler.TypedEnqueueRequestsFromMapFunc so that we capture
-		// the cluster name from the framework-provided closure parameter. The map-func
-		// ctx passed to TypedEnqueueRequestsFromMapFunc does NOT carry the cluster
-		// (ClusterFrom(ctx) returns ""), so GetCluster("") would error and the watch
-		// would silently enqueue nothing.
-		Watches(&core.ConfigMap{}, mchandler.TypedEventHandlerFunc[client.Object, mcreconcile.Request](
-			func(clusterName string, _ cluster.Cluster) handler.TypedEventHandler[client.Object, mcreconcile.Request] {
-				return handler.TypedEnqueueRequestsFromMapFunc(
-					func(ctx context.Context, cm client.Object) []mcreconcile.Request {
-						if cm.GetLabels()[referencedDataLabel] != "true" {
-							return nil
-						}
-						return r.instancesInNamespace(ctx, clusterName, cm.GetNamespace())
-					})
-			}),
-		).
-		// Watch upstream (cell) companion Secrets labeled with referencedDataLabel.
-		Watches(&core.Secret{}, mchandler.TypedEventHandlerFunc[client.Object, mcreconcile.Request](
-			func(clusterName string, _ cluster.Cluster) handler.TypedEventHandler[client.Object, mcreconcile.Request] {
-				return handler.TypedEnqueueRequestsFromMapFunc(
-					func(ctx context.Context, s client.Object) []mcreconcile.Request {
-						if s.GetLabels()[referencedDataLabel] != "true" {
-							return nil
-						}
-						return r.instancesInNamespace(ctx, clusterName, s.GetNamespace())
-					})
-			}),
-		).
 		Named("instance").
 		Complete(r)
-}
-
-// instancesInNamespace lists all Instances in the given namespace on the named
-// cluster and returns them as reconcile requests. Used by companion watches to
-// re-trigger any Instance that may need a fresh mirror pass.
-//
-// Cluster resolution is done via r.mgr.GetCluster to obtain the upstream client.
-// The listing and request-mapping logic is delegated to listInstanceRequests so
-// it can be unit-tested independently of the manager.
-func (r *InstanceReconciler) instancesInNamespace(ctx context.Context, clusterName, namespace string) []mcreconcile.Request {
-	logger := log.FromContext(ctx)
-
-	cl, err := r.mgr.GetCluster(ctx, clusterName)
-	if err != nil {
-		logger.Error(err, "failed to get cluster for companion watch", "cluster", clusterName)
-		return nil
-	}
-
-	reqs, err := listInstanceRequests(ctx, cl.GetClient(), clusterName, namespace)
-	if err != nil {
-		logger.Error(err, "failed to list instances for companion watch", "namespace", namespace)
-		return nil
-	}
-	return reqs
-}
-
-// listInstanceRequests lists all Instances in the given namespace using the
-// provided client and maps each one to an mcreconcile.Request carrying the
-// given clusterName. It is a pure function with no manager dependency so it
-// can be unit-tested directly.
-func listInstanceRequests(ctx context.Context, cl client.Client, clusterName, namespace string) ([]mcreconcile.Request, error) {
-	var instanceList computev1alpha.InstanceList
-	if err := cl.List(ctx, &instanceList, client.InNamespace(namespace)); err != nil {
-		return nil, fmt.Errorf("failed to list instances in namespace %s: %w", namespace, err)
-	}
-
-	reqs := make([]mcreconcile.Request, 0, len(instanceList.Items))
-	for _, inst := range instanceList.Items {
-		reqs = append(reqs, mcreconcile.Request{
-			Request: reconcile.Request{
-				NamespacedName: types.NamespacedName{
-					Namespace: inst.Namespace,
-					Name:      inst.Name,
-				},
-			},
-			ClusterName: clusterName,
-		})
-	}
-	return reqs, nil
 }
