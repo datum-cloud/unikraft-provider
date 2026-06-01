@@ -4,7 +4,10 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	"go.datum.net/unikraft-provider/internal/downstreamclient"
 	milosource "go.miloapis.com/milo/pkg/multicluster-runtime/source"
@@ -28,23 +31,17 @@ import (
 	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
 	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 
-	"go.datum.net/unikraft-provider/internal/config"
 	computev1alpha "go.datum.net/compute/api/v1alpha"
+	"go.datum.net/unikraft-provider/internal/config"
 )
 
 const (
 	unikraftFinalizer = "unikraft.datumapis.com/finalizer"
 
-	// Annotation keys for UKC scale-to-zero and instance-template configuration.
-	// These are the intended interface contract for the feature; not yet wired on
-	// the Kraftlet Pod path but preserved so the mapping code can be re-introduced
-	// without re-discovering the correct annotation names.
-	ukcScaleToZeroPolicyAnnotation         = "cloud.unikraft.v1.instances/scale_to_zero.policy"         //nolint:unused
-	ukcScaleToZeroStatefulAnnotation       = "cloud.unikraft.v1.instances/scale_to_zero.stateful"       //nolint:unused
-	ukcScaleToZeroCoolDownTimeMsAnnotation = "cloud.unikraft.v1.instances/scale_to_zero.cooldown_time_ms" //nolint:unused
-	ukcInstanceTemplate                    = "cloud.unikraft.v1.instances/template"                     //nolint:unused
-
 	defaultInstanceMemoryMB = 1024
+
+	unikraftAnnotationPrefix   = "cloud.unikraft.v1"
+	ukcInstanceFqdnsAnnotation = "cloud.unikraft.v1.instances/fqdns"
 )
 
 type InstanceReconciler struct {
@@ -119,7 +116,7 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 
 	instancePod := &core.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      string(instance.UID),
+			Name:      instance.Name,
 			Namespace: instance.Namespace,
 		},
 	}
@@ -137,6 +134,10 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 		instancePod.Annotations[downstreamclient.UpstreamOwnerClusterName] = clusterName
 		instancePod.Annotations[downstreamclient.UpstreamOwnerName] = instance.Name
 		instancePod.Annotations[downstreamclient.UpstreamOwnerNamespace] = instance.Namespace
+
+		// Mirror any cloud.unikraft.v1.* annotations from the upstream
+		// Instance onto the downstream Pod.
+		copyUnikraftAnnotations(instance.Annotations, instancePod.Annotations)
 
 		if instancePod.CreationTimestamp.IsZero() {
 			logger.Info("building pod spec for new instance pod", "name", instancePod.Name)
@@ -311,6 +312,10 @@ func (r *InstanceReconciler) reconcileInstanceService(
 		svc.Annotations[downstreamclient.UpstreamOwnerName] = instance.Name
 		svc.Annotations[downstreamclient.UpstreamOwnerNamespace] = instance.Namespace
 
+		// Mirror any cloud.unikraft.v1.* annotations from the upstream
+		// Instance onto the downstream Pod.
+		copyUnikraftAnnotations(instance.Annotations, svc.Annotations)
+
 		if svc.Labels == nil {
 			svc.Labels = map[string]string{}
 		}
@@ -459,16 +464,13 @@ func (r *InstanceReconciler) syncInstancePowerState(
 	if len(instancePod.Status.PodIPs) > 0 {
 		networkIP = instancePod.Status.PodIPs[0].IP
 	}
-	if networkIP != "" {
-		if len(instance.Status.NetworkInterfaces) == 0 {
-			instance.Status.NetworkInterfaces = make([]computev1alpha.InstanceNetworkInterfaceStatus, 1)
-			statusChanged = true
-		}
-		if instance.Status.NetworkInterfaces[0].Assignments.NetworkIP == nil ||
-			*instance.Status.NetworkInterfaces[0].Assignments.NetworkIP != networkIP {
-			instance.Status.NetworkInterfaces[0].Assignments.NetworkIP = &networkIP
-			statusChanged = true
-		}
+
+	serviceFqdns := extractServiceFqdnsFromPod(instance, instancePod)
+
+	desiredInterfaces := buildNetworkInterfaceStatus(networkIP, serviceFqdns)
+	if !networkInterfacesEqual(instance.Status.NetworkInterfaces, desiredInterfaces) {
+		instance.Status.NetworkInterfaces = desiredInterfaces
+		statusChanged = true
 	}
 
 	if statusChanged {
@@ -493,7 +495,7 @@ func (r *InstanceReconciler) handleDeletion(
 		for idx := range instance.Spec.Runtime.Sandbox.Containers {
 			podInstance := &core.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      string(instance.UID),
+					Name:      instance.Name,
 					Namespace: instance.Namespace,
 				},
 			}
@@ -529,6 +531,129 @@ func (r *InstanceReconciler) handleDeletion(
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func copyUnikraftAnnotations(src, dst map[string]string) {
+	for k, v := range src {
+		if strings.HasPrefix(k, unikraftAnnotationPrefix) {
+			dst[k] = v
+		}
+	}
+}
+
+type podFqdns map[string]struct {
+	PrivateFqdn string `json:"privateFqdn"`
+	ServiceFqdn string `json:"serviceFqdn"`
+}
+
+func extractServiceFqdnsFromPod(instance *computev1alpha.Instance, pod *core.Pod) []string {
+	if pod == nil {
+		return nil
+	}
+	raw, ok := pod.Annotations[ukcInstanceFqdnsAnnotation]
+	if !ok || raw == "" {
+		return nil
+	}
+
+	var fqdns podFqdns
+	if err := json.Unmarshal([]byte(raw), &fqdns); err != nil {
+		return nil
+	}
+
+	out := make([]string, 0, len(fqdns))
+	seen := make(map[string]struct{}, len(fqdns))
+
+	add := func(name string) {
+		if _, dup := seen[name]; dup {
+			return
+		}
+		entry, found := fqdns[name]
+		if !found || entry.ServiceFqdn == "" {
+			return
+		}
+		seen[name] = struct{}{}
+		out = append(out, entry.ServiceFqdn)
+	}
+
+	if instance != nil && instance.Spec.Runtime.Sandbox != nil {
+		for _, c := range instance.Spec.Runtime.Sandbox.Containers {
+			add(c.Name)
+		}
+	}
+
+	remaining := make([]string, 0, len(fqdns))
+	for name := range fqdns {
+		if _, alreadyConsumed := seen[name]; alreadyConsumed {
+			continue
+		}
+		remaining = append(remaining, name)
+	}
+	sort.Strings(remaining)
+	for _, name := range remaining {
+		add(name)
+	}
+
+	return out
+}
+
+func buildNetworkInterfaceStatus(networkIP string, serviceFqdns []string) []computev1alpha.InstanceNetworkInterfaceStatus {
+	if networkIP == "" && len(serviceFqdns) == 0 {
+		return nil
+	}
+
+	var ipPtr *string
+	if networkIP != "" {
+		ip := networkIP
+		ipPtr = &ip
+	}
+
+	if len(serviceFqdns) == 0 {
+		return []computev1alpha.InstanceNetworkInterfaceStatus{
+			{
+				Assignments: computev1alpha.InstanceNetworkInterfaceAssignmentsStatus{
+					NetworkIP: ipPtr,
+				},
+			},
+		}
+	}
+
+	out := make([]computev1alpha.InstanceNetworkInterfaceStatus, 0, len(serviceFqdns))
+	for _, fqdn := range serviceFqdns {
+		f := fqdn
+		out = append(out, computev1alpha.InstanceNetworkInterfaceStatus{
+			Assignments: computev1alpha.InstanceNetworkInterfaceAssignmentsStatus{
+				NetworkIP:  ipPtr,
+				ExternalIP: &f,
+			},
+		})
+	}
+	return out
+}
+
+func networkInterfacesEqual(a, b []computev1alpha.InstanceNetworkInterfaceStatus) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !strPtrEqual(a[i].Assignments.NetworkIP, b[i].Assignments.NetworkIP) {
+			return false
+		}
+		if !strPtrEqual(a[i].Assignments.ExternalIP, b[i].Assignments.ExternalIP) {
+			return false
+		}
+	}
+	return true
+}
+
+func strPtrEqual(a, b *string) bool {
+	switch {
+	case a == nil && b == nil:
+		return true
+	case a == nil || b == nil:
+		return false
+	default:
+		return *a == *b
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.

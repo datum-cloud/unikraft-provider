@@ -2,12 +2,7 @@ module go.datum.net/unikraft-provider
 
 go 1.25.7
 
-//replace unikraft.com/cloud/sdk => /Users/petar/projects/unikraft/cloud/go-sdk
-
-//replace github.com/unikraft-cloud/k8s-operator => /Users/petar/projects/unikraft/cloud/k8s-operator
-
 require (
-	github.com/unikraft-cloud/k8s-operator v0.1.0
 	go.datum.net/compute v0.6.0
 	go.datum.net/network-services-operator v0.2.2-0.20250524001505-171de7683bae
 	go.miloapis.com/milo v0.1.0
@@ -17,7 +12,6 @@ require (
 	k8s.io/client-go v0.33.1
 	sigs.k8s.io/controller-runtime v0.21.0
 	sigs.k8s.io/multicluster-runtime v0.21.0-alpha.8
-	unikraft.com/cloud/sdk v0.1.1-0.20251109225926-a0682e0e7232
 )
 
 require (
