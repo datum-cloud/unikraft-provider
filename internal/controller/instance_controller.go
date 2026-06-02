@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
 	mchandler "sigs.k8s.io/multicluster-runtime/pkg/handler"
@@ -225,8 +226,9 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 	}
 
 	spec := core.PodSpec{
-		Containers:    containers,
-		RestartPolicy: core.RestartPolicyAlways,
+		Containers:         containers,
+		EnableServiceLinks: ptr.To(false),
+		RestartPolicy:      core.RestartPolicyAlways,
 		NodeSelector: map[string]string{
 			"kubernetes.io/hostname": "kraftlet",
 		},
