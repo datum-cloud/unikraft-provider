@@ -9,7 +9,6 @@ import (
 	computev1alpha "go.datum.net/compute/api/v1alpha"
 	"go.datum.net/unikraft-provider/internal/config"
 	core "k8s.io/api/core/v1"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -47,15 +46,15 @@ func instanceWithVolumes() *computev1alpha.Instance {
 		{
 			Name: "cfg-vol",
 			VolumeSource: computev1alpha.VolumeSource{
-				ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: corev1.LocalObjectReference{Name: "my-config"},
+				ConfigMap: &core.ConfigMapVolumeSource{
+					LocalObjectReference: core.LocalObjectReference{Name: "my-config"},
 				},
 			},
 		},
 		{
 			Name: "sec-vol",
 			VolumeSource: computev1alpha.VolumeSource{
-				Secret: &corev1.SecretVolumeSource{
+				Secret: &core.SecretVolumeSource{
 					SecretName: "my-secret",
 				},
 			},
@@ -71,13 +70,13 @@ func instanceWithVolumes() *computev1alpha.Instance {
 				{Name: "cfg-vol", MountPath: &mountPath},
 				{Name: "sec-vol", MountPath: &secPath},
 			},
-			Env: []corev1.EnvVar{
+			Env: []core.EnvVar{
 				{Name: "PLAIN", Value: "val"},
 				{
 					Name: "FROM_SECRET",
-					ValueFrom: &corev1.EnvVarSource{
-						SecretKeyRef: &corev1.SecretKeySelector{
-							LocalObjectReference: corev1.LocalObjectReference{Name: "my-secret"},
+					ValueFrom: &core.EnvVarSource{
+						SecretKeyRef: &core.SecretKeySelector{
+							LocalObjectReference: core.LocalObjectReference{Name: "my-secret"},
 							Key:                  "password",
 						},
 					},
@@ -106,12 +105,14 @@ func TestSchedulingGate_BlocksPodCreation(t *testing.T) {
 	// reconcileSandboxContainers should never be reached; simulate gate check
 	// by calling the gating logic directly via a reconciler that has an
 	// upstream client holding the instance.
-	upstreamClient := fake.NewClientBuilder().
+	// These are constructed to verify the full reconciler stack compiles and wires
+	// correctly, even though the gate check short-circuits before they are invoked.
+	_ = fake.NewClientBuilder().
 		WithScheme(s).
 		WithObjects(instance).
 		Build()
 
-	r := reconcilerWithConfig(config.DownstreamResourceManagementConfig{})
+	_ = reconcilerWithConfig(config.DownstreamResourceManagementConfig{})
 
 	// The gate check lives at the top of Reconcile, before reconcileSandboxContainers.
 	// Verify it short-circuits by checking no Pod lands on the downstream client.
@@ -130,10 +131,6 @@ func TestSchedulingGate_BlocksPodCreation(t *testing.T) {
 
 	// Fallthrough means gates were incorrectly empty — fail.
 	t.Fatal("scheduling gates were not set on the instance")
-
-	// Suppress unused var warnings.
-	_ = upstreamClient
-	_ = r
 }
 
 // TestSchedulingGate_NoGates_AllowsPodCreation verifies that Pod creation
@@ -199,18 +196,18 @@ func TestBuildPodSpec_Volumes(t *testing.T) {
 
 	if v, ok := volByName["cfg-vol"]; !ok {
 		t.Error("expected volume cfg-vol")
-	} else if v.VolumeSource.ConfigMap == nil {
+	} else if v.ConfigMap == nil {
 		t.Error("expected cfg-vol to have ConfigMap source")
-	} else if v.VolumeSource.ConfigMap.Name != "my-config" {
-		t.Errorf("cfg-vol ConfigMap.Name = %q, want %q", v.VolumeSource.ConfigMap.Name, "my-config")
+	} else if v.ConfigMap.Name != "my-config" {
+		t.Errorf("cfg-vol ConfigMap.Name = %q, want %q", v.ConfigMap.Name, "my-config")
 	}
 
 	if v, ok := volByName["sec-vol"]; !ok {
 		t.Error("expected volume sec-vol")
-	} else if v.VolumeSource.Secret == nil {
+	} else if v.Secret == nil {
 		t.Error("expected sec-vol to have Secret source")
-	} else if v.VolumeSource.Secret.SecretName != "my-secret" {
-		t.Errorf("sec-vol Secret.SecretName = %q, want %q", v.VolumeSource.Secret.SecretName, "my-secret")
+	} else if v.Secret.SecretName != "my-secret" {
+		t.Errorf("sec-vol Secret.SecretName = %q, want %q", v.Secret.SecretName, "my-secret")
 	}
 
 	// Container must have two VolumeMounts.
