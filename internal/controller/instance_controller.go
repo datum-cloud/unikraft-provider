@@ -269,12 +269,20 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 			})
 		}
 
-		// Map memory limit
-		memoryMB := mapContainerMemory(sc)
+		// Resolve CPU and memory from the container spec or the instanceType
+		// catalog. Using requests == limits ensures kraftlet sees a guaranteed
+		// QoS class and the Pod's resource footprint matches what quota claimed.
+		cpuMillicores, memoryMB := resolveContainerResources(instance, sc)
+		memQ := *resource.NewQuantity(memoryMB*1024*1024, resource.BinarySI)
+		resourceList := core.ResourceList{
+			core.ResourceMemory: memQ,
+		}
+		if cpuMillicores > 0 {
+			resourceList[core.ResourceCPU] = *resource.NewMilliQuantity(cpuMillicores, resource.DecimalSI)
+		}
 		resources := core.ResourceRequirements{
-			Limits: core.ResourceList{
-				core.ResourceMemory: *resource.NewQuantity(memoryMB*1024*1024, resource.BinarySI),
-			},
+			Requests: resourceList.DeepCopy(),
+			Limits:   resourceList,
 		}
 
 		// Map volume attachments to volume mounts. Only attachments with a
