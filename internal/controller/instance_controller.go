@@ -401,12 +401,17 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 	}
 
 	spec := core.PodSpec{
-		Containers:         containers,
-		Volumes:            volumes,
-		EnableServiceLinks: ptr.To(false),
-		RestartPolicy:      core.RestartPolicyAlways,
-		NodeSelector:       nodeSelector,
-		Tolerations:        tolerations,
+		Containers: containers,
+		Volumes:    volumes,
+		// Sandbox workloads must not be granted Kubernetes API access. Disable
+		// projection of the default ServiceAccount token so no credential is
+		// mounted into the instance Pod (the apiserver still assigns the default
+		// SA identity, but without a token it cannot authenticate).
+		AutomountServiceAccountToken: ptr.To(false),
+		EnableServiceLinks:           ptr.To(false),
+		RestartPolicy:                core.RestartPolicyAlways,
+		NodeSelector:                 nodeSelector,
+		Tolerations:                  tolerations,
 	}
 
 	return spec, nil

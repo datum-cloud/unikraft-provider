@@ -11,6 +11,29 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+// TestBuildPodSpec_DisablesServiceAccountToken verifies that instance Pods are
+// hardened against Kubernetes API access: the default ServiceAccount token is
+// not auto-mounted, and service link env vars are disabled.
+func TestBuildPodSpec_DisablesServiceAccountToken(t *testing.T) {
+	ctx := context.Background()
+	inst := newTestInstance()
+	inst.UID = types.UID("no-sa-token-uid")
+
+	r := reconcilerWithConfig(config.DownstreamResourceManagementConfig{})
+
+	spec, err := r.buildPodSpecFromContainers(ctx, inst, inst.Spec.Runtime.Sandbox.Containers)
+	if err != nil {
+		t.Fatalf("buildPodSpecFromContainers returned error: %v", err)
+	}
+
+	if spec.AutomountServiceAccountToken == nil || *spec.AutomountServiceAccountToken {
+		t.Errorf("AutomountServiceAccountToken = %v, want explicit false", spec.AutomountServiceAccountToken)
+	}
+	if spec.EnableServiceLinks == nil || *spec.EnableServiceLinks {
+		t.Errorf("EnableServiceLinks = %v, want explicit false", spec.EnableServiceLinks)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Task 3: NodeSelector / Tolerations override
 // ---------------------------------------------------------------------------
