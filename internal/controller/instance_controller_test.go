@@ -8,11 +8,15 @@ import (
 
 	computev1alpha "go.datum.net/compute/api/v1alpha"
 	core "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 // newTestInstance returns a minimal Instance for testing status sync.
@@ -127,16 +131,17 @@ func TestSyncInstancePowerState_ProgrammedCondition(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			instance := newTestInstance()
-			r := &InstanceReconciler{}
 
-			// Use a fake client — syncInstancePowerState only calls Status().Update().
+			// Use a fake client with the instance pre-seeded so Status().Patch works.
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(testScheme(t)).
 				WithObjects(instance).
 				WithStatusSubresource(&computev1alpha.Instance{}).
 				Build()
 
-			err := r.syncInstancePowerState(context.Background(), fakeClient, instance, tc.pod)
+			r := &InstanceReconciler{Client: fakeClient}
+
+			err := r.syncInstancePowerState(context.Background(), instance, tc.pod)
 			if err != nil {
 				t.Fatalf("syncInstancePowerState returned unexpected error: %v", err)
 			}
@@ -163,15 +168,16 @@ func TestSyncInstancePowerState_ProgrammedCondition(t *testing.T) {
 // and derives it from Programmed + Running. Writing Ready here would race.
 func TestSyncInstancePowerState_NoReadyConditionWritten(t *testing.T) {
 	instance := newTestInstance()
-	r := &InstanceReconciler{}
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(testScheme(t)).
 		WithObjects(instance).
 		WithStatusSubresource(&computev1alpha.Instance{}).
 		Build()
 
+	r := &InstanceReconciler{Client: fakeClient}
+
 	// Use a running instance; if Ready were ever written it would appear here.
-	if err := r.syncInstancePowerState(context.Background(), fakeClient, instance, podWithPhase(core.PodRunning)); err != nil {
+	if err := r.syncInstancePowerState(context.Background(), instance, podWithPhase(core.PodRunning)); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -186,14 +192,15 @@ func TestSyncInstancePowerState_NoReadyConditionWritten(t *testing.T) {
 // requires Running=True (after Programmed=True) to set Ready=True.
 func TestSyncInstancePowerState_InstanceRunning_RunningConditionTrue(t *testing.T) {
 	instance := newTestInstance()
-	r := &InstanceReconciler{}
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(testScheme(t)).
 		WithObjects(instance).
 		WithStatusSubresource(&computev1alpha.Instance{}).
 		Build()
 
-	if err := r.syncInstancePowerState(context.Background(), fakeClient, instance, podWithPhase(core.PodRunning)); err != nil {
+	r := &InstanceReconciler{Client: fakeClient}
+
+	if err := r.syncInstancePowerState(context.Background(), instance, podWithPhase(core.PodRunning)); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -203,6 +210,117 @@ func TestSyncInstancePowerState_InstanceRunning_RunningConditionTrue(t *testing.
 	}
 	if running.Status != metav1.ConditionTrue {
 		t.Errorf("Running.Status = %q, want True", running.Status)
+	}
+}
+
+// TestSyncInstancePowerState_PreservesOtherConditions verifies that the provider's
+// scoped status patch does NOT overwrite conditions owned by the compute quota
+// controller (QuotaGranted, Ready). This is the BUG-2 regression guard.
+func TestSyncInstancePowerState_PreservesOtherConditions(t *testing.T) {
+	instance := newTestInstance()
+	// Pre-seed QuotaGranted and Ready conditions that compute owns.
+	instance.Status.Conditions = []metav1.Condition{
+		{
+			Type:               computev1alpha.InstanceQuotaGranted,
+			Status:             metav1.ConditionTrue,
+			Reason:             "QuotaGranted",
+			ObservedGeneration: 1,
+		},
+		{
+			Type:               computev1alpha.InstanceReady,
+			Status:             metav1.ConditionTrue,
+			Reason:             "Ready",
+			ObservedGeneration: 1,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(testScheme(t)).
+		WithObjects(instance).
+		WithStatusSubresource(&computev1alpha.Instance{}).
+		Build()
+
+	r := &InstanceReconciler{Client: fakeClient}
+
+	if err := r.syncInstancePowerState(context.Background(), instance, podWithPhase(core.PodRunning)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// QuotaGranted must still be True after the patch.
+	quotaGranted := apimeta.FindStatusCondition(instance.Status.Conditions, computev1alpha.InstanceQuotaGranted)
+	if quotaGranted == nil {
+		t.Fatal("QuotaGranted condition was lost after syncInstancePowerState")
+	}
+	if quotaGranted.Status != metav1.ConditionTrue {
+		t.Errorf("QuotaGranted.Status = %q after sync, want True (must not be overwritten)", quotaGranted.Status)
+	}
+
+	// Running and Programmed must also be set correctly.
+	running := apimeta.FindStatusCondition(instance.Status.Conditions, computev1alpha.InstanceRunning)
+	if running == nil || running.Status != metav1.ConditionTrue {
+		t.Errorf("Running condition should be True after PodRunning sync")
+	}
+	programmed := apimeta.FindStatusCondition(instance.Status.Conditions, computev1alpha.InstanceProgrammed)
+	if programmed == nil || programmed.Status != metav1.ConditionTrue {
+		t.Errorf("Programmed condition should be True after PodRunning sync")
+	}
+}
+
+// TestSyncInstancePowerState_ConflictOnConcurrentWrite verifies that when the
+// quota controller writes to the Instance between our Get and Patch (simulated by
+// the interceptor returning 409 Conflict), syncInstancePowerState surfaces a
+// Conflict error so the caller can requeue and re-Get before patching. This
+// ensures the optimistic-lock path in MergeFromWithOptimisticLock is exercised:
+// the caller's apierrors.IsConflict(err) branch fires instead of silently
+// clobbering the quota controller's write.
+func TestSyncInstancePowerState_ConflictOnConcurrentWrite(t *testing.T) {
+	instance := newTestInstance()
+	instance.ResourceVersion = "1"
+	instance.Status.Conditions = []metav1.Condition{
+		{
+			Type:               computev1alpha.InstanceQuotaGranted,
+			Status:             metav1.ConditionTrue,
+			Reason:             "QuotaGranted",
+			ObservedGeneration: 1,
+		},
+	}
+
+	// Simulate the quota controller updating the instance after the provider
+	// captured its base snapshot but before the patch lands. The interceptor
+	// returns a 409 Conflict, mirroring the real API server's behaviour when
+	// metadata.resourceVersion in the merge patch body no longer matches the
+	// stored version (MergeFromWithOptimisticLock embeds the resourceVersion).
+	conflictErr := apierrors.NewConflict(
+		schema.GroupResource{Group: "compute.datumapis.com", Resource: "instances"},
+		instance.Name,
+		nil,
+	)
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(testScheme(t)).
+		WithObjects(instance).
+		WithStatusSubresource(&computev1alpha.Instance{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(
+				ctx context.Context,
+				cl client.Client,
+				subResourceName string,
+				obj client.Object,
+				patch client.Patch,
+				opts ...client.SubResourcePatchOption,
+			) error {
+				return conflictErr
+			},
+		}).
+		Build()
+
+	r := &InstanceReconciler{Client: fakeClient}
+
+	err := r.syncInstancePowerState(context.Background(), instance, podWithPhase(core.PodRunning))
+	if err == nil {
+		t.Fatal("expected a Conflict error from syncInstancePowerState, got nil")
+	}
+	if !apierrors.IsConflict(err) {
+		t.Errorf("expected apierrors.IsConflict(err)=true, got err=%v", err)
 	}
 }
 
@@ -344,14 +462,15 @@ func TestSyncInstancePowerState_WaitingReasonTranslation(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			instance := newTestInstance()
-			r := &InstanceReconciler{}
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(testScheme(t)).
 				WithObjects(instance).
 				WithStatusSubresource(&computev1alpha.Instance{}).
 				Build()
 
-			if err := r.syncInstancePowerState(context.Background(), fakeClient, instance, tc.pod); err != nil {
+			r := &InstanceReconciler{Client: fakeClient}
+
+			if err := r.syncInstancePowerState(context.Background(), instance, tc.pod); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 

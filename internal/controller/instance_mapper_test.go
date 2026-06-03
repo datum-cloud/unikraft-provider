@@ -172,11 +172,11 @@ func TestResolveContainerResources(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		instance      *computev1alpha.Instance
-		container     *computev1alpha.SandboxContainer
-		wantCPU       int64
-		wantMem       int64
+		name      string
+		instance  *computev1alpha.Instance
+		container *computev1alpha.SandboxContainer
+		wantCPU   int64
+		wantMem   int64
 	}{
 		{
 			// Common production shape: instanceType only, no explicit limits.

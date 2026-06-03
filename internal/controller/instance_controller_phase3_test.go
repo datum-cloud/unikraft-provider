@@ -9,6 +9,7 @@ import (
 	computev1alpha "go.datum.net/compute/api/v1alpha"
 	"go.datum.net/unikraft-provider/internal/config"
 	core "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -87,6 +88,12 @@ func instanceWithVolumes() *computev1alpha.Instance {
 	return inst
 }
 
+// testSchemeWithAll returns a scheme that includes both compute and core types
+// plus Pod/Service GVKs needed for Owns() reconciliation in tests.
+func testSchemeWithAll(t *testing.T) *runtime.Scheme {
+	return testScheme(t)
+}
+
 // ---------------------------------------------------------------------------
 // TestSchedulingGate_BlocksPodCreation
 // ---------------------------------------------------------------------------
@@ -100,14 +107,12 @@ func TestSchedulingGate_BlocksPodCreation(t *testing.T) {
 
 	instance := instanceWithGates("ReferencedData")
 
-	downstreamClient := fake.NewClientBuilder().WithScheme(s).Build()
-
 	// reconcileSandboxContainers should never be reached; simulate gate check
-	// by calling the gating logic directly via a reconciler that has an
-	// upstream client holding the instance.
+	// by calling the gating logic directly via a reconciler that has a client
+	// holding the instance.
 	// These are constructed to verify the full reconciler stack compiles and wires
 	// correctly, even though the gate check short-circuits before they are invoked.
-	_ = fake.NewClientBuilder().
+	cl := fake.NewClientBuilder().
 		WithScheme(s).
 		WithObjects(instance).
 		Build()
@@ -115,12 +120,12 @@ func TestSchedulingGate_BlocksPodCreation(t *testing.T) {
 	_ = reconcilerWithConfig(config.DownstreamResourceManagementConfig{})
 
 	// The gate check lives at the top of Reconcile, before reconcileSandboxContainers.
-	// Verify it short-circuits by checking no Pod lands on the downstream client.
+	// Verify it short-circuits by checking no Pod lands.
 	if instance.Spec.Controller != nil && len(instance.Spec.Controller.SchedulingGates) > 0 {
 		// Gate check would trigger return ctrl.Result{}, nil — simulate the check.
-		// Pod must not exist downstream.
+		// Pod must not exist.
 		var podList core.PodList
-		if err := downstreamClient.List(ctx, &podList); err != nil {
+		if err := cl.List(ctx, &podList); err != nil {
 			t.Fatalf("unexpected error listing pods: %v", err)
 		}
 		if len(podList.Items) != 0 {
@@ -143,23 +148,24 @@ func TestSchedulingGate_NoGates_AllowsPodCreation(t *testing.T) {
 	instance.UID = types.UID("no-gate-uid")
 	// No Controller set → no gates.
 
-	upstreamClient := fake.NewClientBuilder().
+	// Single client for both reads and writes (the new model).
+	cl := fake.NewClientBuilder().
 		WithScheme(s).
 		WithObjects(instance).
 		WithStatusSubresource(&computev1alpha.Instance{}).
 		Build()
 
-	downstreamClient := fake.NewClientBuilder().WithScheme(s).Build()
-
 	r := reconcilerWithConfig(config.DownstreamResourceManagementConfig{})
+	r.Client = cl
+	r.Scheme = s
 
-	_, err := r.reconcileSandboxContainers(ctx, "test-cluster", upstreamClient, downstreamClient, instance)
+	_, err := r.reconcileSandboxContainers(ctx, instance)
 	if err != nil {
 		t.Fatalf("reconcileSandboxContainers returned unexpected error: %v", err)
 	}
 
 	var podList core.PodList
-	if err := downstreamClient.List(ctx, &podList); err != nil {
+	if err := cl.List(ctx, &podList); err != nil {
 		t.Fatalf("failed to list pods: %v", err)
 	}
 	if len(podList.Items) != 1 {

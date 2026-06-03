@@ -9,37 +9,26 @@ import (
 	"sort"
 	"strings"
 
-	"go.datum.net/unikraft-provider/internal/downstreamclient"
-	milosource "go.miloapis.com/milo/pkg/multicluster-runtime/source"
 	core "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
-	mchandler "sigs.k8s.io/multicluster-runtime/pkg/handler"
-	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/cluster"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	mccontext "sigs.k8s.io/multicluster-runtime/pkg/context"
-	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
-	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 
 	computev1alpha "go.datum.net/compute/api/v1alpha"
 	"go.datum.net/unikraft-provider/internal/config"
 )
 
 const (
-	unikraftFinalizer = "unikraft.datumapis.com/finalizer"
-
 	defaultInstanceMemoryMB = 1024
 
 	unikraftAnnotationPrefix   = "cloud.unikraft.v1"
@@ -47,28 +36,20 @@ const (
 )
 
 type InstanceReconciler struct {
-	mgr               mcmanager.Manager
+	client.Client
+	Scheme            *runtime.Scheme
 	Config            *config.UnikraftProvider
 	LocationClassName string
-	DownstreamCluster cluster.Cluster
 }
 
 // Reconcile implements the reconciliation logic
-func (r *InstanceReconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (ctrl.Result, error) {
+func (r *InstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	logger.Info("reconciling instance", "cluster", req.ClusterName, "name", req.Name, "namespace", req.Namespace)
-
-	cl, err := r.mgr.GetCluster(ctx, req.ClusterName)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	ctx = mccontext.WithCluster(ctx, req.ClusterName)
-	upstreamClient := cl.GetClient()
+	logger.Info("reconciling instance", "name", req.Name, "namespace", req.Namespace)
 
 	var instance computev1alpha.Instance
-	if err := upstreamClient.Get(ctx, req.NamespacedName, &instance); err != nil {
+	if err := r.Get(ctx, req.NamespacedName, &instance); err != nil {
 		if apierrors.IsNotFound(err) {
 			logger.Info("instance not found, may have been deleted")
 			return ctrl.Result{}, nil
@@ -76,20 +57,9 @@ func (r *InstanceReconciler) Reconcile(ctx context.Context, req mcreconcile.Requ
 		return ctrl.Result{}, fmt.Errorf("failed to get instance: %w", err)
 	}
 
-	downstreamClient := r.DownstreamCluster.GetClient()
-
+	// With controller ownerRefs in the same namespace, Kubernetes GC reclaims
+	// the Pod and Service when the Instance is deleted. No finalizer needed.
 	if !instance.DeletionTimestamp.IsZero() {
-		if controllerutil.ContainsFinalizer(&instance, unikraftFinalizer) {
-			return r.handleDeletion(ctx, upstreamClient, downstreamClient, &instance)
-		}
-		return ctrl.Result{}, nil
-	}
-
-	if !controllerutil.ContainsFinalizer(&instance, unikraftFinalizer) {
-		controllerutil.AddFinalizer(&instance, unikraftFinalizer)
-		if err := upstreamClient.Update(ctx, &instance); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to add finalizer: %w", err)
-		}
 		return ctrl.Result{}, nil
 	}
 
@@ -109,15 +79,11 @@ func (r *InstanceReconciler) Reconcile(ctx context.Context, req mcreconcile.Requ
 		return ctrl.Result{}, nil
 	}
 
-	// Create one Unikraft instance per container in the sandbox
-	return r.reconcileSandboxContainers(ctx, string(req.ClusterName), upstreamClient, downstreamClient, &instance)
+	return r.reconcileSandboxContainers(ctx, &instance)
 }
 
 func (r *InstanceReconciler) reconcileSandboxContainers(
 	ctx context.Context,
-	clusterName string,
-	upstreamClient client.Client,
-	downstreamClient client.Client,
 	instance *computev1alpha.Instance,
 ) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -133,7 +99,7 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 		},
 	}
 
-	result, err := controllerutil.CreateOrPatch(ctx, downstreamClient, instancePod, func() error {
+	result, err := controllerutil.CreateOrPatch(ctx, r.Client, instancePod, func() error {
 		if instancePod.Labels == nil {
 			instancePod.Labels = map[string]string{}
 		}
@@ -143,9 +109,6 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 		if instancePod.Annotations == nil {
 			instancePod.Annotations = map[string]string{}
 		}
-		instancePod.Annotations[downstreamclient.UpstreamOwnerClusterName] = clusterName
-		instancePod.Annotations[downstreamclient.UpstreamOwnerName] = instance.Name
-		instancePod.Annotations[downstreamclient.UpstreamOwnerNamespace] = instance.Namespace
 
 		// Mirror any cloud.unikraft.v1.* annotations from the upstream
 		// Instance onto the downstream Pod.
@@ -158,13 +121,16 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 				return err
 			}
 			instancePod.Spec = podSpec
-			return nil
+		} else {
+			logger.Info("skipping pod spec reconciliation; pod already exists",
+				"name", instancePod.Name,
+				"creationTimestamp", instancePod.CreationTimestamp,
+			)
 		}
 
-		logger.Info("skipping pod spec reconciliation; pod already exists",
-			"name", instancePod.Name,
-			"creationTimestamp", instancePod.CreationTimestamp,
-		)
+		if err := controllerutil.SetControllerReference(instance, instancePod, r.Scheme); err != nil {
+			return err
+		}
 		return nil
 	})
 	if err != nil {
@@ -179,11 +145,14 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 		"message", instancePod.Status.Message,
 	)
 
-	if err := r.reconcileInstanceService(ctx, downstreamClient, clusterName, instance); err != nil {
+	if err := r.reconcileInstanceService(ctx, instance); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to reconcile service for instance %s: %w", instance.Name, err)
 	}
 
-	if err := r.syncInstancePowerState(ctx, upstreamClient, instance, instancePod); err != nil {
+	if err := r.syncInstancePowerState(ctx, instance, instancePod); err != nil {
+		if apierrors.IsConflict(err) {
+			return ctrl.Result{Requeue: true}, nil
+		}
 		return ctrl.Result{}, fmt.Errorf("failed to sync instance power state: %w", err)
 	}
 
@@ -352,8 +321,6 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 
 func (r *InstanceReconciler) reconcileInstanceService(
 	ctx context.Context,
-	downstreamClient client.Client,
-	clusterName string,
 	instance *computev1alpha.Instance,
 ) error {
 	logger := log.FromContext(ctx)
@@ -380,7 +347,7 @@ func (r *InstanceReconciler) reconcileInstanceService(
 	}
 
 	if len(allPorts) == 0 {
-		if err := downstreamClient.Delete(ctx, svc); err != nil && !apierrors.IsNotFound(err) {
+		if err := r.Delete(ctx, svc); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete obsolete service: %w", err)
 		}
 		return nil
@@ -414,16 +381,13 @@ func (r *InstanceReconciler) reconcileInstanceService(
 		}
 	}
 
-	result, err := controllerutil.CreateOrPatch(ctx, downstreamClient, svc, func() error {
+	result, err := controllerutil.CreateOrPatch(ctx, r.Client, svc, func() error {
 		if svc.Annotations == nil {
 			svc.Annotations = map[string]string{}
 		}
-		svc.Annotations[downstreamclient.UpstreamOwnerClusterName] = clusterName
-		svc.Annotations[downstreamclient.UpstreamOwnerName] = instance.Name
-		svc.Annotations[downstreamclient.UpstreamOwnerNamespace] = instance.Namespace
 
 		// Mirror any cloud.unikraft.v1.* annotations from the upstream
-		// Instance onto the downstream Pod.
+		// Instance onto the downstream Service.
 		copyUnikraftAnnotations(instance.Annotations, svc.Annotations)
 
 		if svc.Labels == nil {
@@ -438,6 +402,10 @@ func (r *InstanceReconciler) reconcileInstanceService(
 		svc.Spec.Ports = servicePorts
 		if svc.Spec.Type == "" {
 			svc.Spec.Type = core.ServiceTypeClusterIP
+		}
+
+		if err := controllerutil.SetControllerReference(instance, svc, r.Scheme); err != nil {
+			return err
 		}
 		return nil
 	})
@@ -456,11 +424,16 @@ func (r *InstanceReconciler) reconcileInstanceService(
 
 func (r *InstanceReconciler) syncInstancePowerState(
 	ctx context.Context,
-	upstreamClient client.Client,
 	instance *computev1alpha.Instance,
 	instancePod *core.Pod,
 ) error {
 	logger := log.FromContext(ctx)
+
+	// Take the base snapshot BEFORE any status mutation so the patch only
+	// includes fields this controller owns (Programmed, Running,
+	// ObservedTemplateHash, NetworkInterfaces). QuotaGranted/Ready are owned
+	// by the compute quota controller and must not be overwritten.
+	base := instance.DeepCopy()
 
 	runningCondition := metav1.Condition{
 		Type:               computev1alpha.InstanceRunning,
@@ -584,63 +557,17 @@ func (r *InstanceReconciler) syncInstancePowerState(
 	}
 
 	if statusChanged {
-		if err := upstreamClient.Status().Update(ctx, instance); err != nil {
-			return fmt.Errorf("failed to update instance status: %w", err)
+		// Use an optimistic-lock merge patch so that a concurrent write by the
+		// compute quota controller (updating QuotaGranted/Ready between our Get
+		// and Patch) yields a 409 Conflict rather than silently clobbering their
+		// update. The caller handles IsConflict by requeueing, which causes a
+		// fresh Get before the next patch attempt (BUG-2 fix).
+		if err := r.Status().Patch(ctx, instance, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+			return err
 		}
 	}
 
 	return nil
-}
-
-func (r *InstanceReconciler) handleDeletion(
-	ctx context.Context,
-	upstreamClient client.Client,
-	downstreamClient client.Client,
-	instance *computev1alpha.Instance,
-) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	// Delete all downstream Unikraft instances for all containers
-	if instance.Spec.Runtime.Sandbox != nil {
-		for idx := range instance.Spec.Runtime.Sandbox.Containers {
-			podInstance := &core.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      instance.Name,
-					Namespace: instance.Namespace,
-				},
-			}
-
-			if err := downstreamClient.Delete(ctx, podInstance); err != nil {
-				if !apierrors.IsNotFound(err) {
-					return ctrl.Result{}, fmt.Errorf("failed to delete unikraft instance for container %d: %w", idx, err)
-				}
-			}
-			logger.Info("deleted downstream unikraft instance", "container-idx", idx)
-		}
-	}
-
-	// Delete the downstream Service that was created alongside the pod (if any).
-	svc := &core.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      instance.Name,
-			Namespace: instance.Namespace,
-		},
-	}
-	if err := downstreamClient.Delete(ctx, svc); err != nil {
-		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, fmt.Errorf("failed to delete downstream service: %w", err)
-		}
-	} else {
-		logger.Info("deleted downstream service", "name", svc.Name)
-	}
-
-	// Remove finalizer
-	controllerutil.RemoveFinalizer(instance, unikraftFinalizer)
-	if err := upstreamClient.Update(ctx, instance); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to remove finalizer: %w", err)
-	}
-
-	return ctrl.Result{}, nil
 }
 
 func copyUnikraftAnnotations(src, dst map[string]string) {
@@ -767,39 +694,18 @@ func strPtrEqual(a, b *string) bool {
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *InstanceReconciler) SetupWithManager(mgr mcmanager.Manager) error {
-	r.mgr = mgr
-
-	watchHandler := mchandler.TypedEnqueueRequestsFromMapFunc(
-		func(ctx context.Context, instancePod *core.Pod) []mcreconcile.Request {
-			logger := log.FromContext(ctx)
-
-			upstreamClusterName := instancePod.Annotations[downstreamclient.UpstreamOwnerClusterName]
-			upstreamName := instancePod.Annotations[downstreamclient.UpstreamOwnerName]
-			upstreamNamespace := instancePod.Annotations[downstreamclient.UpstreamOwnerNamespace]
-
-			if upstreamClusterName == "" || upstreamName == "" || upstreamNamespace == "" {
-				logger.Info("Pod is missing upstream ownership metadata")
-				return nil
-			}
-
-			return []mcreconcile.Request{
-				{
-					Request: reconcile.Request{
-						NamespacedName: types.NamespacedName{
-							Namespace: upstreamNamespace,
-							Name:      upstreamName,
-						},
-					},
-					ClusterName: multicluster.ClusterName(upstreamClusterName),
-				},
-			}
-		},
-	)
-
-	return mcbuilder.ControllerManagedBy(mgr).
+func (r *InstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if r.Client == nil {
+		r.Client = mgr.GetClient()
+	}
+	if r.Scheme == nil {
+		r.Scheme = mgr.GetScheme()
+	}
+	return ctrl.NewControllerManagedBy(mgr).
 		For(&computev1alpha.Instance{}).
-		WatchesRawSource(milosource.MustNewClusterSource(r.DownstreamCluster, &core.Pod{}, watchHandler)).
+		Owns(&core.Pod{}).
+		Owns(&core.Service{}).
+		WithOptions(controller.Options{MaxConcurrentReconciles: 5}).
 		Named("instance").
 		Complete(r)
 }
