@@ -1,6 +1,6 @@
 module go.datum.net/unikraft-provider
 
-go 1.26.0
+go 1.26.3
 
 require (
 	// TEMP: pseudo-version of datum-cloud/compute feat/federated-deployment-scheduling
@@ -14,7 +14,7 @@ require (
 	k8s.io/apimachinery v0.36.0
 	k8s.io/client-go v0.36.0
 	sigs.k8s.io/controller-runtime v0.24.1
-	sigs.k8s.io/multicluster-runtime v0.23.3
+	sigs.k8s.io/multicluster-runtime v0.24.1
 )
 
 require k8s.io/utils v0.0.0-20260210185600-b8788abfbbc2
