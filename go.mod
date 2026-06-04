@@ -3,10 +3,11 @@ module go.datum.net/unikraft-provider
 go 1.25.7
 
 require (
-	// TEMP: pseudo-version of datum-cloud/compute feat/federated-deployment-scheduling
-	// (commit fa711b9, includes compute#125: SandboxContainer.Command/Args).
+	// TEMP: pseudo-version of datum-cloud/compute feat/configmap-secret-mounts-federated
+	// (commit 4d79db4: renames the Instance "Running" condition to "Available";
+	// also carries compute#125 SandboxContainer.Command/Args).
 	// Repin to a stable go.datum.net/compute tag once the #107 chain reaches compute main.
-	go.datum.net/compute v0.7.1-0.20260529122150-fa711b9b2676
+	go.datum.net/compute v0.7.1-0.20260604002608-4d79db43074e
 	go.datum.net/network-services-operator v0.21.10-0.20260528021428-b0f2347f5359
 	go.miloapis.com/milo v0.25.2-0.20260528192736-e4258524ad42
 	golang.org/x/sync v0.19.0

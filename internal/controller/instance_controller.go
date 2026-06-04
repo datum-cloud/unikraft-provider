@@ -528,21 +528,21 @@ func (r *InstanceReconciler) syncInstancePowerState(
 	logger := log.FromContext(ctx)
 
 	// Take the base snapshot BEFORE any status mutation so the patch only
-	// includes fields this controller owns (Programmed, Running,
+	// includes fields this controller owns (Programmed, Available,
 	// ObservedTemplateHash, NetworkInterfaces). QuotaGranted/Ready are owned
 	// by the compute quota controller and must not be overwritten.
 	base := instance.DeepCopy()
 
-	runningCondition := metav1.Condition{
-		Type:               computev1alpha.InstanceRunning,
+	availableCondition := metav1.Condition{
+		Type:               computev1alpha.InstanceAvailable,
 		ObservedGeneration: instance.Generation,
-		Reason:             computev1alpha.InstanceRunningReasonRunning,
+		Reason:             computev1alpha.InstanceAvailableReasonAvailable,
 		Status:             metav1.ConditionTrue,
 	}
 
 	// programmedCondition reflects whether the infrastructure provider has
 	// successfully provisioned the underlying compute resource. The compute
-	// InstanceReconciler derives Ready from Programmed=True + Running=True, so
+	// InstanceReconciler derives Ready from Programmed=True + Available=True, so
 	// this provider is responsible for setting Programmed and must NOT write
 	// the Ready condition directly (that would race with compute's derivation).
 	programmedCondition := metav1.Condition{
@@ -557,11 +557,11 @@ func (r *InstanceReconciler) syncInstancePowerState(
 
 	switch {
 	case !instance.DeletionTimestamp.IsZero():
-		runningCondition.Status = metav1.ConditionFalse
-		runningCondition.Reason = computev1alpha.InstanceRunningReasonStopping
-		runningCondition.Message = "Instance is terminating"
+		availableCondition.Status = metav1.ConditionFalse
+		availableCondition.Reason = computev1alpha.InstanceAvailableReasonStopping
+		availableCondition.Message = "Instance is terminating"
 		programmedCondition.Status = metav1.ConditionFalse
-		programmedCondition.Reason = computev1alpha.InstanceRunningReasonStopping
+		programmedCondition.Reason = computev1alpha.InstanceAvailableReasonStopping
 		programmedCondition.Message = "Instance is terminating"
 
 	default:
@@ -570,12 +570,12 @@ func (r *InstanceReconciler) syncInstancePowerState(
 		// it transitions to False only on terminal failures.
 		switch instancePod.Status.Phase {
 		case core.PodRunning:
-			runningCondition.Status = metav1.ConditionTrue
-			runningCondition.Reason = computev1alpha.InstanceRunningReasonRunning
-			runningCondition.Message = "Instance is running"
+			availableCondition.Status = metav1.ConditionTrue
+			availableCondition.Reason = computev1alpha.InstanceAvailableReasonAvailable
+			availableCondition.Message = "Instance is available"
 			programmedCondition.Status = metav1.ConditionTrue
 			programmedCondition.Reason = computev1alpha.InstanceProgrammedReasonProgrammed
-			programmedCondition.Message = "Instance is running"
+			programmedCondition.Message = "Instance is available"
 
 			// The instance has been programmed, so record the template hash the
 			// provider acted on. Compute counts an instance toward its current
@@ -592,9 +592,9 @@ func (r *InstanceReconciler) syncInstancePowerState(
 				}
 			}
 		case core.PodPending:
-			runningCondition.Status = metav1.ConditionUnknown
-			runningCondition.Reason = "Provisioning"
-			runningCondition.Message = "Instance is provisioning"
+			availableCondition.Status = metav1.ConditionUnknown
+			availableCondition.Reason = "Provisioning"
+			availableCondition.Message = "Instance is provisioning"
 			// Translate the first non-empty container waiting reason into
 			// Instance-domain language. Log the raw k8s detail for operators.
 			for _, cs := range instancePod.Status.ContainerStatuses {
@@ -603,42 +603,42 @@ func (r *InstanceReconciler) syncInstancePowerState(
 						"k8sReason", cs.State.Waiting.Reason,
 						"k8sMessage", cs.State.Waiting.Message,
 					)
-					runningCondition.Reason, runningCondition.Message =
+					availableCondition.Reason, availableCondition.Message =
 						translateWaitingReason(cs.State.Waiting.Reason, cs.State.Waiting.Message)
 					break
 				}
 			}
 			programmedCondition.Status = metav1.ConditionUnknown
 			programmedCondition.Reason = computev1alpha.InstanceProgrammedReasonProgrammingInProgress
-			programmedCondition.Message = runningCondition.Message
+			programmedCondition.Message = availableCondition.Message
 		case core.PodSucceeded:
-			runningCondition.Status = metav1.ConditionFalse
-			runningCondition.Reason = computev1alpha.InstanceRunningReasonStopping
-			runningCondition.Message = "Instance has stopped"
+			availableCondition.Status = metav1.ConditionFalse
+			availableCondition.Reason = computev1alpha.InstanceAvailableReasonStopping
+			availableCondition.Message = "Instance has stopped"
 			programmedCondition.Status = metav1.ConditionFalse
-			programmedCondition.Reason = computev1alpha.InstanceRunningReasonStopping
+			programmedCondition.Reason = computev1alpha.InstanceAvailableReasonStopping
 			programmedCondition.Message = "Instance has stopped"
 		case core.PodFailed:
-			runningCondition.Status = metav1.ConditionFalse
-			runningCondition.Reason = "Failed"
-			runningCondition.Message = instancePod.Status.Message
-			if runningCondition.Message == "" {
-				runningCondition.Message = "Instance failed"
+			availableCondition.Status = metav1.ConditionFalse
+			availableCondition.Reason = "Failed"
+			availableCondition.Message = instancePod.Status.Message
+			if availableCondition.Message == "" {
+				availableCondition.Message = "Instance failed"
 			}
 			programmedCondition.Status = metav1.ConditionFalse
 			programmedCondition.Reason = "Failed"
-			programmedCondition.Message = runningCondition.Message
+			programmedCondition.Message = availableCondition.Message
 		default:
-			runningCondition.Status = metav1.ConditionUnknown
-			runningCondition.Reason = "Unknown"
-			runningCondition.Message = "Instance state is unknown"
+			availableCondition.Status = metav1.ConditionUnknown
+			availableCondition.Reason = "Unknown"
+			availableCondition.Message = "Instance state is unknown"
 			programmedCondition.Status = metav1.ConditionUnknown
 			programmedCondition.Reason = computev1alpha.InstanceProgrammedReasonProgrammingInProgress
 			programmedCondition.Message = "Instance state is unknown"
 		}
 	}
 
-	statusChanged = meta.SetStatusCondition(&instance.Status.Conditions, runningCondition) || statusChanged
+	statusChanged = meta.SetStatusCondition(&instance.Status.Conditions, availableCondition) || statusChanged
 	statusChanged = meta.SetStatusCondition(&instance.Status.Conditions, programmedCondition) || statusChanged
 
 	var networkIP string
