@@ -9,11 +9,62 @@ stage: alpha
 
 A Datum Cloud `Instance` does not start life as an `Instance` — it is the
 edge-local materialization of a user-defined `Workload`. This section works
-top-down: first the platform path that takes an end user's `Workload` and
-federates it out to edge locations as `Instance`s, then the per-location
-components that turn each `Instance` into a running unikernel. The sequence
-diagrams later in this document trace the individual API calls and CNI
-invocations for that per-location flow.
+top-down: first the compute resources and how they relate, then the platform
+path that federates a `Workload` out to edge locations as `Instance`s, and
+finally the per-location components that turn each `Instance` into a running
+unikernel. The sequence diagrams later in this document trace the individual
+API calls and CNI invocations for that per-location flow.
+
+### Compute resource model
+
+The compute API is a small ownership hierarchy fed by a few referenced
+resources. A `Workload` owns one `WorkloadDeployment` per placement/city code,
+and each `WorkloadDeployment` owns the `Instance` replicas that run in its
+location. Instances pull in supporting resources by reference — the `Network`
+they attach to, and any `ConfigMap`s or `Secret`s used for environment or
+volumes.
+
+```mermaid
+flowchart TB
+    subgraph compute["compute.datumapis.com"]
+        WL["Workload<br/>template + placements[]"]
+        WD["WorkloadDeployment<br/>workloadRef · placementName · cityCode<br/>template · scaleSettings"]
+        INST["Instance<br/>runtime · networkInterfaces[] · volumes[]"]
+    end
+
+    subgraph net["networking.datumapis.com"]
+        NETW[Network]
+        LOC[Location]
+    end
+
+    subgraph refdata["Referenced data (Workload namespace)"]
+        CM[ConfigMap]
+        SEC[Secret]
+    end
+
+    realized["Pod + VPCAttachment<br/>(realized at edge — see flows below)"]
+
+    WL ==>|"owns · one per placement / city code"| WD
+    WD ==>|"owns · N replicas"| INST
+    WD -.->|"status.location"| LOC
+    INST -->|"networkInterfaces[].network"| NETW
+    INST -->|"env · envFrom · volumes · imagePullSecrets"| CM
+    INST -->|"env · envFrom · volumes · imagePullSecrets"| SEC
+    WL -.->|"template references"| CM
+    WL -.->|"template references"| SEC
+    INST -.->|"realized by operators"| realized
+```
+
+Edge styling: thick arrows (`==>`) are owner relationships, solid arrows
+(`-->`) are spec references, and dashed arrows (`-.->`) are status or
+loosely-coupled links.
+
+- **Workload → WorkloadDeployment** — a `Workload` owns one `WorkloadDeployment` for every placement/city code in `spec.placements[].cityCodes`; each deployment carries `workloadRef`, `placementName`, and `cityCode`.
+- **WorkloadDeployment → Instance** — owns the `Instance` replicas for its location (count driven by `scaleSettings`). Instances are stamped with labels (`workload-name`, `placement-name`, `city-code`, `instance-index`) that trace them back up the hierarchy.
+- **WorkloadDeployment → Location** — `status.location` records which location the deployment ultimately landed in.
+- **Instance → Network** — each entry in `spec.networkInterfaces[]` references a `Network` to attach to.
+- **Instance → ConfigMap / Secret** — containers consume `ConfigMap`s and `Secret`s through env vars, `envFrom`, volumes, and image pull secrets; the same data is referenced from the `Workload` template and propagated to edge cells alongside the deployment.
+- **Instance → Pod / VPCAttachment** — at the edge, each `Instance` is realized into a `Pod` and `VPCAttachment` by the Unikraft and Compute operators, as traced in the flows below.
 
 ### From Workload to edge Instances
 
