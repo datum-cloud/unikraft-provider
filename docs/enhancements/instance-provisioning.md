@@ -22,37 +22,33 @@ and where to run it (one or more placements, each scoped to a set of city
 codes). The platform fans that single declaration out across edge locations:
 
 ```mermaid
-flowchart TB
-    user([End User])
-
-    subgraph project["Datum Cloud (project control plane)"]
-        WL["Workload<br/>(template + placements)"]
-        WLC[Workload Controller]
-        WD["WorkloadDeployment<br/>(one per placement / city code)"]
+%%{init: {
+  "sequence": {
+    "showSequenceNumbers": true
+  }
+}}%%
+sequenceDiagram
+    actor User as End User
+    box rgb(199,228,255) Datum Cloud (project control plane)
+        participant WLC as Workload Controller
+        participant FED as WorkloadDeployment<br/>Federator
+    end
+    box rgb(255,243,205) Karmada (federation control plane)
+        participant KARMADA as Karmada
+    end
+    box rgb(220,255,220) Edge Location (POP-cell, per city code)
+        participant WDC as WorkloadDeployment<br/>Controller
     end
 
-    subgraph fed["Karmada (federation control plane)"]
-        FED[WorkloadDeployment Federator]
-        PP["PropagationPolicy<br/>(per city code)"]
-        KARMADA[Karmada]
-    end
-
-    subgraph edge["Edge Location (POP-cell cluster, per city code)"]
-        WDC[WorkloadDeployment Controller]
-        INST["Instance(s)"]
-        flow["per-location provisioning<br/>(see below)"]
-    end
-
-    user -->|"create Workload"| WL
-    WL --> WLC
-    WLC -->|"fan out by placement"| WD
-    WD -->|"federate downstream"| FED
-    FED -->|"create / select<br/>(label: city-code)"| PP
-    FED --> KARMADA
-    PP --> KARMADA
-    KARMADA -->|"propagate to clusters<br/>with matching city-code"| WDC
-    WDC -->|"materialize replicas"| INST
-    INST --> flow
+    User->>WLC: Create Workload<br/>(template + placements)
+    WLC->>FED: Create WorkloadDeployment<br/>(one per placement / city code)
+    FED->>KARMADA: Federate WorkloadDeployment +<br/>PropagationPolicy (per city code)
+    KARMADA->>WDC: Propagate to clusters<br/>with matching city-code
+    WDC->>WDC: Materialize Instance replicas
+    Note over WDC: Each Instance is provisioned by<br/>the per-location flow (below)
+    WDC-->>KARMADA: Instance / deployment status
+    KARMADA-->>FED: Aggregated status
+    FED-->>WLC: Mirror status onto Workload
 ```
 
 - **Workload** — the user-facing declaration: an instance template plus a list of placements, each naming the city codes it should run in and its scale settings.
@@ -69,41 +65,39 @@ unikernel, and a host-side agent drives the actual boot and networking. The
 following describes those components and how they interact at a coarse grain.
 
 ```mermaid
-flowchart TB
-    user(["Edge WorkloadDeployment<br/>Controller (materializes Instance)"])
-
-    subgraph datum["Datum Cloud (control plane)"]
-        API[API Server]
-        CO[Compute Operator]
-        UP[Unikraft Provider]
-        GO[Galactic Operator]
-        NET["Network Services + IPAM<br/>(IP allocation)"]
+%%{init: {
+  "sequence": {
+    "showSequenceNumbers": true
+  }
+}}%%
+sequenceDiagram
+    box rgb(199,228,255) Datum Cloud (control plane)
+        participant WDC as WorkloadDeployment<br/>Controller
+        participant API as API Server
+        participant CO as Compute Operator
+        participant NET as Network Services<br/>+ IPAM
+        participant UP as Unikraft Provider
+        participant GO as Galactic Operator
+        participant KL as Kraftlet
+    end
+    box rgb(220,255,220) Unikraft Host (data plane)
+        participant HOST as CNI chain +<br/>Unikraft Runtime
     end
 
-    subgraph host["Unikraft Host (data plane)"]
-        KL[Kraftlet]
-        CNI["CNI chain<br/>Multus → IPAM CNI → Galactic CNI"]
-        UK[Unikraft Runtime]
-    end
-
-    user -->|"create / delete Instance"| API
-
-    API -->|"Instance events"| CO
-    CO -->|"allocate private IP"| NET
-    CO -->|"create VPCAttachment"| API
-
-    API -->|"Instance events"| UP
-    UP -->|"translate Instance → Pod"| API
-    UP -.->|"sync Pod status → Instance status"| API
-
-    API -->|"VPCAttachment + Pod events"| GO
-    GO -->|"NAD + Multus annotations"| API
-
-    API -->|"scheduled Pod"| KL
-    KL -->|"set up interfaces"| CNI
-    CNI -->|"confirm IP allocation"| NET
-    KL -->|"boot unikernel on TAP device"| UK
-    KL -.->|"report Pod status"| API
+    WDC->>API: Create Instance
+    API->>CO: Watch: Instance created
+    CO->>NET: Allocate private IP
+    NET-->>CO: Allocated IP
+    CO->>API: Create VPCAttachment
+    API->>UP: Watch: Instance created
+    UP->>API: Translate Instance → Pod
+    API->>GO: Watch: VPCAttachment + Pod created
+    GO->>API: Create NAD, inject Multus annotation
+    API->>KL: Pod scheduled to node
+    KL->>HOST: Provision host networking (CNI chain),<br/>boot unikernel on TAP device
+    KL->>API: Update Pod status (Running)
+    API->>UP: Watch: Pod status updated
+    UP->>API: Sync status onto Instance
 ```
 
 ### Component responsibilities
