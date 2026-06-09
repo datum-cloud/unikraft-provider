@@ -21,8 +21,6 @@ System_Boundary(datum, "Datum Cloud") {
     System_Boundary(edge, "Edge Location (one per city code)") {
         Container_Ext(edge_api, "Edge API Server", "Kubernetes API", "The local source of truth for everything running in this location")
         Container(co_edge, "Compute Operator", "Service", "Creates the individual Instances for this location and reserves each one a private network address")
-        Container(up, "Unikraft Provider", "Service", "Schedules each Instance onto a unikernel host and reports its health back to the consumer's view")
-        Container_Ext(go_op, "Galactic Operator", "Service", "Prepares the network wiring each Instance needs to join its private network (VPC)")
         Container(platform, "Platform Services", "Shared services", "Hand out private network addresses and enforce quotas")
 
         Boundary(host, "Unikraft Host (per node)") {
@@ -45,8 +43,6 @@ Rel_D(karmada, edge_api, "Delivers the deployment for this city")
 ' Edge services around the edge API server
 Rel_L(co_edge, edge_api, "Deployment → Instances, each with a reserved address")
 Rel_D(co_edge, platform, "Reserves a private address")
-Rel_R(up, edge_api, "Instance → scheduled work; health updates")
-Rel_R(go_op, edge_api, "Defines each Instance's network wiring")
 
 ' Host data plane
 Rel_U(kraftlet, edge_api, "Picks up scheduled Instances; reports status")

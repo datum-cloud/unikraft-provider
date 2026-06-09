@@ -41,11 +41,15 @@ How to read it:
   Kraftlet is where the platform stops describing and starts doing: it wires
   up the host's networking and boots the unikernel.
 - **Green means this system's own services.** The compute system itself is
-  the Compute Operator, the Unikraft Provider, and the Platform Services.
-  Everything shown in the muted external style is something the system builds
-  on but does not own: the Kubernetes API servers, Karmada federation, the
-  Galactic networking pieces, the Unikraft host runtime, the image registry,
-  and the Datum network fabric.
+  the Compute Operator and the Platform Services. Everything shown in the
+  muted external style is something the system builds on but does not own:
+  the Kubernetes API servers, Karmada federation, the Galactic networking,
+  the Unikraft host runtime, the image registry, and the Datum network
+  fabric.
+- **A couple of supporting services are left out** to keep the edge view
+  simple: the Unikraft Provider, which moves each Instance onto a host, and
+  the Galactic Operator, which defines its network wiring. The sequence
+  diagrams below show both in full.
 - **Platform Services** bundles the shared services the compute path leans on
   (network addressing, quotas) — they run on their own, but their internals
   are not part of this story.
