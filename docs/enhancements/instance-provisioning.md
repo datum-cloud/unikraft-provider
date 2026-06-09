@@ -48,6 +48,13 @@ How to read it:
 - **Platform Services** aggregates the shared services the compute path leans
   on (network services, IPAM, quota) — they are independent deployments, but
   their internals are not part of this system's story.
+- **Boxes are deployables, not controllers.** Each container is a separately
+  deployed unit. The individual reconcilers inside an operator binary — e.g.
+  the Workload and WorkloadDeployment controllers within the Compute Operator
+  — are component-level (C4 level 3) detail; the sequence diagrams below name
+  them as lifelines when tracing behavior. The Compute Operator appears in
+  both control planes: the same operator deployed with different
+  responsibilities per plane.
 
 The diagram source is
 [`instance-provisioning-containers.puml`](./instance-provisioning-containers.puml)

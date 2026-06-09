@@ -12,17 +12,15 @@ Person(user, "Platform Consumer", "Declares Workloads: an instance template plus
 System_Boundary(datum, "Datum Cloud") {
 
     System_Boundary(project_cp, "Project Control Plane") {
-        Container(project_api, "Project API Server", "Kubernetes API", "Stores Workload, WorkloadDeployment, Network; event bus for project controllers")
-        Container(wlc, "Workload Controller", "Go / controller-runtime", "Expands a Workload into one WorkloadDeployment per placement and city code")
-        Container(fed, "WorkloadDeployment Federator", "Go / controller-runtime", "Pushes WorkloadDeployments and per-city-code PropagationPolicies downstream; mirrors aggregated status back")
+        Container(project_api, "Project API Server", "Kubernetes API", "Stores Workload, WorkloadDeployment, Network; event bus for project operators")
+        Container(co_project, "Compute Operator", "Go / controller-runtime", "Expands each Workload into one WorkloadDeployment per placement and city code; federates them downstream and mirrors aggregated status back")
     }
 
     System_Ext(karmada, "Karmada", "Federation control plane; propagates each WorkloadDeployment to the edge clusters matching its PropagationPolicy")
 
     System_Boundary(edge, "Edge Location (POP-cell cluster, one per city code)") {
         Container(edge_api, "Edge API Server", "Kubernetes API", "Stores Instance, Pod, VPCAttachment, NetworkAttachmentDefinition; event bus for edge operators")
-        Container(wdc, "WorkloadDeployment Controller", "Go / controller-runtime", "Materializes the Instance replicas for its location")
-        Container(co, "Compute Operator", "Go / controller-runtime", "Resolves instance network interfaces, drives IP allocation, manages VPCAttachments")
+        Container(co_edge, "Compute Operator", "Go / controller-runtime", "Materializes Instance replicas from each WorkloadDeployment; resolves instance networking, drives IP allocation, manages VPCAttachments")
         Container(up, "Unikraft Provider", "Go / controller-runtime", "Translates each Instance into a Pod bound for a Kraftlet node; syncs Pod status back onto the Instance")
         Container(go_op, "Galactic Operator", "Go / controller-runtime + webhook", "Builds the CNI chain definition (NetworkAttachmentDefinition) per VPCAttachment; injects the Multus annotation into Pods")
         Container(platform, "Platform Services", "Network Services · IPAM · Quota", "Allocate private IPs from subnet address pools, enforce quota")
@@ -40,17 +38,15 @@ System_Ext(fabric, "Datum Network Fabric", "BGP peers / SRv6 backbone interconne
 
 ' Spine: project control plane → federation → edge cluster → host
 Rel_D(user, project_api, "Declares Workload", "HTTPS")
-Rel_R(wlc, project_api, "Workload → WorkloadDeployments", "reconcile")
-Rel_L(project_api, fed, "WorkloadDeployment events", "watch")
-Rel_D(fed, karmada, "Pushes deployments + policies; mirrors status", "API")
+Rel_L(project_api, co_project, "Workload → WorkloadDeployments", "watch / reconcile")
+Rel_D(co_project, karmada, "Pushes deployments + policies; mirrors status", "API")
 Rel_D(karmada, edge_api, "Propagates WorkloadDeployment", "API")
 
 ' Edge operators around the edge API server
-Rel_R(wdc, edge_api, "WorkloadDeployment → Instances", "reconcile")
-Rel_L(co, edge_api, "Instance → VPCAttachment", "reconcile")
-Rel_D(co, platform, "Allocates IP", "AddressClaim")
-Rel_R(up, edge_api, "Instance → Pod; status sync", "reconcile")
-Rel_L(go_op, edge_api, "VPCAttachment → NAD; annotates Pod", "webhook")
+Rel_L(co_edge, edge_api, "WorkloadDeployment → Instances; Instance → VPCAttachment", "watch / reconcile")
+Rel_D(co_edge, platform, "Allocates IP", "AddressClaim")
+Rel_R(up, edge_api, "Instance → Pod; status sync", "watch / reconcile")
+Rel_L(go_op, edge_api, "VPCAttachment → NAD; annotates Pod", "watch / webhook")
 
 ' Host data plane
 Rel_U(kraftlet, edge_api, "Scheduled Pods; Pod status", "watch")
