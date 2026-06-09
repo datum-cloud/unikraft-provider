@@ -9,11 +9,52 @@ stage: alpha
 
 A Datum Cloud `Instance` does not start life as an `Instance` — it is the
 edge-local materialization of a user-defined `Workload`. This section works
-top-down: first the compute resources and how they relate, then the platform
+top-down: first the deployed containers of the compute system and where each
+one runs, then the compute resources and how they relate, then the platform
 path that federates a `Workload` out to edge locations as `Instance`s, and
 finally the per-location components that turn each `Instance` into a running
 unikernel. The sequence diagrams later in this document trace the individual
 API calls and CNI invocations for that per-location flow.
+
+### Container view
+
+The [C4 container diagram](https://c4model.com/diagrams/container) below shows
+the running pieces of the compute system, the deployment boundary each one
+lives in, and how a `Workload` declared at the top of the platform becomes a
+running unikernel at the bottom of an edge location.
+
+![C4 container diagram — Datum Cloud compute](./instance-provisioning-containers.png)
+
+How to read it:
+
+- **Four planes, one spine.** A `Workload` flows down through four deployment
+  boundaries: the project control plane expands it into per-location
+  `WorkloadDeployment`s, Karmada federates those to the matching POP-cell
+  clusters, each edge cluster's operators turn its copy into `Instance`s and
+  then `Pod`s, and the Unikraft host boots the resulting unikernels. Status
+  flows back up the same spine.
+- **The API servers are the event bus.** Controllers and operators never call
+  each other directly — every hand-off happens by writing a resource that the
+  next component watches. Relationship labels name the resource that mediates
+  each hand-off (e.g. `Instance → Pod`).
+- **The declarative/imperative frontier is Kraftlet.** Everything above the
+  Unikraft Host boundary is Kubernetes-style reconciliation over declarative
+  resources. Kraftlet is where that ends: it turns a scheduled `Pod` into
+  imperative host work — CNI invocations, VRF/TAP plumbing, SRv6/BGP route
+  programming, and a booted unikernel.
+- **Karmada is off-the-shelf** federation infrastructure operated by Datum
+  (rendered in the muted external style); the OCI registry and the Datum
+  network fabric are the system's external dependencies.
+- **Platform Services** aggregates the shared services the compute path leans
+  on (network services, IPAM, quota) — they are independent deployments, but
+  their internals are not part of this system's story.
+
+The diagram source is
+[`instance-provisioning-containers.puml`](./instance-provisioning-containers.puml)
+(styled with the shared
+[Datum C4 theme](https://github.com/datum-cloud/enhancements/blob/main/enhancements/datum-theme.puml));
+regenerate the PNG with
+`plantuml -tpng docs/enhancements/instance-provisioning-containers.puml`.
 
 ### Compute resource model
 
