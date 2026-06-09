@@ -7,55 +7,55 @@ LAYOUT_TOP_DOWN()
 
 title Container diagram — Datum Cloud compute (Workload to running unikernel)
 
-Person(user, "Platform Consumer", "Declares Workloads: an instance template plus placements (city codes + scale)")
+Person(user, "Platform Consumer", "Describes what to run and the cities to run it in, as a Workload")
 
 System_Boundary(datum, "Datum Cloud") {
 
     System_Boundary(project_cp, "Project Control Plane") {
-        Container(project_api, "Project API Server", "Kubernetes API", "Stores Workload, WorkloadDeployment, Network; event bus for project operators")
-        Container(co_project, "Compute Operator", "Go / controller-runtime", "Expands each Workload into one WorkloadDeployment per placement and city code; federates them downstream and mirrors aggregated status back")
+        Container(project_api, "Project API Server", "Kubernetes API", "The front door for a project: stores the consumer's Workloads and networks")
+        Container(co_project, "Compute Operator", "Service", "Splits each Workload into one deployment per city, hands them to federation, and rolls status back up to the consumer")
     }
 
-    System_Ext(karmada, "Karmada", "Federation control plane; propagates each WorkloadDeployment to the edge clusters matching its PropagationPolicy")
+    System_Ext(karmada, "Karmada", "Off-the-shelf federation layer that delivers each deployment to the edge locations it belongs in")
 
-    System_Boundary(edge, "Edge Location (POP-cell cluster, one per city code)") {
-        Container(edge_api, "Edge API Server", "Kubernetes API", "Stores Instance, Pod, VPCAttachment, NetworkAttachmentDefinition; event bus for edge operators")
-        Container(co_edge, "Compute Operator", "Go / controller-runtime", "Materializes Instance replicas from each WorkloadDeployment; resolves instance networking, drives IP allocation, manages VPCAttachments")
-        Container(up, "Unikraft Provider", "Go / controller-runtime", "Translates each Instance into a Pod bound for a Kraftlet node; syncs Pod status back onto the Instance")
-        Container(go_op, "Galactic Operator", "Go / controller-runtime + webhook", "Builds the CNI chain definition (NetworkAttachmentDefinition) per VPCAttachment; injects the Multus annotation into Pods")
-        Container(platform, "Platform Services", "Network Services · IPAM · Quota", "Allocate private IPs from subnet address pools, enforce quota")
+    System_Boundary(edge, "Edge Location (one per city code)") {
+        Container(edge_api, "Edge API Server", "Kubernetes API", "The local source of truth for everything running in this location")
+        Container(co_edge, "Compute Operator", "Service", "Creates the individual Instances for this location and reserves each one a private network address")
+        Container(up, "Unikraft Provider", "Service", "Schedules each Instance onto a unikernel host and reports its health back to the consumer's view")
+        Container(go_op, "Galactic Operator", "Service", "Prepares the network wiring each Instance needs to join its private network (VPC)")
+        Container(platform, "Platform Services", "Shared services", "Hand out private network addresses and enforce quotas")
 
         Boundary(host, "Unikraft Host (per node)") {
-            Container(kraftlet, "Kraftlet", "Host agent", "Registers as a node; turns scheduled Pods into unikernel configs, drives the CNI chain, boots unikernels, reports status")
-            Container(gnet, "Galactic Networking", "CNI chain + BGP", "Multus → IPAM CNI → Galactic CNI: provisions VRF/TAP/veth plumbing, programs SRv6 routes, announces endpoints over BGP")
-            Container(uk, "Unikernel Instance", "Unikraft VM", "The consumer's workload, attached to its VPC via a TAP device")
+            Container(kraftlet, "Kraftlet", "Host agent", "Picks up scheduled Instances: sets up their networking, boots them, and reports how they are doing")
+            Container(gnet, "Galactic Networking", "Network plumbing", "Connects each unikernel to its private network and tells the wider network how to reach it")
+            Container(uk, "Unikernel Instance", "Lightweight VM", "The consumer's workload, up and running")
         }
     }
 }
 
-System_Ext(registry, "OCI Registry", "Hosts unikernel images")
-System_Ext(fabric, "Datum Network Fabric", "BGP peers / SRv6 backbone interconnecting VPCs across locations")
+System_Ext(registry, "Image Registry", "Stores the unikernel images")
+System_Ext(fabric, "Datum Network Fabric", "Datum's private backbone connecting locations and private networks")
 
-' Spine: project control plane → federation → edge cluster → host
-Rel_D(user, project_api, "Declares Workload", "HTTPS")
-Rel_L(project_api, co_project, "Workload → WorkloadDeployments", "watch / reconcile")
-Rel_D(co_project, karmada, "Pushes deployments + policies; mirrors status", "API")
-Rel_D(karmada, edge_api, "Propagates WorkloadDeployment", "API")
+' Spine: project control plane → federation → edge location → host
+Rel_D(user, project_api, "Declares a Workload")
+Rel_L(project_api, co_project, "Workload → per-city deployments")
+Rel_D(co_project, karmada, "Hands off deployments; receives status")
+Rel_D(karmada, edge_api, "Delivers the deployment for this city")
 
-' Edge operators around the edge API server
-Rel_L(co_edge, edge_api, "WorkloadDeployment → Instances; Instance → VPCAttachment", "watch / reconcile")
-Rel_D(co_edge, platform, "Allocates IP", "AddressClaim")
-Rel_R(up, edge_api, "Instance → Pod; status sync", "watch / reconcile")
-Rel_L(go_op, edge_api, "VPCAttachment → NAD; annotates Pod", "watch / webhook")
+' Edge services around the edge API server
+Rel_L(co_edge, edge_api, "Deployment → Instances, each with a reserved address")
+Rel_D(co_edge, platform, "Reserves a private address")
+Rel_R(up, edge_api, "Instance → scheduled work; health updates")
+Rel_L(go_op, edge_api, "Defines each Instance's network wiring")
 
 ' Host data plane
-Rel_U(kraftlet, edge_api, "Scheduled Pods; Pod status", "watch")
-Rel_L(kraftlet, registry, "Pulls unikernel image", "OCI")
-Rel_R(kraftlet, gnet, "Instance networking", "CNI ADD/DEL")
-Rel_D(kraftlet, uk, "Boots and supervises", "VMM")
-Rel_U(gnet, platform, "Confirms IP allocation", "IPAM CNI")
-Rel_R(gnet, fabric, "Announces SRv6 endpoint", "BGP")
-Rel_R(uk, fabric, "VPC traffic", "TAP / SRv6")
+Rel_U(kraftlet, edge_api, "Picks up scheduled Instances; reports status")
+Rel_L(kraftlet, registry, "Pulls the unikernel image")
+Rel_R(kraftlet, gnet, "Sets up the Instance's networking")
+Rel_D(kraftlet, uk, "Boots and supervises")
+Rel_U(gnet, platform, "Confirms the reserved address")
+Rel_R(gnet, fabric, "Announces where the Instance can be reached")
+Rel_R(uk, fabric, "Private network traffic")
 
 SHOW_LEGEND()
 @enduml

@@ -27,34 +27,31 @@ running unikernel at the bottom of an edge location.
 
 How to read it:
 
-- **Four planes, one spine.** A `Workload` flows down through four deployment
-  boundaries: the project control plane expands it into per-location
-  `WorkloadDeployment`s, Karmada federates those to the matching POP-cell
-  clusters, each edge cluster's operators turn its copy into `Instance`s and
-  then `Pod`s, and the Unikraft host boots the resulting unikernels. Status
-  flows back up the same spine.
-- **The API servers are the event bus.** Controllers and operators never call
-  each other directly — every hand-off happens by writing a resource that the
-  next component watches. Relationship labels name the resource that mediates
-  each hand-off (e.g. `Instance → Pod`).
-- **The declarative/imperative frontier is Kraftlet.** Everything above the
-  Unikraft Host boundary is Kubernetes-style reconciliation over declarative
-  resources. Kraftlet is where that ends: it turns a scheduled `Pod` into
-  imperative host work — CNI invocations, VRF/TAP plumbing, SRv6/BGP route
-  programming, and a booted unikernel.
-- **Karmada is off-the-shelf** federation infrastructure operated by Datum
-  (rendered in the muted external style); the OCI registry and the Datum
-  network fabric are the system's external dependencies.
-- **Platform Services** aggregates the shared services the compute path leans
-  on (network services, IPAM, quota) — they are independent deployments, but
-  their internals are not part of this system's story.
-- **Boxes are deployables, not controllers.** Each container is a separately
-  deployed unit. The individual reconcilers inside an operator binary — e.g.
-  the Workload and WorkloadDeployment controllers within the Compute Operator
-  — are component-level (C4 level 3) detail; the sequence diagrams below name
-  them as lifelines when tracing behavior. The Compute Operator appears in
-  both control planes: the same operator deployed with different
-  responsibilities per plane.
+- **Four layers, one path.** A `Workload` travels down through four layers: the
+  project control plane splits it into one deployment per city, Karmada
+  delivers each deployment to the right edge location, the services in that
+  location turn it into individual `Instance`s, and a Unikraft host boots each
+  one. News about how things are going travels back up the same path.
+- **The API servers are how the pieces talk.** The services never call each
+  other directly — each one records its work in the API server, and the next
+  one picks it up from there. The arrow labels say what is handed off at each
+  step.
+- **Kraftlet is where descriptions become a running machine.** Everything
+  above the Unikraft Host works with descriptions of what should exist.
+  Kraftlet is where the platform stops describing and starts doing: it wires
+  up the host's networking and boots the unikernel.
+- **Karmada is off-the-shelf** software that Datum operates (shown in the
+  muted external style); the image registry and the Datum network fabric are
+  the system's external dependencies.
+- **Platform Services** bundles the shared services the compute path leans on
+  (network addressing, quotas) — they run on their own, but their internals
+  are not part of this story.
+- **Each box is something that ships and runs on its own.** The smaller moving
+  parts inside each service — for example, the individual controllers inside
+  the Compute Operator — are a level of detail this diagram deliberately
+  leaves out; the sequence diagrams below name them when tracing behavior.
+  The Compute Operator appears twice because the same service runs in both
+  control planes, doing a different job in each.
 
 The diagram source is
 [`instance-provisioning-containers.puml`](./instance-provisioning-containers.puml)
