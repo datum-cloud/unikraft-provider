@@ -40,9 +40,12 @@ How to read it:
   above the Unikraft Host works with descriptions of what should exist.
   Kraftlet is where the platform stops describing and starts doing: it wires
   up the host's networking and boots the unikernel.
-- **Karmada is off-the-shelf** software that Datum operates (shown in the
-  muted external style); the image registry and the Datum network fabric are
-  the system's external dependencies.
+- **Green means this system's own services.** The compute system itself is
+  the Compute Operator, the Unikraft Provider, and the Platform Services.
+  Everything shown in the muted external style is something the system builds
+  on but does not own: the Kubernetes API servers, Karmada federation, the
+  Galactic networking pieces, the Unikraft host runtime, the image registry,
+  and the Datum network fabric.
 - **Platform Services** bundles the shared services the compute path leans on
   (network addressing, quotas) — they run on their own, but their internals
   are not part of this story.

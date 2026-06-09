@@ -12,23 +12,23 @@ Person(user, "Platform Consumer", "Describes what to run and the cities to run i
 System_Boundary(datum, "Datum Cloud") {
 
     System_Boundary(project_cp, "Project Control Plane") {
-        Container(project_api, "Project API Server", "Kubernetes API", "The front door for a project: stores the consumer's Workloads and networks")
+        Container_Ext(project_api, "Project API Server", "Kubernetes API", "The front door for a project: stores the consumer's Workloads and networks")
         Container(co_project, "Compute Operator", "Service", "Splits each Workload into one deployment per city, hands them to federation, and rolls status back up to the consumer")
     }
 
     System_Ext(karmada, "Karmada", "Off-the-shelf federation layer that delivers each deployment to the edge locations it belongs in")
 
     System_Boundary(edge, "Edge Location (one per city code)") {
-        Container(edge_api, "Edge API Server", "Kubernetes API", "The local source of truth for everything running in this location")
+        Container_Ext(edge_api, "Edge API Server", "Kubernetes API", "The local source of truth for everything running in this location")
         Container(co_edge, "Compute Operator", "Service", "Creates the individual Instances for this location and reserves each one a private network address")
         Container(up, "Unikraft Provider", "Service", "Schedules each Instance onto a unikernel host and reports its health back to the consumer's view")
-        Container(go_op, "Galactic Operator", "Service", "Prepares the network wiring each Instance needs to join its private network (VPC)")
+        Container_Ext(go_op, "Galactic Operator", "Service", "Prepares the network wiring each Instance needs to join its private network (VPC)")
         Container(platform, "Platform Services", "Shared services", "Hand out private network addresses and enforce quotas")
 
         Boundary(host, "Unikraft Host (per node)") {
-            Container(kraftlet, "Kraftlet", "Host agent", "Picks up scheduled Instances: sets up their networking, boots them, and reports how they are doing")
-            Container(gnet, "Galactic Networking", "Network plumbing", "Connects each unikernel to its private network and tells the wider network how to reach it")
-            Container(uk, "Unikernel Instance", "Lightweight VM", "The consumer's workload, up and running")
+            Container_Ext(kraftlet, "Kraftlet", "Host agent", "Picks up scheduled Instances: sets up their networking, boots them, and reports how they are doing")
+            Container_Ext(gnet, "Galactic Networking", "Network plumbing", "Connects each unikernel to its private network and tells the wider network how to reach it")
+            Container_Ext(uk, "Unikernel Instance", "Lightweight VM", "The consumer's workload, up and running")
         }
     }
 }
@@ -46,7 +46,7 @@ Rel_D(karmada, edge_api, "Delivers the deployment for this city")
 Rel_L(co_edge, edge_api, "Deployment → Instances, each with a reserved address")
 Rel_D(co_edge, platform, "Reserves a private address")
 Rel_R(up, edge_api, "Instance → scheduled work; health updates")
-Rel_L(go_op, edge_api, "Defines each Instance's network wiring")
+Rel_R(go_op, edge_api, "Defines each Instance's network wiring")
 
 ' Host data plane
 Rel_U(kraftlet, edge_api, "Picks up scheduled Instances; reports status")
