@@ -37,8 +37,8 @@ System_Ext(fabric, "Datum Network Fabric", "Datum's private backbone connecting 
 ' Spine: project control plane → federation → edge location → host
 Rel_D(user, project_api, "Declares a Workload")
 Rel_L(project_api, co_project, "Workload → per-city deployments")
-Rel_D(co_project, karmada, "Hands off deployments; receives status")
-Rel_D(karmada, edge_api, "Delivers the deployment for this city")
+Rel(co_project, karmada, "Hands off deployments; receives status")
+Rel_R(karmada, edge_api, "Delivers the deployment for this city")
 
 ' Edge services around the edge API server
 Rel_L(co_edge, edge_api, "Deployment → Instances, each with a reserved address")
