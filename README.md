@@ -1,6 +1,6 @@
 # Infra Provider Unikraft
 
-This operator watches for Instance CRDs and creates corresponding resources in a Unikraft cluster.
+This operator watches for Instance CRDs and creates corresponding resources in a Unikraft cluster. It implements the per-location provisioning flow documented in [Instance Provisioning via Kraftlet](./docs/enhancements/instance-provisioning.md).
 
 ## Quick Start
 

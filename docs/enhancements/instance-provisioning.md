@@ -67,7 +67,8 @@ resources. A `Workload` owns one `WorkloadDeployment` per placement/city code,
 and each `WorkloadDeployment` owns the `Instance` replicas that run in its
 location. Instances pull in supporting resources by reference — the `Network`
 they attach to, and any `ConfigMap`s or `Secret`s used for environment or
-volumes.
+volumes. The resource model is specified in the compute repo's foundational
+[Workload RFC](https://github.com/datum-cloud/compute/blob/main/docs/compute/development/rfcs/workloads/README.md).
 
 ```mermaid
 flowchart TB
@@ -152,6 +153,12 @@ sequenceDiagram
 - **WorkloadDeployment Federator** — pushes each `WorkloadDeployment` to the downstream Karmada control plane and lazily maintains a `PropagationPolicy` per city code that selects the matching edge clusters. Status aggregated by Karmada is mirrored back up onto the source objects.
 - **Karmada** — federation control plane that propagates each `WorkloadDeployment` to the POP-cell clusters whose city-code label matches its `PropagationPolicy`.
 - **Edge Location (POP-cell cluster)** — a per-city-code member cluster. Its `WorkloadDeployment` controller materializes the actual `Instance` replicas, each of which is then provisioned by the per-location components described next.
+
+The federation topology that delivers these deployments — the control plane
+cell, the per-city POP cells, and the `Workload` → `WorkloadDeployment` →
+`Instance` propagation — is covered in the compute repo's
+[Federated Deployment Scheduling](https://github.com/datum-cloud/compute/blob/main/docs/enhancements/federated-deployment-scheduling.md)
+enhancement.
 
 ### Within an edge location
 
