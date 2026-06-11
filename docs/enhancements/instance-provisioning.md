@@ -60,13 +60,6 @@ How to read it:
   The Compute Operator appears twice because the same service runs in both
   control planes, doing a different job in each.
 
-The diagram source is
-[`instance-provisioning-containers.puml`](./instance-provisioning-containers.puml)
-(styled with the shared
-[Datum C4 theme](https://github.com/datum-cloud/enhancements/blob/main/enhancements/datum-theme.puml));
-regenerate the PNG with
-`plantuml -tpng docs/enhancements/instance-provisioning-containers.puml`.
-
 ### Compute resource model
 
 The compute API is a small ownership hierarchy fed by a few referenced
