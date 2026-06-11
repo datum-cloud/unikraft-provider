@@ -3,9 +3,7 @@
 !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
 !include https://raw.githubusercontent.com/datum-cloud/enhancements/main/enhancements/datum-theme.puml
 
-LAYOUT_TOP_DOWN()
-
-title Container diagram — Datum Cloud compute (Workload to running unikernel)
+LAYOUT_LEFT_RIGHT()
 
 Person(user, "Platform Consumer", "Describes what to run and the cities to run it in, as a Workload")
 
@@ -35,10 +33,10 @@ System_Ext(registry, "Image Registry", "Stores the unikernel images")
 System_Ext(fabric, "Datum Network Fabric", "Datum's private backbone connecting locations and private networks")
 
 ' Spine: project control plane → federation → edge location → host
-Rel_D(user, project_api, "Declares a Workload")
+Rel_L(user, project_api, "Declares a Workload")
 Rel_L(project_api, co_project, "Workload → per-city deployments")
-Rel(co_project, karmada, "Hands off deployments; receives status")
-Rel_R(karmada, edge_api, "Delivers the deployment for this city")
+Rel_D(co_project, karmada, "Hands off deployments; receives status")
+Rel_D(karmada, edge_api, "Delivers the deployment for this city")
 
 ' Edge services around the edge API server
 Rel_L(co_edge, edge_api, "Deployment → Instances, each with a reserved address")
@@ -46,7 +44,7 @@ Rel_D(co_edge, platform, "Reserves a private address")
 
 ' Host data plane
 Rel_U(kraftlet, edge_api, "Picks up scheduled Instances; reports status")
-Rel_L(kraftlet, registry, "Pulls the unikernel image")
+Rel_R(kraftlet, registry, "Pulls the unikernel image")
 Rel_R(kraftlet, gnet, "Sets up the Instance's networking")
 Rel_D(kraftlet, uk, "Boots and supervises")
 Rel_U(gnet, platform, "Confirms the reserved address")

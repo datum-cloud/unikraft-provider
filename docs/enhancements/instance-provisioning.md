@@ -20,18 +20,18 @@ API calls and CNI invocations for that per-location flow.
 
 The [C4 container diagram](https://c4model.com/diagrams/container) below shows
 the running pieces of the compute system, the deployment boundary each one
-lives in, and how a `Workload` declared at the top of the platform becomes a
-running unikernel at the bottom of an edge location.
+lives in, and how a `Workload` declared to the platform becomes a running
+unikernel inside an edge location.
 
 ![C4 container diagram — Datum Cloud compute](./instance-provisioning-containers.png)
 
 How to read it:
 
-- **Four layers, one path.** A `Workload` travels down through four layers: the
+- **Four layers, one path.** A `Workload` travels through four layers: the
   project control plane splits it into one deployment per city, Karmada
   delivers each deployment to the right edge location, the services in that
   location turn it into individual `Instance`s, and a Unikraft host boots each
-  one. News about how things are going travels back up the same path.
+  one. News about how things are going travels back along the same path.
 - **The API servers are how the pieces talk.** The services never call each
   other directly — each one records its work in the API server, and the next
   one picks it up from there. The arrow labels say what is handed off at each
