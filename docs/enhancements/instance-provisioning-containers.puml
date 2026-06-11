@@ -1,0 +1,55 @@
+@startuml instance-provisioning-containers
+!$NEW_C4_STYLE = 1
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+!include https://raw.githubusercontent.com/datum-cloud/enhancements/main/enhancements/datum-theme.puml
+
+LAYOUT_LEFT_RIGHT()
+
+Person(user, "Platform Consumer", "Describes what to run and the cities to run it in, as a Workload")
+
+System_Boundary(datum, "Datum Cloud") {
+
+    System_Boundary(project_cp, "Project Control Plane") {
+        Container_Ext(project_api, "Project API Server", "Kubernetes API", "The front door for a project: stores the consumer's Workloads and networks")
+        Container(co_project, "Compute Operator", "Service", "Splits each Workload into one deployment per city, hands them to federation, and rolls status back up to the consumer")
+    }
+
+    System_Ext(karmada, "Karmada", "Off-the-shelf federation layer that delivers each deployment to the edge locations it belongs in")
+
+    System_Boundary(edge, "Edge Location (one per city code)") {
+        Container_Ext(edge_api, "Edge API Server", "Kubernetes API", "The local source of truth for everything running in this location")
+        Container(co_edge, "Compute Operator", "Service", "Creates the individual Instances for this location and reserves each one a private network address")
+        Container(platform, "Platform Services", "Shared services", "Hand out private network addresses and enforce quotas")
+
+        Boundary(host, "Unikraft Host (per node)") {
+            Container_Ext(kraftlet, "Kraftlet", "Host agent", "Picks up scheduled Instances: sets up their networking, boots them, and reports how they are doing")
+            Container_Ext(gnet, "Galactic Networking", "Network plumbing", "Connects each unikernel to its private network and tells the wider network how to reach it")
+            Container_Ext(uk, "Unikernel Instance", "Lightweight VM", "The consumer's workload, up and running")
+        }
+    }
+}
+
+System_Ext(registry, "Image Registry", "Stores the unikernel images")
+System_Ext(fabric, "Datum Network Fabric", "Datum's private backbone connecting locations and private networks")
+
+' Spine: project control plane → federation → edge location → host
+Rel_L(user, project_api, "Declares a Workload")
+Rel_L(project_api, co_project, "Workload → per-city deployments")
+Rel_D(co_project, karmada, "Hands off deployments; receives status")
+Rel_D(karmada, edge_api, "Delivers the deployment for this city")
+
+' Edge services around the edge API server
+Rel_L(co_edge, edge_api, "Deployment → Instances, each with a reserved address")
+Rel_D(co_edge, platform, "Reserves a private address")
+
+' Host data plane
+Rel_U(kraftlet, edge_api, "Picks up scheduled Instances; reports status")
+Rel_R(kraftlet, registry, "Pulls the unikernel image")
+Rel_R(kraftlet, gnet, "Sets up the Instance's networking")
+Rel_D(kraftlet, uk, "Boots and supervises")
+Rel_U(gnet, platform, "Confirms the reserved address")
+Rel_R(gnet, fabric, "Announces where the Instance can be reached")
+Rel_R(uk, fabric, "Private network traffic")
+
+SHOW_LEGEND()
+@enduml
