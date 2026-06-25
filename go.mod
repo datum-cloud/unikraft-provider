@@ -8,16 +8,16 @@ require (
 	// Repin to a stable go.datum.net/compute tag once the #107 chain reaches compute main.
 	go.datum.net/compute v0.7.1-0.20260529122150-fa711b9b2676
 	go.datum.net/network-services-operator v0.23.4
-	go.miloapis.com/milo v0.28.1
-	golang.org/x/sync v0.20.0
-	k8s.io/api v0.36.1
-	k8s.io/apimachinery v0.36.1
-	k8s.io/client-go v0.36.1
+	go.miloapis.com/milo v0.28.3
+	golang.org/x/sync v0.21.0
+	k8s.io/api v0.36.2
+	k8s.io/apimachinery v0.36.2
+	k8s.io/client-go v0.36.2
 	sigs.k8s.io/controller-runtime v0.24.1
 	sigs.k8s.io/multicluster-runtime v0.24.1
 )
 
-require k8s.io/utils v0.0.0-20260210185600-b8788abfbbc2
+require k8s.io/utils v0.0.0-20260617174310-a95e086a2553
 
 require (
 	cel.dev/expr v0.25.2 // indirect
@@ -95,7 +95,7 @@ require (
 	k8s.io/component-base v0.36.1 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260317180543-43fb72c5454a // indirect
-	k8s.io/streaming v0.36.1 // indirect
+	k8s.io/streaming v0.36.2 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.34.0 // indirect
 	sigs.k8s.io/gateway-api v1.5.1 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
