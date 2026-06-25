@@ -9,7 +9,7 @@ require (
 	go.datum.net/compute v0.7.1-0.20260529122150-fa711b9b2676
 	go.datum.net/network-services-operator v0.23.4
 	go.miloapis.com/milo v0.28.3
-	golang.org/x/sync v0.20.0
+	golang.org/x/sync v0.21.0
 	k8s.io/api v0.36.1
 	k8s.io/apimachinery v0.36.1
 	k8s.io/client-go v0.36.1
