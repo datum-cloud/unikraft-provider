@@ -69,6 +69,16 @@ func (r *InstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, nil
 	}
 
+	// Honor scheduling gates. While any gate remains, the instance is not yet
+	// ready to be scheduled. Return without requeue — the Instance spec update
+	// when a gate is cleared will re-trigger reconciliation.
+	if instance.Spec.Controller != nil && len(instance.Spec.Controller.SchedulingGates) > 0 {
+		logger.Info("instance has scheduling gates, deferring pod creation",
+			"gates", instance.Spec.Controller.SchedulingGates,
+		)
+		return ctrl.Result{}, nil
+	}
+
 	return r.reconcileSandboxContainers(ctx, &instance)
 }
 
@@ -106,7 +116,7 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 
 		if instancePod.CreationTimestamp.IsZero() {
 			logger.Info("building pod spec for new instance pod", "name", instancePod.Name)
-			podSpec, err := r.buildPodSpecFromContainers(instance, instance.Spec.Runtime.Sandbox.Containers)
+			podSpec, err := r.buildPodSpecFromContainers(ctx, instance, instance.Spec.Runtime.Sandbox.Containers)
 			if err != nil {
 				return err
 			}
@@ -149,20 +159,73 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 	return ctrl.Result{}, nil
 }
 
+// buildPodSpecFromContainers translates an Instance's sandbox spec into a
+// Kubernetes PodSpec suitable for the kraftlet virtual-kubelet.
+//
+// Translation rules:
+//   - Instance volumes with ConfigMap/Secret sources → Pod volumes (direct
+//     assignment; the corev1 source types are identical).
+//   - Disk sources are skipped — kraftlet does not support them at this time.
+//   - Per-container VolumeAttachments with a non-nil MountPath → VolumeMounts.
+//   - Container env vars carry both Value and ValueFrom through faithfully.
+//
+// Volume and env references (ConfigMap/Secret names) are resolved at mount time
+// by kraftlet using its own node/kubelet identity. The provider only references
+// them by name in the Pod spec; no data is read or mirrored by the provider.
+//
+// TODO(Phase 3b): EnvFrom mapping is deferred. compute's SandboxContainer does
+// not yet expose an EnvFrom field. When it is added (planned for v1 API), the
+// mapping here will require field-by-field translation from
+// computev1alpha.EnvFromSource to core.EnvFromSource — it is NOT a simple
+// ValueFrom-style passthrough because the two types are not identical.
 func (r *InstanceReconciler) buildPodSpecFromContainers(
+	ctx context.Context,
 	instance *computev1alpha.Instance,
 	sandboxContainers []computev1alpha.SandboxContainer,
 ) (core.PodSpec, error) {
+	logger := log.FromContext(ctx)
+
+	// Build the Pod-level volume list from the Instance spec.
+	volumes := make([]core.Volume, 0, len(instance.Spec.Volumes))
+	for _, iv := range instance.Spec.Volumes {
+		switch {
+		case iv.ConfigMap != nil:
+			volumes = append(volumes, core.Volume{
+				Name: iv.Name,
+				VolumeSource: core.VolumeSource{
+					ConfigMap: iv.ConfigMap,
+				},
+			})
+		case iv.Secret != nil:
+			volumes = append(volumes, core.Volume{
+				Name: iv.Name,
+				VolumeSource: core.VolumeSource{
+					Secret: iv.Secret,
+				},
+			})
+		case iv.Disk != nil:
+			// Disk-backed volumes are not supported by kraftlet; skip and log so
+			// operators can see the omission without a hard failure.
+			logger.Info("skipping disk-backed volume (not supported by kraftlet)",
+				"instance", instance.Name,
+				"volume", iv.Name,
+			)
+		}
+	}
+
 	containers := make([]core.Container, 0, len(sandboxContainers))
 	for i := range sandboxContainers {
 		sc := &sandboxContainers[i]
 
-		// Map environment variables from container
+		// Map environment variables from container. Carry ValueFrom through
+		// faithfully so secret/configmap key refs work inside the Pod. Only
+		// the literal Value field was previously forwarded; this is corrected here.
 		envVars := make([]core.EnvVar, 0, len(sc.Env))
 		for _, env := range sc.Env {
 			envVars = append(envVars, core.EnvVar{
-				Name:  env.Name,
-				Value: env.Value,
+				Name:      env.Name,
+				Value:     env.Value,
+				ValueFrom: env.ValueFrom,
 			})
 		}
 
@@ -183,19 +246,35 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 			},
 		}
 
+		// Map volume attachments to volume mounts. Only attachments with a
+		// non-nil MountPath are included; attachments without a MountPath are
+		// device references (e.g. raw disk) that kraftlet does not handle.
+		volumeMounts := make([]core.VolumeMount, 0, len(sc.VolumeAttachments))
+		for _, va := range sc.VolumeAttachments {
+			if va.MountPath == nil {
+				continue
+			}
+			volumeMounts = append(volumeMounts, core.VolumeMount{
+				Name:      va.Name,
+				MountPath: *va.MountPath,
+			})
+		}
+
 		containers = append(containers, core.Container{
-			Name:      sc.Name,
-			Image:     sc.Image,
-			Command:   sc.Command,
-			Args:      sc.Args,
-			Env:       envVars,
-			Ports:     ports,
-			Resources: resources,
+			Name:         sc.Name,
+			Image:        sc.Image,
+			Command:      sc.Command,
+			Args:         sc.Args,
+			Env:          envVars,
+			Ports:        ports,
+			Resources:    resources,
+			VolumeMounts: volumeMounts,
 		})
 	}
 
 	spec := core.PodSpec{
 		Containers:         containers,
+		Volumes:            volumes,
 		EnableServiceLinks: ptr.To(false),
 		RestartPolicy:      core.RestartPolicyAlways,
 		NodeSelector: map[string]string{

@@ -3,6 +3,7 @@
 package controller
 
 import (
+	"context"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -66,7 +67,7 @@ func TestBuildPodSpecFromContainers_CommandArgs(t *testing.T) {
 				},
 			}
 
-			spec, err := r.buildPodSpecFromContainers(instance, containers)
+			spec, err := r.buildPodSpecFromContainers(context.Background(), instance, containers)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -109,7 +110,7 @@ func TestBuildPodSpecFromContainers_OtherFieldsPassthrough(t *testing.T) {
 		},
 	}
 
-	spec, err := r.buildPodSpecFromContainers(instance, containers)
+	spec, err := r.buildPodSpecFromContainers(context.Background(), instance, containers)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -137,8 +138,6 @@ func TestBuildPodSpecFromContainers_OtherFieldsPassthrough(t *testing.T) {
 	}
 }
 
-// sliceEqual reports whether two string slices are element-wise equal.
-// nil and an empty slice are treated as equivalent.
 func sliceEqual(a, b []string) bool {
 	if len(a) == 0 && len(b) == 0 {
 		return true
