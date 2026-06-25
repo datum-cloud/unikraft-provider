@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	core "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -33,6 +34,13 @@ const (
 
 	unikraftAnnotationPrefix   = "cloud.unikraft.v1"
 	ukcInstanceFqdnsAnnotation = "cloud.unikraft.v1.instances/fqdns"
+
+	// instanceFinalizer gates Instance deletion on teardown of the backing Pod
+	// (and Service). The provider holds this finalizer until it has deleted the
+	// Pod and observed it fully removed, so the Instance — and the upstream
+	// WorkloadDeployment/Workload that wait on it — is never removed before the
+	// downstream Pod is gone.
+	instanceFinalizer = "unikraft.datumapis.com/finalizer"
 )
 
 type InstanceReconciler struct {
@@ -57,10 +65,12 @@ func (r *InstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, fmt.Errorf("failed to get instance: %w", err)
 	}
 
-	// With controller ownerRefs in the same namespace, Kubernetes GC reclaims
-	// the Pod and Service when the Instance is deleted. No finalizer needed.
+	// A deleting Instance is handled by the finalizer path, which tears down the
+	// backing Pod/Service and waits for them to be gone before releasing the
+	// Instance. This must run before the sandbox/scheduling-gate short-circuits
+	// below so teardown is never skipped.
 	if !instance.DeletionTimestamp.IsZero() {
-		return ctrl.Result{}, nil
+		return r.handleDeletion(ctx, &instance)
 	}
 
 	// Only handle sandbox instances
@@ -79,7 +89,90 @@ func (r *InstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, nil
 	}
 
+	// Ensure our finalizer is present before creating any backing resources, so
+	// that teardown is always routed through handleDeletion and ordered behind
+	// the Pod's removal. Adding it here (rather than on every Instance) means
+	// non-sandbox and still-gated Instances — which have no backing Pod — are not
+	// burdened with a finalizer.
+	if !controllerutil.ContainsFinalizer(&instance, instanceFinalizer) {
+		controllerutil.AddFinalizer(&instance, instanceFinalizer)
+		if err := r.Update(ctx, &instance); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to add finalizer to instance %s: %w", instance.Name, err)
+		}
+	}
+
 	return r.reconcileSandboxContainers(ctx, &instance)
+}
+
+// handleDeletion tears down the backing Pod and Service for a deleting Instance
+// and removes the provider finalizer only once they are confirmed gone.
+//
+// The Pod/Service are deleted explicitly rather than via owner-reference garbage
+// collection: GC would not reclaim them until the Instance is removed from etcd,
+// but the Instance cannot be removed while this finalizer is held — relying on GC
+// here would deadlock. Explicit deletion drives teardown; the owner reference set
+// on the Pod/Service remains only as a backstop for abnormal cases (e.g. a crash
+// before the finalizer was added).
+func (r *InstanceReconciler) handleDeletion(ctx context.Context, instance *computev1alpha.Instance) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	if !controllerutil.ContainsFinalizer(instance, instanceFinalizer) {
+		// Either the Instance never had a backing Pod (non-sandbox or still
+		// scheduling-gated) or it was already finalized. Nothing to clean up.
+		return ctrl.Result{}, nil
+	}
+
+	pod := &core.Pod{ObjectMeta: metav1.ObjectMeta{Name: instance.Name, Namespace: instance.Namespace}}
+	if err := r.Delete(ctx, pod); err != nil && !apierrors.IsNotFound(err) {
+		return ctrl.Result{}, fmt.Errorf("failed to delete pod for instance %s: %w", instance.Name, err)
+	}
+
+	svc := &core.Service{ObjectMeta: metav1.ObjectMeta{Name: instance.Name, Namespace: instance.Namespace}}
+	if err := r.Delete(ctx, svc); err != nil && !apierrors.IsNotFound(err) {
+		return ctrl.Result{}, fmt.Errorf("failed to delete service for instance %s: %w", instance.Name, err)
+	}
+
+	// Gate: do not release the Instance until its backing Pod (and Service) are
+	// fully gone. While either still exists, requeue and wait. The Owns(Pod)/
+	// Owns(Service) watches also re-trigger reconciliation on their final removal;
+	// the RequeueAfter is a backstop in case that event is missed.
+	if pending, err := r.backingResourcesPending(ctx, instance); err != nil {
+		return ctrl.Result{}, err
+	} else if pending {
+		logger.Info("waiting for backing resources to terminate before finalizing instance", "name", instance.Name)
+		return ctrl.Result{RequeueAfter: time.Second}, nil
+	}
+
+	controllerutil.RemoveFinalizer(instance, instanceFinalizer)
+	if err := r.Update(ctx, instance); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to remove finalizer from instance %s: %w", instance.Name, err)
+	}
+	logger.Info("backing resources gone; removed finalizer, instance may be deleted", "name", instance.Name)
+	return ctrl.Result{}, nil
+}
+
+// backingResourcesPending reports whether the Instance's backing Pod or Service
+// still exists in the API.
+func (r *InstanceReconciler) backingResourcesPending(ctx context.Context, instance *computev1alpha.Instance) (bool, error) {
+	key := client.ObjectKey{Name: instance.Name, Namespace: instance.Namespace}
+
+	var pod core.Pod
+	switch err := r.Get(ctx, key, &pod); {
+	case err == nil:
+		return true, nil
+	case !apierrors.IsNotFound(err):
+		return false, fmt.Errorf("failed to check backing pod for instance %s: %w", instance.Name, err)
+	}
+
+	var svc core.Service
+	switch err := r.Get(ctx, key, &svc); {
+	case err == nil:
+		return true, nil
+	case !apierrors.IsNotFound(err):
+		return false, fmt.Errorf("failed to check backing service for instance %s: %w", instance.Name, err)
+	}
+
+	return false, nil
 }
 
 func (r *InstanceReconciler) reconcileSandboxContainers(
@@ -280,22 +373,45 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 		})
 	}
 
+	// Apply node selector: use the operator-supplied override when set, otherwise
+	// default to the standard single-node kraftlet label. The default routes all
+	// Instance Pods to the node named "kraftlet", which is the convention for a
+	// single-node kraftlet deployment. Override via
+	// DownstreamResourceManagementConfig.NodeSelector for multi-node or relabelled
+	// environments (e.g. Layer-2 e2e where the node has a different hostname label).
+	nodeSelector := map[string]string{
+		"kubernetes.io/hostname": "kraftlet",
+	}
+	if r.Config != nil && len(r.Config.DownstreamResourceManagement.NodeSelector) > 0 {
+		nodeSelector = r.Config.DownstreamResourceManagement.NodeSelector
+	}
+
+	// Apply tolerations: use the operator-supplied override when set, otherwise
+	// default to the ukc virtual-kubelet taint that kraftlet nodes carry.
+	tolerations := []core.Toleration{
+		{
+			Key:      "virtual-kubelet.io/provider",
+			Operator: "Equal",
+			Value:    "ukc",
+			Effect:   "NoSchedule",
+		},
+	}
+	if r.Config != nil && len(r.Config.DownstreamResourceManagement.Tolerations) > 0 {
+		tolerations = r.Config.DownstreamResourceManagement.Tolerations
+	}
+
 	spec := core.PodSpec{
-		Containers:         containers,
-		Volumes:            volumes,
-		EnableServiceLinks: ptr.To(false),
-		RestartPolicy:      core.RestartPolicyAlways,
-		NodeSelector: map[string]string{
-			"kubernetes.io/hostname": "kraftlet",
-		},
-		Tolerations: []core.Toleration{
-			{
-				Key:      "virtual-kubelet.io/provider",
-				Operator: "Equal",
-				Value:    "ukc",
-				Effect:   "NoSchedule",
-			},
-		},
+		Containers: containers,
+		Volumes:    volumes,
+		// Sandbox workloads must not be granted Kubernetes API access. Disable
+		// projection of the default ServiceAccount token so no credential is
+		// mounted into the instance Pod (the apiserver still assigns the default
+		// SA identity, but without a token it cannot authenticate).
+		AutomountServiceAccountToken: ptr.To(false),
+		EnableServiceLinks:           ptr.To(false),
+		RestartPolicy:                core.RestartPolicyAlways,
+		NodeSelector:                 nodeSelector,
+		Tolerations:                  tolerations,
 	}
 
 	return spec, nil
