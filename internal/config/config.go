@@ -4,12 +4,8 @@ package config
 
 import (
 	"context"
-	"fmt"
-	mcproviders "go.miloapis.com/milo/pkg/multicluster-runtime"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -26,8 +22,6 @@ type UnikraftProvider struct {
 	MetricsServer MetricsServerConfig `json:"metricsServer"`
 
 	WebhookServer WebhookServerConfig `json:"webhookServer"`
-
-	Discovery DiscoveryConfig `json:"discovery"`
 
 	DownstreamResourceManagement DownstreamResourceManagementConfig `json:"downstreamResourceManagement"`
 
@@ -108,90 +102,12 @@ func (m *MetricsServerConfig) Options(ctx context.Context, c client.Client) metr
 
 // +k8s:deepcopy-gen=true
 
-// DownstreamResourceManagementConfig configures downstream resource management
+// DownstreamResourceManagementConfig configures downstream resource management.
+//
+// The kraftlet cluster is always the same cluster as the cell cluster (kraftlet
+// runs as a virtual-kubelet node in the cell). ConfigMap and Secret volumes are
+// referenced by name in the Pod spec; kraftlet resolves and mounts them using
+// its own node/kubelet identity at runtime. The provider never reads or writes
+// ConfigMap/Secret data.
 type DownstreamResourceManagementConfig struct {
-	// KubeconfigPath is the path to the kubeconfig for the downstream cluster.
-	KubeconfigPath string `json:"kubeconfigPath"`
-
-	// ProviderConfigStrategy defines how to select the ProviderConfig for resources.
-	ProviderConfigStrategy ProviderConfigStrategy `json:"providerConfigStrategy"`
-
-	// ManagedResourceLabels are labels applied to downstream resources for filtering.
-	ManagedResourceLabels map[string]string `json:"managedResourceLabels,omitempty"`
 }
-
-func (d *DownstreamResourceManagementConfig) RestConfig() (*rest.Config, error) {
-	if d.KubeconfigPath == "" {
-		return ctrl.GetConfig()
-	}
-
-	return clientcmd.BuildConfigFromFlags("", d.KubeconfigPath)
-}
-
-// +k8s:deepcopy-gen=true
-
-// ProviderConfigStrategy defines how to select ProviderConfig
-type ProviderConfigStrategy struct {
-	// Single specifies a single ProviderConfig to use for all resources.
-	Single *SingleProviderConfigStrategy `json:"single,omitempty"`
-}
-
-// +k8s:deepcopy-gen=true
-
-// SingleProviderConfigStrategy uses a single named ProviderConfig
-type SingleProviderConfigStrategy struct {
-	Name string `json:"name"`
-}
-
-// +k8s:deepcopy-gen=true
-
-type DiscoveryConfig struct {
-	// Mode is the mode that the operator should use to discover clusters.
-	//
-	// +default="single"
-	Mode mcproviders.Provider `json:"mode"`
-
-	// InternalServiceDiscovery will result in the operator to connect to internal
-	// service addresses for projects.
-	InternalServiceDiscovery bool `json:"internalServiceDiscovery"`
-
-	// DiscoveryKubeconfigPath is the path to the kubeconfig file to use for
-	// project discovery. When not provided, the operator will use the in-cluster
-	// config.
-	DiscoveryKubeconfigPath string `json:"discoveryKubeconfigPath"`
-
-	// DiscoveryContext is the context to use for discovery. When not provided,
-	// the operator will use the current-context in the kubeconfig file..
-	DiscoveryContext string `json:"discoveryContext"`
-
-	// ProjectKubeconfigPath is the path to the kubeconfig file to use as a
-	// template when connecting to project control planes. When not provided,
-	// the operator will use the in-cluster config.
-	ProjectKubeconfigPath string `json:"projectKubeconfigPath"`
-
-	// LabelSelector is an optional selector to filter projects based on labels.
-	// When provided, only projects matching this selector will be reconciled.
-	LabelSelector *metav1.LabelSelector `json:"labelSelector,omitempty"`
-}
-
-func (d *DiscoveryConfig) DiscoveryRestConfig() (*rest.Config, error) {
-	if d.DiscoveryKubeconfigPath == "" {
-		return nil, fmt.Errorf("discovery kubeconfig path is required")
-	}
-	return clientcmd.BuildConfigFromFlags("", d.DiscoveryKubeconfigPath)
-}
-
-func (d *DiscoveryConfig) ProjectRestConfig() (*rest.Config, error) {
-	if d.ProjectKubeconfigPath == "" {
-		return nil, fmt.Errorf("project kubeconfig path is required")
-	}
-	return clientcmd.BuildConfigFromFlags("", d.ProjectKubeconfigPath)
-}
-
-// DiscoveryMode defines the cluster discovery mode
-type DiscoveryMode string
-
-const (
-	DiscoveryModeSingle DiscoveryMode = "single"
-	DiscoveryModeMilo   DiscoveryMode = "milo"
-)

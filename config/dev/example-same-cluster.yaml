@@ -1,14 +1,9 @@
-# Example: Upstream and downstream are the SAME cluster (for development)
+# Example: Unikraft provider running in single-cell mode (Instance and Pod
+# are co-located in the same cluster; no multi-cluster plumbing needed).
 apiVersion: apiserver.config.datumapis.com/v1alpha1
 kind: UnikraftProvider
 metricsServer:
   bindAddress: "0"
   secureServing: false
-discovery:
-  mode: single
 downstreamResourceManagement:
-  # Empty kubeconfigPath means use the same cluster as upstream
-  kubeconfigPath: ""
-  managedResourceLabels:
-    managed-by: "infra-provider-unikraft"
 locationClassName: "self-managed"
