@@ -118,7 +118,7 @@ func TestSyncInstancePowerState_ProgrammedCondition(t *testing.T) {
 			name:                 "instance stopped sets Programmed=False",
 			pod:                  podWithPhase(core.PodSucceeded),
 			wantProgrammed:       metav1.ConditionFalse,
-			wantProgrammedReason: computev1alpha.InstanceRunningReasonStopping,
+			wantProgrammedReason: computev1alpha.InstanceAvailableReasonStopping,
 		},
 		{
 			name:                 "instance state unknown keeps Programmed=Unknown",
@@ -165,7 +165,7 @@ func TestSyncInstancePowerState_ProgrammedCondition(t *testing.T) {
 
 // TestSyncInstancePowerState_NoReadyConditionWritten verifies that the provider
 // does NOT write a Ready condition, since compute's InstanceReconciler owns Ready
-// and derives it from Programmed + Running. Writing Ready here would race.
+// and derives it from Programmed + Available. Writing Ready here would race.
 func TestSyncInstancePowerState_NoReadyConditionWritten(t *testing.T) {
 	instance := newTestInstance()
 	fakeClient := fake.NewClientBuilder().
@@ -187,10 +187,10 @@ func TestSyncInstancePowerState_NoReadyConditionWritten(t *testing.T) {
 	}
 }
 
-// TestSyncInstancePowerState_InstanceRunning_RunningConditionTrue verifies the
-// Running condition is set correctly when the instance is running, since compute
-// requires Running=True (after Programmed=True) to set Ready=True.
-func TestSyncInstancePowerState_InstanceRunning_RunningConditionTrue(t *testing.T) {
+// TestSyncInstancePowerState_InstanceAvailable_AvailableConditionTrue verifies the
+// Available condition is set correctly when the instance is running, since compute
+// requires Available=True (after Programmed=True) to set Ready=True.
+func TestSyncInstancePowerState_InstanceAvailable_AvailableConditionTrue(t *testing.T) {
 	instance := newTestInstance()
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(testScheme(t)).
@@ -204,12 +204,12 @@ func TestSyncInstancePowerState_InstanceRunning_RunningConditionTrue(t *testing.
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	running := apimeta.FindStatusCondition(instance.Status.Conditions, computev1alpha.InstanceRunning)
+	running := apimeta.FindStatusCondition(instance.Status.Conditions, computev1alpha.InstanceAvailable)
 	if running == nil {
-		t.Fatal("expected Running condition to be set")
+		t.Fatal("expected Available condition to be set")
 	}
 	if running.Status != metav1.ConditionTrue {
-		t.Errorf("Running.Status = %q, want True", running.Status)
+		t.Errorf("Available.Status = %q, want True", running.Status)
 	}
 }
 
@@ -255,10 +255,10 @@ func TestSyncInstancePowerState_PreservesOtherConditions(t *testing.T) {
 		t.Errorf("QuotaGranted.Status = %q after sync, want True (must not be overwritten)", quotaGranted.Status)
 	}
 
-	// Running and Programmed must also be set correctly.
-	running := apimeta.FindStatusCondition(instance.Status.Conditions, computev1alpha.InstanceRunning)
+	// Available and Programmed must also be set correctly.
+	running := apimeta.FindStatusCondition(instance.Status.Conditions, computev1alpha.InstanceAvailable)
 	if running == nil || running.Status != metav1.ConditionTrue {
-		t.Errorf("Running condition should be True after PodRunning sync")
+		t.Errorf("Available condition should be True after PodRunning sync")
 	}
 	programmed := apimeta.FindStatusCondition(instance.Status.Conditions, computev1alpha.InstanceProgrammed)
 	if programmed == nil || programmed.Status != metav1.ConditionTrue {
@@ -427,7 +427,7 @@ func TestTranslateWaitingReason(t *testing.T) {
 
 // TestSyncInstancePowerState_WaitingReasonTranslation verifies that
 // syncInstancePowerState translates container waiting reasons end-to-end: the
-// Running condition must carry domain language, never raw k8s strings.
+// Available condition must carry domain language, never raw k8s strings.
 func TestSyncInstancePowerState_WaitingReasonTranslation(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -437,14 +437,14 @@ func TestSyncInstancePowerState_WaitingReasonTranslation(t *testing.T) {
 		wantNotReason string
 	}{
 		{
-			name:          "ImagePullBackOff → ImageUnavailable in Running condition",
+			name:          "ImagePullBackOff → ImageUnavailable in Available condition",
 			pod:           podPendingWithWaiting("ImagePullBackOff", "Back-off pulling image"),
 			wantReason:    "ImageUnavailable",
 			wantMessage:   "The instance image could not be pulled",
 			wantNotReason: "ImagePullBackOff",
 		},
 		{
-			name:          "CrashLoopBackOff → InstanceCrashing in Running condition",
+			name:          "CrashLoopBackOff → InstanceCrashing in Available condition",
 			pod:           podPendingWithWaiting("CrashLoopBackOff", "back-off 5m0s restarting failed container"),
 			wantReason:    "InstanceCrashing",
 			wantMessage:   "The instance is repeatedly failing to start",
@@ -474,21 +474,21 @@ func TestSyncInstancePowerState_WaitingReasonTranslation(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			running := apimeta.FindStatusCondition(instance.Status.Conditions, computev1alpha.InstanceRunning)
+			running := apimeta.FindStatusCondition(instance.Status.Conditions, computev1alpha.InstanceAvailable)
 			if running == nil {
-				t.Fatal("expected Running condition to be set")
+				t.Fatal("expected Available condition to be set")
 			}
 			if running.Reason != tc.wantReason {
-				t.Errorf("Running.Reason = %q, want %q", running.Reason, tc.wantReason)
+				t.Errorf("Available.Reason = %q, want %q", running.Reason, tc.wantReason)
 			}
 			if running.Message != tc.wantMessage {
-				t.Errorf("Running.Message = %q, want %q", running.Message, tc.wantMessage)
+				t.Errorf("Available.Message = %q, want %q", running.Message, tc.wantMessage)
 			}
 			if running.Reason == tc.wantNotReason {
-				t.Errorf("raw k8s reason %q leaked into Running condition", tc.wantNotReason)
+				t.Errorf("raw k8s reason %q leaked into Available condition", tc.wantNotReason)
 			}
 			if running.Message == tc.pod.Status.ContainerStatuses[0].State.Waiting.Message {
-				t.Errorf("raw k8s message leaked into Running condition: %q", running.Message)
+				t.Errorf("raw k8s message leaked into Available condition: %q", running.Message)
 			}
 		})
 	}
