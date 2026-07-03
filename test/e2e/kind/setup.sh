@@ -62,6 +62,9 @@ kubectl create namespace ukp-system --dry-run=client -o yaml | kubectl apply -f 
 kubectl -n ukp-system create secret generic ukp-runtime-credentials \
   --from-file=ukp.secrets.conf=/tmp/ukp.secrets.conf --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 rm -f /tmp/ukp.secrets.conf
+# The runtime DaemonSet only schedules onto compute nodes; label the single
+# kind node so its affinity (compute.datumapis.com/runtime=unikraft) matches.
+kubectl label node "$NODE" compute.datumapis.com/runtime=unikraft --overwrite >/dev/null
 kubectl apply -k "$repo/config/dependencies/ukp-runtime" >/dev/null
 for c in 0 1 2; do
   kubectl -n ukp-system patch ds ukp-runtime --type=json \
