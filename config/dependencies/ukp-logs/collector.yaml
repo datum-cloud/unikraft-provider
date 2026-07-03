@@ -1,0 +1,141 @@
+# Guest application-log pipeline. A stock OpenTelemetry Collector (via the
+# OpenTelemetry Operator) tails each microVM's serial-console log (vm.log) and
+# ships it as OTLP, enriched with the Datum identity of the owning compute
+# Instance. A reconciler sidecar supplies that identity by symlinking each
+# vm.log into an identity-encoded path the filelog receiver parses.
+#
+# Requires: the OpenTelemetry Operator (OpenTelemetryCollector CRD) in the
+# cluster. Deployed to compute nodes only. See README.md.
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: ukp-logs
+  labels:
+    app.kubernetes.io/name: ukp-logs
+    app.kubernetes.io/component: log-collector
+    app.kubernetes.io/part-of: unikraft-provider
+spec:
+  mode: daemonset
+  serviceAccount: ukp-logs
+  image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.144.0
+  # vm.log is root:root 0640; a node log agent runs as root to read it.
+  securityContext:
+    runAsUser: 0
+    runAsGroup: 0
+  # Runs only where the runtime runs (matches the ukp-runtime DaemonSet), and
+  # never on Kraftlet virtual-kubelet nodes.
+  nodeSelector:
+    compute.datumapis.com/runtime: unikraft
+  tolerations:
+    - operator: Exists
+  env:
+    - name: K8S_NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    # Destination OTLP collector. Point this at the edge logs collector
+    # (edge-logs-system) that fronts Milo's telemetry platform.
+    - name: LOGS_OTLP_ENDPOINT
+      value: edge-logs-collector-collector.edge-logs-system.svc.cluster.local:4317
+  volumes:
+    # The runtime's data dir on the host; vm.log + vmm.json live per instance
+    # under data/platform/<uuid>/.
+    - name: ukp-data
+      hostPath:
+        path: /var/lib/ukp
+        type: Directory
+    # Identity-encoded symlink tree, shared reconciler -> collector.
+    - name: ukp-logs-tree
+      emptyDir: {}
+    # filelog read-offset checkpoints; host-backed so they survive pod rolls
+    # (no duplicate shipping on restart).
+    - name: ukp-logs-storage
+      hostPath:
+        path: /var/lib/ukp-logs-otel
+        type: DirectoryOrCreate
+    - name: reconciler-script
+      configMap:
+        name: ukp-logs-reconciler
+  volumeMounts:
+    - name: ukp-data
+      mountPath: /var/lib/ukp
+      readOnly: true
+    - name: ukp-logs-tree
+      mountPath: /var/log/ukp-logs
+      readOnly: true
+    - name: ukp-logs-storage
+      mountPath: /var/lib/otelcol/storage
+  additionalContainers:
+    - name: reconciler
+      image: python:3.12-slim
+      command: ["python3", "/scripts/reconciler.py"]
+      securityContext:
+        runAsUser: 0
+      env:
+        - name: UKP_PLATFORM_DIR
+          value: /var/lib/ukp/data/platform
+        - name: UKP_LOG_TREE
+          value: /var/log/ukp-logs
+      volumeMounts:
+        - name: ukp-data
+          mountPath: /var/lib/ukp
+          readOnly: true
+        - name: ukp-logs-tree
+          mountPath: /var/log/ukp-logs
+        - name: reconciler-script
+          mountPath: /scripts
+          readOnly: true
+  config:
+    extensions:
+      file_storage:
+        directory: /var/lib/otelcol/storage
+    receivers:
+      filelog:
+        include:
+          - /var/log/ukp-logs/**/vm.log
+        include_file_path: true
+        start_at: beginning
+        storage: file_storage
+        operators:
+          # Lift the Datum + runtime identity straight off the symlink path.
+          - type: regex_parser
+            parse_from: 'attributes["log.file.path"]'
+            regex: '/project=(?P<project>[^/]+)/ns=(?P<ns>[^/]+)/instance=(?P<instance>[^/]+)/uuid=(?P<uuid>[^/]+)/vm\.log$'
+          - type: move
+            from: attributes.project
+            to: 'resource["datum.project.name"]'
+          - type: move
+            from: attributes.ns
+            to: 'resource["datum.instance.namespace"]'
+          - type: move
+            from: attributes.instance
+            to: 'resource["datum.instance.name"]'
+          - type: move
+            from: attributes.uuid
+            to: 'resource["ukp.instance.uuid"]'
+    processors:
+      resource:
+        attributes:
+          - key: k8s.node.name
+            value: ${env:K8S_NODE_NAME}
+            action: upsert
+      batch: {}
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 75
+        spike_limit_percentage: 20
+    exporters:
+      otlp:
+        endpoint: ${env:LOGS_OTLP_ENDPOINT}
+        # In-cluster hop to the edge collector; add real TLS/auth via an
+        # overlay for cross-cluster or untrusted paths.
+        tls:
+          insecure: true
+    service:
+      extensions:
+        - file_storage
+      pipelines:
+        logs:
+          receivers: [filelog]
+          processors: [memory_limiter, resource, batch]
+          exporters: [otlp]
