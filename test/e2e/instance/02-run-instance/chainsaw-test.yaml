@@ -1,0 +1,67 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: run-instance
+spec:
+  # Unlike 01-create-instance (which only asserts the provider translates an
+  # Instance into a scheduled Pod, and so passes against the e2e-fake metro),
+  # this test exercises the compute API to actually START an instance and
+  # asserts it reaches a running microVM. It therefore requires a real
+  # Unikraft runtime behind Kraftlet (e.g. the containerized runtime from
+  # docs/enhancements/containerized-unikraft-runtime).
+  # We assert the instance reaches Running (its microVM has booted on the
+  # runtime), not Ready — full readiness also requires network programming
+  # by the Galactic networking operator, which is out of scope for this
+  # runtime-focused test and not deployed here.
+  description: Start an Instance through the compute API and assert it runs.
+  steps:
+    - name: create and start the Instance
+      try:
+        - apply:
+            file: instance.yaml
+        - assert:
+            resource:
+              apiVersion: compute.datumapis.com/v1alpha
+              kind: Instance
+              metadata:
+                name: e2e-run-instance
+              status:
+                # Subset match: assert the Running condition is True without
+                # requiring the full condition list to match exactly.
+                (conditions[?type == 'Running'] | [0].status): "True"
+    - name: assert the microVM is running on the runtime node
+      try:
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  managed-by: infra-provider-unikraft
+                  upstream.instance: e2e-run-instance
+              status:
+                phase: Running
+    - name: confirm the workload is reachable over the network
+      # The Running conditions above are control-plane state; this step
+      # actually sends traffic to the guest to prove it serves. The
+      # provider Pod's status.podIP is the instance's private IP; we reach
+      # it from the runtime pod (which shares the host netns where the
+      # instance's TAP lives).
+      try:
+        - script:
+            content: |
+              set -eu
+              ip=$(kubectl get pod -n "$NAMESPACE" \
+                -l upstream.instance=e2e-run-instance \
+                -o jsonpath='{.items[0].status.podIP}')
+              rpod=$(kubectl -n ukp-system get pod -l app=ukp-runtime \
+                --field-selector status.phase=Running \
+                -o jsonpath='{.items[0].metadata.name}')
+              for i in $(seq 1 15); do
+                code=$(kubectl -n ukp-system exec "$rpod" -c ukpd -- \
+                  curl -s -m 8 -o /dev/null -w '%{http_code}' "http://$ip:8080/" || true)
+                echo "attempt $i: http $code from $ip"
+                [ "$code" = "200" ] && exit 0
+                sleep 4
+              done
+              echo "workload never served HTTP 200"; exit 1

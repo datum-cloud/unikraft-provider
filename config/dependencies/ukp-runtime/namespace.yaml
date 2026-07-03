@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ukp-system
+  labels:
+    app.kubernetes.io/name: ukp-runtime
+    app.kubernetes.io/part-of: unikraft-provider
+    # The runtime pod is privileged by requirement (see the enhancement's
+    # container contract); state the Pod Security posture explicitly.
+    pod-security.kubernetes.io/enforce: privileged

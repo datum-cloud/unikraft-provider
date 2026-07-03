@@ -1,0 +1,47 @@
+@startuml deployment-model
+!$NEW_C4_STYLE = 1
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+!include https://raw.githubusercontent.com/datum-cloud/enhancements/main/enhancements/datum-theme.puml
+
+LAYOUT_LEFT_RIGHT()
+
+System_Boundary(edge, "Edge Location") {
+
+    Container_Ext(cp, "Kubernetes Control Plane", "k3s, stripped", "No CNI, no kube-proxy: only host-network pods run here. Delivers and rolls the runtime like any other node component")
+
+    Boundary(node, "Dedicated Runtime Node (bare metal, tainted)") {
+
+        Container_Ext(kubelet, "kubelet + containerd", "Node runtime (runc)", "Runs the runtime pod, gates it on readiness, and replaces it on upgrade or failure")
+
+        Boundary(pod, "ukp-runtime DaemonSet pod (privileged, host network + IPC)") {
+            Container(netsetup, "netsetup", "init container", "Pre-creates the instance TAP devices on the host before the daemon starts")
+            Container(ukpd, "ukpd", "platform daemon", "Boots and supervises microVMs; serves the runtime API on the node's loopback; restarts always-on instances after any restart")
+            Container(agent, "agent", "image agent", "Fetches workload images on demand and stores them on the data volume")
+        }
+
+        Container(vms, "MicroVMs", "Firecracker guests", "Customer unikernels, spawned as children of ukpd; ~72 ms warm boots with no virtualization penalty")
+
+        Boundary(host, "Host resources (node bootstrap)") {
+            Container_Ext(kvm, "/dev/kvm", "hardware virtualization", "MicroVMs reach the hypervisor directly - a single level of virtualization")
+            Container_Ext(taps, "TAP devices", "host network", "Where instance traffic enters and leaves; the Datum fabric delivers directly to them")
+            ContainerDb_Ext(data, "/var/lib/ukp", "XFS with quotas", "Workload images, instance state, and runtime databases; survives pod restarts")
+        }
+
+        Container_Ext(kraftlet, "Kraftlet", "host agent", "Turns scheduled Instances into runtime API calls")
+    }
+}
+
+System_Ext(registry, "Unikraft image registry", "Source of workload images (authenticated)")
+
+Rel(cp, kubelet, "Schedules the runtime pod", "DaemonSet")
+Rel(kubelet, ukpd, "Runs and health-gates")
+Rel(netsetup, taps, "Creates at pod start")
+Rel(kraftlet, ukpd, "Create / start / stop instances", "HTTP, loopback :45232")
+Rel(ukpd, vms, "Boots and supervises")
+Rel(ukpd, kvm, "Runs guests via")
+Rel(vms, taps, "Attach to")
+Rel(ukpd, data, "Reads images, keeps state")
+Rel(agent, registry, "Pulls images on demand")
+Rel(agent, data, "Stores images")
+
+@enduml

@@ -1,0 +1,5 @@
+Types: deb
+URIs: https://pkg.unikraft.com/debian/cloud/
+Suites: trixie
+Components: stable
+Signed-By: /usr/share/keyrings/unikraft-cloud.gpg
