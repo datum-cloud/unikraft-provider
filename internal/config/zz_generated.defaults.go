@@ -24,9 +24,6 @@ func SetObjectDefaults_UnikraftProvider(in *UnikraftProvider) {
 	if in.WebhookServer.Port == 0 {
 		in.WebhookServer.Port = 9443
 	}
-	if in.Discovery.Mode == "" {
-		in.Discovery.Mode = "single"
-	}
 	if in.LocationClassName == "" {
 		in.LocationClassName = "self-managed"
 	}

@@ -18,7 +18,7 @@ runs:
       with:
         version: ${{ inputs.kubectl-version }}
 
-    - uses: kyverno/action-install-chainsaw@v0.2.12
+    - uses: kyverno/action-install-chainsaw@v0.2.15
 
     - name: Install kind and xfsprogs
       shell: bash

@@ -4,6 +4,7 @@ metadata:
   name: example-sandbox-instance
   namespace: default
   annotations:
+    cloud.unikraft.v1.services/domain: "my-subdomain"
     cloud.unikraft.v1.instances/scale_to_zero.policy: "on"
     cloud.unikraft.v1.instances/scale_to_zero.stateful: "true"
     cloud.unikraft.v1.instances/scale_to_zero.cooldown_time_ms: "1000"
