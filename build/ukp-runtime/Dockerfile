@@ -44,15 +44,40 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 COPY unikraft-cloud.gpg /usr/share/keyrings/unikraft-cloud.gpg
 COPY unikraft-cloud.sources /etc/apt/sources.list.d/unikraft-cloud.sources
 
+# Pin the ukp package versions to the set validated on the lab box, so the
+# container image and the bare-metal runtime stay in lockstep and the vendor
+# repo's rolling "stable" cannot silently drift our builds (which previously
+# caused non-deterministic e2e failures). Bump these together when adopting a
+# new vendor release; all are trixie/stable candidates in the vendor repo.
+ARG UKP_AGENT_VERSION=5:0.2.4-9stable+deb13
+ARG UKP_CONFIG_VERSION=5:1.4.14-26cf82c-9stable+deb13
+ARG UKP_COREDNS_VERSION=5:1.14.4-13+641bea1-9stable+deb13
+ARG UKP_FIRECRACKER_VERSION=5:1.16.0-31+b873e32-9stable+deb13
+ARG UKP_NETWORKING_VERSION=5:1.5.6-f842be3-9stable+deb13
+ARG UKP_OPENRESTY_VERSION=5:1.31.1.1-25+711fcc1-9stable+deb13
+ARG UKP_PLATFORM_VERSION=5:0.11.0-2+bebb30c-9stable+deb13
+
 # Install the ukp packages from the vendor repo. The BuildKit secret provides
 # the apt basic-auth credentials at /etc/apt/auth.conf.d/unikraft.conf for the
-# duration of this RUN only, so they leave no trace in any layer. apt resolves
-# the inter-package dependencies; nothing is pinned.
+# duration of this RUN only, so they leave no trace in any layer.
+#
+# The Datum-minimal profile only runs ukpd + agent + coredns, but the vendor
+# packaging still forces some components into the image: ukp-platform (ukpd)
+# Depends on ukp-openresty and ukp-networking at the package level, so apt
+# installs them even though the DaemonSet never runs OpenResty or the firewall
+# (pending a headless ukpd mode from Unikraft). What we CAN drop is ukp-lego
+# (ACME/TLS) — it is only a Recommends of ukp-openresty, so with
+# --no-install-recommends it stays out and Datum owns TLS anyway.
 RUN --mount=type=secret,id=unikraft-apt-auth,target=/etc/apt/auth.conf.d/unikraft.conf \
     apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ukp-agent ukp-config ukp-coredns ukp-firecracker ukp-lego \
-        ukp-networking ukp-openresty ukp-platform \
+        ukp-agent="${UKP_AGENT_VERSION}" \
+        ukp-config="${UKP_CONFIG_VERSION}" \
+        ukp-coredns="${UKP_COREDNS_VERSION}" \
+        ukp-firecracker="${UKP_FIRECRACKER_VERSION}" \
+        ukp-networking="${UKP_NETWORKING_VERSION}" \
+        ukp-openresty="${UKP_OPENRESTY_VERSION}" \
+        ukp-platform="${UKP_PLATFORM_VERSION}" \
     && rm -rf /var/lib/apt/lists/*
 
 # The ukpd launcher resolves this user for storage quota ownership
