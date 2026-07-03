@@ -1,0 +1,12 @@
+[
+  {
+    "name": "stdout-json",
+    "type": "file",
+    "encoding": "json",
+    "path": "stdout",
+    "events": ["log.info", "log.warning", "log.error", "vm.state_change"],
+    "reliable": false,
+    "buffer_size_kb": 64,
+    "backoff_time_s": 2
+  }
+]

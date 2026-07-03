@@ -22,6 +22,15 @@ spec:
         app.kubernetes.io/name: ukp-runtime
         app.kubernetes.io/component: runtime
         app.kubernetes.io/part-of: unikraft-provider
+      # Scrape ukpd's Prometheus metrics API (bound on all interfaces via
+      # ukp.conf). /metrics/controller carries the platform counters and
+      # per-user gauges; /metrics/host (node_exporter) and /metrics/agent are
+      # also served on this port. Set UKP_PROMETHEUS_API_TOKEN and send it as
+      # a Bearer token in the scrape config to require auth.
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "45233"
+        prometheus.io/path: /metrics/controller
     spec:
       hostNetwork: true
       hostIPC: true
@@ -91,6 +100,11 @@ spec:
             - name: ukp-conf
               mountPath: /etc/ukp.conf
               subPath: ukp.conf
+              readOnly: true
+            # Structured log-sink config (--log-sink-config in ukp.conf).
+            - name: ukp-conf
+              mountPath: /etc/ukp/log-sinks.json
+              subPath: log-sinks.json
               readOnly: true
             - name: ukp-secrets
               mountPath: /etc/ukp-secrets
