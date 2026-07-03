@@ -1,26 +1,73 @@
 name: e2e
+
+# Full control-plane e2e in a single KVM-capable kind cluster: the compute
+# control plane, the unikraft-provider, Kraftlet, and the containerized
+# Unikraft runtime run together, and chainsaw drives a compute Instance all
+# the way to a running microVM on the local runtime (test/e2e/kind/setup.sh,
+# test/e2e/instance). The runtime is not tested in isolation.
+#
+# Secrets:
+#   UNIKRAFT_APT_AUTH       apt auth.conf for pkg.unikraft.com (runtime image build)
+#   UKP_AGENT_CREDENTIALS   ukp.secrets.conf; its vendor pull credentials let the
+#                           runtime pull the test workload image
+
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
 
+# This workflow only reads the repository.
+permissions:
+  contents: read
+
+# One run per ref; a newer push cancels an in-flight run.
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    env:
-      TASK_X_REMOTE_TASKFILES: '1'
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
-      - uses: arduino/setup-task@v2
+      - uses: actions/checkout@v4
         with:
-          version: 3.x
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: datum-cloud/test-infra/.github/actions/kind-bootstrap@v0.6.4
-        with:
-          cluster_name: test-infra
-      - run: task test:install-dependencies
-      - run: task dev:build
-      - run: task dev:load
-      - run: task test:deploy
-      - uses: kyverno/action-install-chainsaw@v0.2.12
-      - run: task e2e
+          persist-credentials: false
+
+      - name: Verify KVM is available
+        run: |
+          test -e /dev/kvm
+          grep -Eq '(vmx|svm)' /proc/cpuinfo
+
+      - uses: ./.github/actions/setup-e2e-tools
+
+      - name: Build runtime image (from the vendor apt repository)
+        env:
+          UNIKRAFT_APT_AUTH: ${{ secrets.UNIKRAFT_APT_AUTH }}
+        run: |
+          umask 077
+          auth="$(mktemp)"
+          printf '%s\n' "$UNIKRAFT_APT_AUTH" > "$auth"
+          docker build --secret id=unikraft-apt-auth,src="$auth" \
+            -t ukp-runtime:e2e build/ukp-runtime/
+          rm -f "$auth"
+
+      - name: Build provider image
+        run: docker build -t ghcr.io/datum-cloud/unikraft-provider:dev .
+
+      - name: Bring up the single-cluster environment
+        env:
+          PROVIDER_IMAGE: ghcr.io/datum-cloud/unikraft-provider:dev
+          RUNTIME_IMAGE: ukp-runtime:e2e
+          UKP_AGENT_CREDENTIALS: ${{ secrets.UKP_AGENT_CREDENTIALS }}
+        run: bash test/e2e/kind/setup.sh
+
+      - name: Run chainsaw
+        env:
+          KUBECONFIG: /tmp/ukp-e2e.kubeconfig
+        run: chainsaw test test/e2e --config test/e2e/.chainsaw.yaml
+
+      - name: Diagnostics
+        if: failure()
+        uses: ./.github/actions/e2e-diagnostics

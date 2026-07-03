@@ -1,0 +1,28 @@
+name: Set up e2e tooling
+description: >
+  Install the tools the runtime e2e needs on the runner: kubectl, chainsaw,
+  kind, and xfsprogs (for the loopback XFS data volume).
+
+inputs:
+  kind-version:
+    description: kind release to install
+    default: v0.24.0
+  kubectl-version:
+    description: kubectl version to install
+    default: v1.31.0
+
+runs:
+  using: composite
+  steps:
+    - uses: azure/setup-kubectl@v4
+      with:
+        version: ${{ inputs.kubectl-version }}
+
+    - uses: kyverno/action-install-chainsaw@v0.2.12
+
+    - name: Install kind and xfsprogs
+      shell: bash
+      run: |
+        curl -fsSLo /tmp/kind "https://kind.sigs.k8s.io/dl/${{ inputs.kind-version }}/kind-linux-amd64"
+        sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+        sudo apt-get update && sudo apt-get install -y --no-install-recommends xfsprogs
