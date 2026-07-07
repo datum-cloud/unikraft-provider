@@ -63,4 +63,12 @@ RUN id ukpvol >/dev/null 2>&1 \
 # Runtime directories normally created by systemd/tmpfiles on a native install.
 RUN mkdir -p /var/lib/ukp /var/log/ukp /var/run/ukp
 
+# Datum coredns entrypoint. The stripped vendor CoreDNS has no `bind` plugin, so
+# it cannot listen on just the isolate gateway IPs; its wildcard `.:53` collides
+# with Talos hostDNS on 127.0.0.53:53. This wrapper runs CoreDNS on an alternate
+# wildcard port and installs an nftables redirect (guest gateway:53 -> that port)
+# plus forwarding to the host resolver. See docs/enhancements/.
+COPY coredns-redirect.sh /usr/local/bin/coredns-redirect.sh
+RUN chmod +x /usr/local/bin/coredns-redirect.sh
+
 CMD ["/usr/lib/ukp/platform/launcher/ukpd"]
