@@ -1,0 +1,17 @@
+# Real-cluster overlay for the Unikraft runtime: the base DaemonSet plus the
+# ESO-generated ukpd credential and the initContainer that seeds it. Deployed by
+# Flux on real clusters (which have the External Secrets Operator). The kind e2e
+# applies the base directly (config/dependencies/ukp-runtime), which has no ESO
+# dependency. The generated token (kraftlet-ukc-token) is read in this same
+# namespace by the co-located kraftlet DaemonSet (config/overlays/kraftlet).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: unikraft-system
+resources:
+  - ../../dependencies/ukp-runtime
+  - auth-token.yaml
+patches:
+  - path: seed-users-patch.yaml
+    target:
+      kind: DaemonSet
+      name: ukp-runtime
