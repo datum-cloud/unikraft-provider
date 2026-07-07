@@ -299,6 +299,35 @@ overlay requires no changes to the runtime. Without the Secret the runtime
 serves already-pulled images but cannot fetch new ones. First-boot
 user/database seeding (users.json) remains a node bootstrap step.
 
+### DNS on Talos (hostDNS coexistence)
+
+Guests are pinned (via `ukpd` boot args, `netdev.ip=…:<gateway>:<dns>…` with
+`dns == gateway`) to use their own host-side TAP gateway IP as their *only*
+resolver, so CoreDNS must answer on every isolate gateway. The catch on Talos:
+the vendor `ukp-coredns` (CoreDNS 1.14.4) is a **stripped build with no `bind`
+plugin** (`coredns -plugins` omits it, and an IP in the server-block header is
+parsed as a zone, not a listen address), so CoreDNS can only bind the wildcard
+`.:53`. That collides with Talos **hostDNS** on `127.0.0.53:53` and CrashLoops
+the container. We cannot rebuild the binary either — the `ukpdns` plugin that
+answers `.internal` from `ukpd`'s iDNS socket is proprietary and compiled in.
+
+The fix keeps CoreDNS but changes how it is launched (entrypoint
+[`build/ukp-runtime/coredns-redirect.sh`](../../../build/ukp-runtime/coredns-redirect.sh)):
+CoreDNS runs on a non-colliding wildcard port `UKP_DNS_PORT` (default `5300`)
+and forwards everything outside `internal.` to `UKP_DNS_UPSTREAM` (default the
+Talos hostDNS `127.0.0.53:53`; set a public resolver on non-Talos hosts). An
+nftables table then DNATs the guest path to it — a single
+`iifname "ukp*" dport 53 → :5300` redirect that covers all current and future
+`ukp<netid>.vif*` gateways with no enumeration, plus a mandatory `input` chain
+that drops direct hits on the alt port from the node's real NICs (only
+redirected guest traffic and host loopback reach it, so it is not an open
+resolver). The table is replaced wholesale on each start, so it is idempotent
+across restarts. **Talos hostDNS is left untouched** on `127.0.0.53:53` — no
+host-OS change is required. Both `UKP_DNS_PORT` and `UKP_DNS_UPSTREAM` are
+`ukp.conf` knobs. (Upstream ask: have Unikraft ship the `bind` plugin, or an
+upstream-forwarder override, in `ukp-coredns` — that would let CoreDNS bind the
+gateway IPs directly and retire the redirect.)
+
 ### Container contract
 
 The complete host contract, reverse-engineered from a live vendor install
