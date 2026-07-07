@@ -1,0 +1,65 @@
+# Real-cluster ukpd credential: ONE ESO-generated password, rendered into both
+# the ukpd user database (users.json, consumed here) and the kraftlet bearer
+# token (the `token` key, mirrored into the kraftlet namespace by the
+# config/dependencies/kraftlet real-cluster overlay). One generated secret is
+# the single source of truth for both sides — no pre-provisioned per-cluster
+# token. This replaces the former GCP-backed `kraftlet-ukc-token` ExternalSecret.
+#
+# Needs the External Secrets Operator; it therefore lives in this overlay, never
+# in the base (the kind e2e applies the base with no ESO installed).
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: ukp-auth-password
+  namespace: ukp-system
+spec:
+  length: 40
+  digits: 10
+  # No symbols: the value becomes the password half of base64("kraftlet:<pw>"),
+  # and a ':' would break ukpd's user:password split.
+  symbols: 0
+  noUpper: false
+  allowRepeat: true
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: ukp-auth-token
+  namespace: ukp-system
+spec:
+  # Generate once and persist (ESO GeneratorState); do NOT rotate on a timer.
+  # Rotation must be a deliberate op: ukpd only re-syncs users at boot and
+  # kraftlet only re-reads the token at start, so both DaemonSets must restart.
+  refreshInterval: "0"
+  target:
+    name: ukp-auth-token
+    creationPolicy: Owner
+    deletionPolicy: Delete
+    template:
+      engineVersion: v2
+      data:
+        # kraftlet bearer == ukpd auth_token == base64("kraftlet:<generated>").
+        token: "{{ printf \"kraftlet:%s\" .password | b64enc }}"
+        # ukpd users.json (consumed by the seed-users initContainer). It is the
+        # vendor's default `root` user with ONLY the auth_token replaced:
+        #  - uuid/name are kept as the vendor seed. ukpd enforces user-name
+        #    immutability on in-place update, so an already-seeded node (whose
+        #    uuid holds name "root") can only have its token rotated, not be
+        #    renamed. Reusing this uuid makes the seed a clean in-place rotation
+        #    on existing nodes and a clean first-seed on fresh ones.
+        users.json: |
+          [
+            {
+              "uuid": "3b2f013a-6c5e-4c6c-b993-60ed3b95b32c",
+              "name": "root",
+              "auth_token": "{{ printf "kraftlet:%s" .password | b64enc }}",
+              "permissions": ["root"],
+              "network_id": 0
+            }
+          ]
+  dataFrom:
+    - sourceRef:
+        generatorRef:
+          apiVersion: generators.external-secrets.io/v1alpha1
+          kind: Password
+          name: ukp-auth-password

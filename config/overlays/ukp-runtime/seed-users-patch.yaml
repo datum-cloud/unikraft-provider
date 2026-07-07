@@ -1,0 +1,51 @@
+# Real-cluster only: seed ukpd's user database from the ESO-generated secret.
+#
+# ukpd loads --users /var/lib/ukp/data/users.json at boot and syncs it into its
+# persistent userdb. This initContainer writes that file from the generated
+# `ukp-auth-token` secret before ukpd starts, so the ukpd credential and the
+# kraftlet bearer derive from the same generated value. The secret volume is
+# optional and the copy is JSON-validated: where the secret is absent (or ever
+# malformed) the runtime keeps its existing/vendor-seeded users.json rather than
+# writing a bad file (a broken users.json crash-loops ukpd).
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ukp-runtime
+spec:
+  template:
+    spec:
+      initContainers:
+        # An initContainer (ordering vs netsetup is immaterial — it only writes
+        # the data dir); like every initContainer it completes before ukpd starts.
+        - name: seed-users
+          image: ghcr.io/datum-cloud/ukp-runtime:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              src=/etc/ukp-auth/users.json
+              dst=/var/lib/ukp/data/users.json
+              mkdir -p /var/lib/ukp/data
+              if [ -f "$src" ] && python3 -m json.tool "$src" >/dev/null 2>&1; then
+                install -m 0600 "$src" "$dst"
+                echo "seed-users: wrote generated users.json to $dst"
+              else
+                echo "seed-users: no valid generated users.json at $src; leaving existing $dst"
+              fi
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: ukp-data
+              mountPath: /var/lib/ukp
+            - name: ukp-auth
+              mountPath: /etc/ukp-auth
+              readOnly: true
+      volumes:
+        - name: ukp-auth
+          secret:
+            secretName: ukp-auth-token
+            items:
+              - key: users.json
+                path: users.json
+            optional: true
