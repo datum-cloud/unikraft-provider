@@ -5,6 +5,11 @@ on:
   release:
     types: ["published"]
 
+# Shared tag templates. docker/metadata-action derives the same version tag
+# from the ref + commit date in every job, so the provider image, the runtime
+# image, and the kustomize bundle all carry an identical, commit-pinned tag.
+# Keep these in sync with datum-cloud/actions publish-docker.yaml.
+
 jobs:
   validate-kustomize:
     uses: datum-cloud/actions/.github/workflows/validate-kustomize.yaml@v1.16.0
@@ -23,18 +28,148 @@ jobs:
       platforms: linux/amd64,linux/arm64
     secrets: inherit
 
-  publish-kustomize-bundle:
+  # Self-contained on purpose: the runtime image installs the ukp packages
+  # from the vendor's authenticated apt repository, which needs a BuildKit
+  # secret (`--mount=type=secret,id=unikraft-apt-auth`). The shared
+  # publish-docker.yaml@v1.16.0 only forwards build-args, and passing the apt
+  # credentials as a build-arg would bake them into the image history. So we
+  # call docker/build-push-action directly and pass the credentials via
+  # `secrets:`, mirroring the e2e build. The metadata-action tags match the
+  # shared action so this image lines up with the provider image and bundle.
+  publish-runtime-image:
     needs:
       - validate-kustomize
-      - publish-container-image
     permissions:
       id-token: write
       contents: read
       packages: write
-    uses: datum-cloud/actions/.github/workflows/publish-kustomize-bundle.yaml@v1.16.0
-    with:
-      bundle-name: ghcr.io/datum-cloud/unikraft-provider-kustomize
-      bundle-path: config
-      image-overlays: config/default
-      image-name: ghcr.io/datum-cloud/unikraft-provider
-    secrets: inherit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          platforms: linux/amd64
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/datum-cloud/ukp-runtime
+          tags: |
+            type=ref,event=pr,suffix=-{{commit_date 'YYYYMMDD-HHmmss'}},prefix=v0.0.0-
+            type=ref,event=pr,prefix=v0.0.0-
+            type=ref,event=branch,suffix=-{{commit_date 'YYYYMMDD-HHmmss'}},prefix=v0.0.0-
+            type=ref,event=branch,prefix=v0.0.0-
+            type=semver,pattern=v{{version}}
+            type=semver,pattern=v{{major}}.{{minor}}
+            type=semver,pattern=v{{major}}
+            type=sha,prefix=v0.0.0-
+
+      - name: Build and push runtime image
+        uses: docker/build-push-action@v7.1.0
+        with:
+          context: build/ukp-runtime
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # amd64 only for now: KVM guests on this runtime are x86, and the
+          # vendor apt repository is only validated for amd64. Revisit arm64
+          # once there is a runtime host target for it.
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          secrets: |
+            unikraft-apt-auth=${{ secrets.UNIKRAFT_APT_AUTH }}
+
+  # Self-contained on purpose: the bundle must pin TWO differently-named
+  # images (the provider image in config/default and the runtime image in
+  # config/dependencies/ukp-runtime), but publish-kustomize-bundle.yaml@v1.16.0
+  # only sets a single image-name. We stamp both overlays here with the same
+  # commit-derived tag, then flux-push the config tree, mirroring the shared
+  # action's tag scheme and push loop.
+  publish-kustomize-bundle:
+    needs:
+      - validate-kustomize
+      - publish-container-image
+      - publish-runtime-image
+    permissions:
+      id-token: write
+      contents: read
+      packages: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Flux CLI
+        uses: fluxcd/flux2/action@v2.7.5
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/datum-cloud/unikraft-provider-kustomize
+          tags: |
+            type=ref,event=pr,suffix=-{{commit_date 'YYYYMMDD-HHmmss'}},prefix=v0.0.0-
+            type=ref,event=pr,prefix=v0.0.0-
+            type=ref,event=branch,suffix=-{{commit_date 'YYYYMMDD-HHmmss'}},prefix=v0.0.0-
+            type=ref,event=branch,prefix=v0.0.0-
+            type=semver,pattern=v{{version}}
+            type=semver,pattern=v{{major}}.{{minor}}
+            type=semver,pattern=v{{major}}
+            type=sha,prefix=v0.0.0-
+
+      - name: Stamp image tags into overlays
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          # First tag is the commit-pinned version (matches the provider and
+          # runtime image tags built from this same commit).
+          TAG="${TAGS%%$'\n'*}"
+          TAG="${TAG##*:}"
+          echo "Stamping bundle image tag: ${TAG}"
+
+          ( cd config/default \
+            && kustomize edit set image \
+                 "ghcr.io/datum-cloud/unikraft-provider=ghcr.io/datum-cloud/unikraft-provider:${TAG}" )
+
+          ( cd config/dependencies/ukp-runtime \
+            && kustomize edit set image \
+                 "ghcr.io/datum-cloud/ukp-runtime=ghcr.io/datum-cloud/ukp-runtime:${TAG}" )
+
+          echo "=== config/default/kustomization.yaml images ==="
+          grep -A3 '^images:' config/default/kustomization.yaml || true
+          echo "=== config/dependencies/ukp-runtime/kustomization.yaml images ==="
+          grep -A3 '^images:' config/dependencies/ukp-runtime/kustomization.yaml || true
+
+      - name: Publish bundle
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          REV="$(git rev-parse HEAD)"
+          while IFS= read -r tag; do
+            [ -z "${tag}" ] && continue
+            tag_version="${tag#*:}"
+            echo "Pushing oci://${tag}"
+            flux push artifact "oci://${tag}" \
+              --path="config" \
+              --source="https://github.com/${GITHUB_REPOSITORY}" \
+              --revision="${tag_version}@sha1:${REV}"
+          done <<< "${TAGS}"
