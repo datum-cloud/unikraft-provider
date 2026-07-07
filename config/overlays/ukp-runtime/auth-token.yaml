@@ -1,9 +1,10 @@
 # Real-cluster ukpd credential: ONE ESO-generated password, rendered into both
-# the ukpd user database (users.json, consumed here) and the kraftlet bearer
-# token (the `token` key, mirrored into the kraftlet namespace by the
-# config/dependencies/kraftlet real-cluster overlay). One generated secret is
-# the single source of truth for both sides — no pre-provisioned per-cluster
-# token. This replaces the former GCP-backed `kraftlet-ukc-token` ExternalSecret.
+# the ukpd user database (users.json, consumed by the seed-users initContainer)
+# and the kraftlet bearer (the `token` key, read by the co-located kraftlet
+# DaemonSet). Both consumers live in this namespace, so the generated
+# kraftlet-ukc-token secret is a single in-namespace source of truth — no
+# pre-provisioned per-cluster token and no cross-namespace mirror. This replaces
+# the former GCP-backed `kraftlet-ukc-token` ExternalSecret.
 #
 # Needs the External Secrets Operator; it therefore lives in this overlay, never
 # in the base (the kind e2e applies the base with no ESO installed).
@@ -11,7 +12,7 @@ apiVersion: generators.external-secrets.io/v1alpha1
 kind: Password
 metadata:
   name: ukp-auth-password
-  namespace: ukp-system
+  namespace: unikraft-system
 spec:
   length: 40
   digits: 10
@@ -24,15 +25,15 @@ spec:
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
-  name: ukp-auth-token
-  namespace: ukp-system
+  name: kraftlet-ukc-token
+  namespace: unikraft-system
 spec:
   # Generate once and persist (ESO GeneratorState); do NOT rotate on a timer.
   # Rotation must be a deliberate op: ukpd only re-syncs users at boot and
   # kraftlet only re-reads the token at start, so both DaemonSets must restart.
   refreshInterval: "0"
   target:
-    name: ukp-auth-token
+    name: kraftlet-ukc-token
     creationPolicy: Owner
     deletionPolicy: Delete
     template:

@@ -2,11 +2,11 @@
 # ESO-generated ukpd credential and the initContainer that seeds it. Deployed by
 # Flux on real clusters (which have the External Secrets Operator). The kind e2e
 # applies the base directly (config/dependencies/ukp-runtime), which has no ESO
-# dependency. Pairs with the config/overlays/kraftlet overlay, which mirrors the
-# same generated token into the kraftlet namespace.
+# dependency. The generated token (kraftlet-ukc-token) is read in this same
+# namespace by the co-located kraftlet DaemonSet (config/overlays/kraftlet).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: ukp-system
+namespace: unikraft-system
 resources:
   - ../../dependencies/ukp-runtime
   - auth-token.yaml

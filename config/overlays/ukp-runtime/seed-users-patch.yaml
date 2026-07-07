@@ -2,7 +2,7 @@
 #
 # ukpd loads --users /var/lib/ukp/data/users.json at boot and syncs it into its
 # persistent userdb. This initContainer writes that file from the generated
-# `ukp-auth-token` secret before ukpd starts, so the ukpd credential and the
+# `kraftlet-ukc-token` secret before ukpd starts, so the ukpd credential and the
 # kraftlet bearer derive from the same generated value. The secret volume is
 # optional and the copy is JSON-validated: where the secret is absent (or ever
 # malformed) the runtime keeps its existing/vendor-seeded users.json rather than
@@ -44,7 +44,7 @@ spec:
       volumes:
         - name: ukp-auth
           secret:
-            secretName: ukp-auth-token
+            secretName: kraftlet-ukc-token
             items:
               - key: users.json
                 path: users.json
