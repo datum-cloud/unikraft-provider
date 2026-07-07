@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: kraftlet-bridge-nginx
-  namespace: kraftlet
+  namespace: unikraft-system
   labels:
     app.kubernetes.io/name: kraftlet
     app.kubernetes.io/part-of: ukc

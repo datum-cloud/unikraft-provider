@@ -57,19 +57,30 @@ log "runtime: config + credentials, then deploy"
 # The runtime pulls the test workload image from the vendor registry using
 # the provided agent credentials. ukpd keeps its default loopback API
 # (127.0.0.1:45232); the co-located Kraftlet bridge reaches it there.
-kubectl create namespace ukp-system --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+# unikraft-system holds the whole runtime stack (ukp-runtime + kraftlet). It is
+# privileged (both are hostNetwork/privileged); on real clusters this namespace
+# and its PSA label are owned by the datum-cloud/infra edge app, so the bundles
+# no longer ship a namespace.yaml — create it here for the kind e2e.
+kubectl apply -f - >/dev/null <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: unikraft-system
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+EOF
 printf '%s\n' "$UKP_AGENT_CREDENTIALS" > /tmp/ukp.secrets.conf
-kubectl -n ukp-system create secret generic ukp-runtime-credentials \
+kubectl -n unikraft-system create secret generic ukp-runtime-credentials \
   --from-file=ukp.secrets.conf=/tmp/ukp.secrets.conf --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 rm -f /tmp/ukp.secrets.conf
 kubectl apply -k "$repo/config/dependencies/ukp-runtime" >/dev/null
 for c in 0 1 2; do
-  kubectl -n ukp-system patch ds ukp-runtime --type=json \
+  kubectl -n unikraft-system patch ds ukp-runtime --type=json \
     -p="[{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/$c/image\",\"value\":\"$RUNTIME_IMAGE\"}]" >/dev/null
 done
-kubectl -n ukp-system patch ds ukp-runtime --type=json \
+kubectl -n unikraft-system patch ds ukp-runtime --type=json \
   -p="[{\"op\":\"replace\",\"path\":\"/spec/template/spec/initContainers/0/image\",\"value\":\"$RUNTIME_IMAGE\"}]" >/dev/null
-kubectl -n ukp-system rollout status ds/ukp-runtime --timeout=180s
+kubectl -n unikraft-system rollout status ds/ukp-runtime --timeout=180s
 
 log "compute control plane (Flux OCIRepository is v1 in current Flux)"
 tmp=$(mktemp -d); cp -r "$repo/config/dependencies/compute" "$tmp/"
@@ -84,11 +95,12 @@ kubectl label node "${NODE}" compute.datumapis.com/runtime=unikraft --overwrite 
 # cert-manager (installed above) issues the bridge TLS via certificates.yaml.
 # The kraftlet-e2e overlay ships the TEST/DEV kraftlet-ukc-token Secret, which
 # matches the seeded ukpd `ci` user above — so it applies self-contained (no ESO
-# needed; real clusters use config/overlays/kraftlet, which mirrors the token).
+# needed; real clusters use config/overlays/kraftlet, whose token is generated
+# in-namespace by the ukp-runtime overlay).
 kubectl apply -k "$repo/config/overlays/kraftlet-e2e" >/dev/null
 kubectl apply -k "$repo/config/overlays/test-infra" >/dev/null
 kubectl -n infra-provider-unikraft-system rollout status deployment/infra-provider-unikraft-controller-manager --timeout=180s
-kubectl -n kraftlet rollout status ds/kraftlet --timeout=180s
+kubectl -n unikraft-system rollout status ds/kraftlet --timeout=180s
 
 log "wait for the per-host Kraftlet virtual node to register"
 for i in $(seq 1 30); do kubectl get node "kraftlet-${NODE}" >/dev/null 2>&1 && break; sleep 4; done

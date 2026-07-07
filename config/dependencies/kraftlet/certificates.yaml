@@ -7,7 +7,7 @@ apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
   name: kraftlet-selfsigned
-  namespace: kraftlet
+  namespace: unikraft-system
   labels:
     app.kubernetes.io/name: kraftlet
     app.kubernetes.io/part-of: ukc
@@ -18,7 +18,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: kraftlet-bridge-ca
-  namespace: kraftlet
+  namespace: unikraft-system
   labels:
     app.kubernetes.io/name: kraftlet
     app.kubernetes.io/part-of: ukc
@@ -43,7 +43,7 @@ apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
   name: kraftlet-bridge-ca
-  namespace: kraftlet
+  namespace: unikraft-system
   labels:
     app.kubernetes.io/name: kraftlet
     app.kubernetes.io/part-of: ukc
@@ -55,7 +55,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: kraftlet-bridge-tls
-  namespace: kraftlet
+  namespace: unikraft-system
   labels:
     app.kubernetes.io/name: kraftlet
     app.kubernetes.io/part-of: ukc
