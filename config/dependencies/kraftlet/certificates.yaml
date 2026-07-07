@@ -1,0 +1,78 @@
+# cert-manager issues the bridge's TLS material and the CA kraftlet trusts.
+# Self-signed bootstrap Issuer -> CA Certificate -> CA Issuer -> bridge leaf
+# Certificate (the same pattern the cluster's envoy-gateway uses). The leaf
+# secret `kraftlet-bridge-tls` carries tls.crt/tls.key (served by the nginx
+# bridge) AND ca.crt (mounted into kraftlet for SSL_CERT_FILE).
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: kraftlet-selfsigned
+  namespace: unikraft-system
+  labels:
+    app.kubernetes.io/name: kraftlet
+    app.kubernetes.io/part-of: ukc
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kraftlet-bridge-ca
+  namespace: unikraft-system
+  labels:
+    app.kubernetes.io/name: kraftlet
+    app.kubernetes.io/part-of: ukc
+spec:
+  isCA: true
+  commonName: ukp-kraftlet-bridge-ca
+  secretName: kraftlet-bridge-ca
+  duration: 87600h   # 10y
+  renewBefore: 2160h # 90d
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  issuerRef:
+    name: kraftlet-selfsigned
+    kind: Issuer
+    group: cert-manager.io
+  usages:
+    - cert sign
+    - crl sign
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: kraftlet-bridge-ca
+  namespace: unikraft-system
+  labels:
+    app.kubernetes.io/name: kraftlet
+    app.kubernetes.io/part-of: ukc
+spec:
+  ca:
+    secretName: kraftlet-bridge-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kraftlet-bridge-tls
+  namespace: unikraft-system
+  labels:
+    app.kubernetes.io/name: kraftlet
+    app.kubernetes.io/part-of: ukc
+spec:
+  secretName: kraftlet-bridge-tls
+  duration: 8760h   # 1y
+  renewBefore: 720h # 30d
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  # The metro name is the constant "local"; each node's pod hostAlias maps
+  # api.local.unikraft.cloud -> 127.0.0.1, so one leaf cert serves the fleet.
+  dnsNames:
+    - api.local.unikraft.cloud
+  issuerRef:
+    name: kraftlet-bridge-ca
+    kind: Issuer
+    group: cert-manager.io
+  usages:
+    - server auth

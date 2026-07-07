@@ -6,7 +6,7 @@ apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: ukp-runtime
-  namespace: ukp-system
+  namespace: unikraft-system
   labels:
     app.kubernetes.io/name: ukp-runtime
     app.kubernetes.io/component: runtime

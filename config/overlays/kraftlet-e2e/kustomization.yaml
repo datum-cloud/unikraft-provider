@@ -1,0 +1,10 @@
+# kind/e2e overlay for the per-host kraftlet: the base plus the self-contained
+# TEST/DEV kraftlet-ukc-token Secret. The token matches the ukpd `ci` user
+# seeded by test/e2e/kind/setup.sh, so the stack is self-contained and needs no
+# External Secrets Operator. Real clusters use config/overlays/kraftlet instead.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: unikraft-system
+resources:
+  - ../../dependencies/kraftlet
+  - token-secret.yaml
