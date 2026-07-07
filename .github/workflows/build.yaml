@@ -45,7 +45,7 @@ jobs:
       id-token: write
       contents: read
       packages: write
-    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@feat/publish-docker-build-secrets
+    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.19.0
     with:
       image-name: ukp-runtime
       context: build/ukp-runtime
