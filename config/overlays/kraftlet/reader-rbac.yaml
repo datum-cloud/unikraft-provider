@@ -1,0 +1,56 @@
+# RBAC for the ESO Kubernetes provider (secretstore.yaml) to read the
+# runtime-generated token Secret in ukp-system. A dedicated ServiceAccount that
+# can read that one namespace's Secrets, plus the SelfSubjectRulesReview the
+# provider issues when it validates the store.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: eso-kraftlet-token-reader
+  namespace: ukp-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: eso-kraftlet-token-reader
+  namespace: ukp-system
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: eso-kraftlet-token-reader
+  namespace: ukp-system
+subjects:
+  - kind: ServiceAccount
+    name: eso-kraftlet-token-reader
+    namespace: ukp-system
+roleRef:
+  kind: Role
+  name: eso-kraftlet-token-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+# The Kubernetes provider validates the store with a SelfSubjectRulesReview.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: eso-kraftlet-token-reader-review
+rules:
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["selfsubjectrulesreviews", "selfsubjectaccessreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: eso-kraftlet-token-reader-review
+subjects:
+  - kind: ServiceAccount
+    name: eso-kraftlet-token-reader
+    namespace: ukp-system
+roleRef:
+  kind: ClusterRole
+  name: eso-kraftlet-token-reader-review
+  apiGroup: rbac.authorization.k8s.io

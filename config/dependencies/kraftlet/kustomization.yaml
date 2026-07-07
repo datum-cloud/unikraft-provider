@@ -8,10 +8,11 @@ resources:
   - clusterrolebinding.yaml
   - bridge-nginx-configmap.yaml
   - certificates.yaml
-  - token-secret.yaml
   - daemonset.yaml
 # TLS material (kraftlet-bridge-tls + its ca.crt) is issued by cert-manager
-# (certificates.yaml). The ukpd token (kraftlet-ukc-token) ships here as a
-# self-contained TEST/DEV-only Secret (token-secret.yaml); real clusters
-# override it with an External Secrets Operator ExternalSecret in
-# datum-cloud/infra (gcp-secret-store).
+# (certificates.yaml). This base does NOT ship the ukpd bearer Secret
+# (kraftlet-ukc-token): its source differs per environment, so an overlay
+# supplies it. Deploy an overlay, not this base directly:
+#   - config/overlays/kraftlet-e2e  — self-contained TEST/DEV Secret (kind e2e)
+#   - config/overlays/kraftlet      — ESO mirror of the runtime-generated token
+#                                     (real clusters; requires External Secrets)

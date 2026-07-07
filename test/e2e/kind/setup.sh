@@ -18,7 +18,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../../.." && pwd)"
 CLUSTER=ukp-e2e
 NODE=${CLUSTER}-control-plane
-# Seeds the ukpd `ci` user below; MUST match config/dependencies/kraftlet/token-secret.yaml.
+# Seeds the ukpd `ci` user below; MUST match config/overlays/kraftlet-e2e/token-secret.yaml.
 CI_TOKEN=$(printf 'ci$datum.users.kraftcloud:ci-e2e-token' | base64 | tr -d '\n')
 export KUBECONFIG=${KUBECONFIG:-/tmp/${CLUSTER}.kubeconfig}
 
@@ -81,10 +81,11 @@ log "Kraftlet -> local runtime (per-host DaemonSet + TLS bridge), and the provid
 # Runtime nodes carry the label the Kraftlet DaemonSet selects on; it
 # co-locates a kraftlet + an nginx TLS bridge with each node's ukpd.
 kubectl label node "${NODE}" compute.datumapis.com/runtime=unikraft --overwrite >/dev/null
-# cert-manager (installed above) issues the bridge TLS via certificates.yaml,
-# and the committed TEST/DEV kraftlet-ukc-token Secret matches the seeded ukpd
-# `ci` user above — so the directory applies self-contained (no ESO needed).
-kubectl apply -k "$repo/config/dependencies/kraftlet" >/dev/null
+# cert-manager (installed above) issues the bridge TLS via certificates.yaml.
+# The kraftlet-e2e overlay ships the TEST/DEV kraftlet-ukc-token Secret, which
+# matches the seeded ukpd `ci` user above — so it applies self-contained (no ESO
+# needed; real clusters use config/overlays/kraftlet, which mirrors the token).
+kubectl apply -k "$repo/config/overlays/kraftlet-e2e" >/dev/null
 kubectl apply -k "$repo/config/overlays/test-infra" >/dev/null
 kubectl -n infra-provider-unikraft-system rollout status deployment/infra-provider-unikraft-controller-manager --timeout=180s
 kubectl -n kraftlet rollout status ds/kraftlet --timeout=180s

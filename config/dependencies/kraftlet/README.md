@@ -51,7 +51,11 @@ kraftlet --> https://api.local.unikraft.cloud (pinned to 127.0.0.1 by a
 | Secret | Managed by | Source |
 | --- | --- | --- |
 | `kraftlet-bridge-tls` | **cert-manager** (`certificates.yaml`) | self-signed Issuer → CA `Certificate` → CA Issuer → bridge leaf `Certificate`. The leaf secret carries `tls.crt`/`tls.key` (served by the nginx bridge) **and** `ca.crt` (mounted into kraftlet for `SSL_CERT_FILE`). |
-| `kraftlet-ukc-token` | **committed TEST/DEV Secret** (`token-secret.yaml`); real clusters override via **ESO** in `datum-cloud/infra` | well-known token of a seeded ukpd `ci` user — non-sensitive, grants nothing on a real runtime; keeps this dir self-contained for `kustomize build` + the kind e2e. |
+| `kraftlet-ukc-token` | **e2e:** committed TEST/DEV Secret (`config/overlays/kraftlet-e2e/token-secret.yaml`). **Real clusters:** ESO mirror of the runtime-generated token (`config/overlays/kraftlet`). | The e2e token is the well-known token of a seeded ukpd `ci` user — non-sensitive, grants nothing on a real runtime. Real clusters generate the token once in the runtime (`config/overlays/ukp-runtime`) and mirror it here, so ukpd's stored credential and kraftlet's bearer are one value. |
+
+Because the token source differs per environment, this **base** ships no
+`kraftlet-ukc-token`; deploy an overlay, not the base: `config/overlays/kraftlet-e2e`
+(kind) or `config/overlays/kraftlet` (real clusters, needs External Secrets).
 
 cert-manager is cluster-installed; `kubectl kustomize` does not validate its CRDs.
 
@@ -60,11 +64,13 @@ cert-manager is cluster-installed; `kubectl kustomize` does not validate its CRD
 - **PVC watcher is OFF.** N independent kraftlets would run N cluster-wide
   `ukc-volume` PVC watchers and double-provision volumes. A single-owner/leader
   design is needed before enabling PVC-backed volumes.
-- **Real-cluster ukpd token.** The committed `kraftlet-ukc-token` is TEST/DEV
-  only; real clusters supply it via the infra `ExternalSecret`
-  (`gcp-secret-store`), whose backing GCP Secret Manager entry (the ukpd bearer
-  token) must be provisioned before rollout. A dedicated non-root kraftlet user
-  per ukpd is the follow-up.
+- **Dedicated non-root kraftlet user.** Real clusters no longer pull a GCP
+  token: the runtime overlay generates it with External Secrets and this
+  overlay mirrors it (see the Secrets table). The generated token seeds the
+  ukpd `root` user (only its `auth_token` is generated); ukpd enforces
+  user-name immutability on in-place update, so giving kraftlet its own
+  non-root user per ukpd — a fresh uuid seeded before the node's first boot —
+  remains the follow-up.
 
 Validated end-to-end on `ludum-lodaar`: the DaemonSet registers VK node
 `kraftlet-ludum-lodaar`, kraftlet authenticates to the local ukpd through the

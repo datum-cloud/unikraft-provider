@@ -1,0 +1,14 @@
+# Real-cluster overlay for the per-host kraftlet: the base plus an ESO mirror
+# that populates kraftlet-ukc-token from the runtime-generated token in
+# ukp-system (config/overlays/ukp-runtime). Requires the External Secrets
+# Operator. Deployed by Flux; the kind e2e uses config/overlays/kraftlet-e2e.
+#
+# No top-level `namespace:` on purpose: the base already carries `kraftlet`, and
+# the reader ServiceAccount/RBAC must stay in `ukp-system` (their own metadata).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../dependencies/kraftlet
+  - secretstore.yaml
+  - reader-rbac.yaml
+  - externalsecret.yaml
