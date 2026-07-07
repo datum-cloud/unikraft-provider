@@ -33,9 +33,13 @@ jobs:
   # secret (`--mount=type=secret,id=unikraft-apt-auth`). The shared
   # publish-docker.yaml@v1.16.0 only forwards build-args, and passing the apt
   # credentials as a build-arg would bake them into the image history. So we
-  # call docker/build-push-action directly and pass the credentials via
-  # `secrets:`, mirroring the e2e build. The metadata-action tags match the
-  # shared action so this image lines up with the provider image and bundle.
+  # call docker/build-push-action directly and pass the credentials as a
+  # BuildKit secret file, mirroring the e2e build: the auth.conf value is
+  # multi-line (machine/login/password), which build-push-action's inline
+  # `secrets:` list mangles (it splits on newlines, dropping login/password
+  # -> apt 401), so we stage it to a file and reference it via `secret-files:`.
+  # The metadata-action tags match the shared action so this image lines up
+  # with the provider image and bundle.
   publish-runtime-image:
     needs:
       - validate-kustomize
@@ -75,6 +79,13 @@ jobs:
             type=semver,pattern=v{{major}}
             type=sha,prefix=v0.0.0-
 
+      - name: Stage apt auth secret
+        env:
+          UNIKRAFT_APT_AUTH: ${{ secrets.UNIKRAFT_APT_AUTH }}
+        run: |
+          umask 077
+          printf '%s\n' "$UNIKRAFT_APT_AUTH" > "${RUNNER_TEMP}/unikraft-apt-auth.conf"
+
       - name: Build and push runtime image
         uses: docker/build-push-action@v7.1.0
         with:
@@ -88,8 +99,8 @@ jobs:
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          secrets: |
-            unikraft-apt-auth=${{ secrets.UNIKRAFT_APT_AUTH }}
+          secret-files: |
+            unikraft-apt-auth=${{ runner.temp }}/unikraft-apt-auth.conf
 
   # Self-contained on purpose: the bundle must pin TWO differently-named
   # images (the provider image in config/default and the runtime image in
