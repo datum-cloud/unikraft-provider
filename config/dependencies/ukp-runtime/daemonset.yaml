@@ -99,10 +99,17 @@ spec:
         # gateway IP as their only DNS resolver; coredns answers there for
         # both .internal names (from ukpd) and upstream forwarding. Without
         # it guests have no DNS at all.
+        #
+        # We do NOT run the vendor launcher directly: its CoreDNS build is
+        # stripped (no `bind` plugin) so it can only bind the wildcard `.:53`,
+        # which collides with Talos hostDNS on 127.0.0.53:53. The Datum wrapper
+        # runs CoreDNS on UKP_DNS_PORT (default 5300) and installs an nftables
+        # redirect (guest gateway:53 -> that port) + forward to UKP_DNS_UPSTREAM
+        # (default hostDNS). privileged: needs nft + the ukpd iDNS socket.
         - name: coredns
           image: ghcr.io/datum-cloud/ukp-runtime:latest
           imagePullPolicy: IfNotPresent
-          command: ["/usr/lib/ukp/coredns/launcher/coredns"]
+          command: ["/usr/local/bin/coredns-redirect.sh"]
           securityContext:
             privileged: true
           volumeMounts:
