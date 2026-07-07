@@ -17,7 +17,7 @@ require (
 	sigs.k8s.io/multicluster-runtime v0.24.1
 )
 
-require k8s.io/utils v0.0.0-20260617174310-a95e086a2553
+require k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3
 
 require (
 	cel.dev/expr v0.25.2 // indirect
