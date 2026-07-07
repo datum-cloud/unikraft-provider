@@ -1,9 +1,11 @@
-# Copied verbatim from the vendor kraftlet chart 0.4.0
-# (templates/clusterrole.yaml) — the RBAC kraftlet's virtual-kubelet needs.
+# The RBAC kraftlet's virtual-kubelet needs (rules copied from the vendor
+# kraftlet chart 0.4.0 templates/clusterrole.yaml). Renamed from the vendor's
+# "kraftlet" to "ukp-kraftlet" so uninstalling the old vendor HelmRelease during
+# the GitOps swap can't delete this stack's cluster RBAC by name.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: kraftlet
+  name: ukp-kraftlet
   labels:
     app.kubernetes.io/name: kraftlet
     app.kubernetes.io/part-of: ukc
