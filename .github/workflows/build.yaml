@@ -58,87 +58,21 @@ jobs:
       build-secrets: |
         "unikraft-apt-auth=${{ secrets.UNIKRAFT_APT_AUTH }}"
 
-  # Self-contained on purpose: the bundle must pin TWO differently-named
-  # images (the provider image in config/default and the runtime image in
-  # config/dependencies/ukp-runtime), but publish-kustomize-bundle.yaml@v1.16.0
-  # only sets a single image-name. We stamp each overlay with the tag its image
-  # job actually published (consumed from that job's `tag` output, so the bundle
-  # can never drift from the images it references), then flux-push the config
-  # tree under the same commit-pinned tag scheme.
+  # The bundle must pin TWO differently-named images -- the provider image in
+  # config/default and the runtime image in config/dependencies/ukp-runtime --
+  # so it uses the shared workflow's multi-image `images:` input, stamping each
+  # overlay with the tag its image job actually published (consumed from that
+  # job's `tag` output, so the bundle can never drift from the images it
+  # references) before flux-pushing the config tree.
   publish-kustomize-bundle:
     needs:
-      - validate-kustomize
       - publish-container-image
       - publish-runtime-image
-    permissions:
-      id-token: write
-      contents: read
-      packages: write
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Flux CLI
-        uses: fluxcd/flux2/action@v2.7.5
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ghcr.io/datum-cloud/unikraft-provider-kustomize
-          tags: |
-            type=ref,event=pr,suffix=-{{commit_date 'YYYYMMDD-HHmmss'}},prefix=v0.0.0-
-            type=ref,event=pr,prefix=v0.0.0-
-            type=ref,event=branch,suffix=-{{commit_date 'YYYYMMDD-HHmmss'}},prefix=v0.0.0-
-            type=ref,event=branch,prefix=v0.0.0-
-            type=semver,pattern=v{{version}}
-            type=semver,pattern=v{{major}}.{{minor}}
-            type=semver,pattern=v{{major}}
-            type=sha,prefix=v0.0.0-
-
-      - name: Stamp image tags into overlays
-        env:
-          # Pin each overlay to exactly the tag its image job pushed. Both jobs
-          # derive the tag from this same commit, so these match the bundle's
-          # own commit-pinned tag below.
-          PROVIDER_TAG: ${{ needs.publish-container-image.outputs.tag }}
-          RUNTIME_TAG: ${{ needs.publish-runtime-image.outputs.tag }}
-        run: |
-          echo "Stamping provider image tag: ${PROVIDER_TAG}"
-          echo "Stamping runtime image tag:  ${RUNTIME_TAG}"
-
-          ( cd config/default \
-            && kustomize edit set image \
-                 "ghcr.io/datum-cloud/unikraft-provider=ghcr.io/datum-cloud/unikraft-provider:${PROVIDER_TAG}" )
-
-          ( cd config/dependencies/ukp-runtime \
-            && kustomize edit set image \
-                 "ghcr.io/datum-cloud/ukp-runtime=ghcr.io/datum-cloud/ukp-runtime:${RUNTIME_TAG}" )
-
-          echo "=== config/default/kustomization.yaml images ==="
-          grep -A3 '^images:' config/default/kustomization.yaml || true
-          echo "=== config/dependencies/ukp-runtime/kustomization.yaml images ==="
-          grep -A3 '^images:' config/dependencies/ukp-runtime/kustomization.yaml || true
-
-      - name: Publish bundle
-        env:
-          TAGS: ${{ steps.meta.outputs.tags }}
-        run: |
-          REV="$(git rev-parse HEAD)"
-          while IFS= read -r tag; do
-            [ -z "${tag}" ] && continue
-            tag_version="${tag#*:}"
-            echo "Pushing oci://${tag}"
-            flux push artifact "oci://${tag}" \
-              --path="config" \
-              --source="https://github.com/${GITHUB_REPOSITORY}" \
-              --revision="${tag_version}@sha1:${REV}"
-          done <<< "${TAGS}"
+    uses: datum-cloud/actions/.github/workflows/publish-kustomize-bundle.yaml@feat/publish-kustomize-bundle-multi-image
+    with:
+      bundle-name: ghcr.io/datum-cloud/unikraft-provider-kustomize
+      bundle-path: config
+      images: |
+        - { path: config/default, name: ghcr.io/datum-cloud/unikraft-provider, tag: "${{ needs.publish-container-image.outputs.tag }}" }
+        - { path: config/dependencies/ukp-runtime, name: ghcr.io/datum-cloud/ukp-runtime, tag: "${{ needs.publish-runtime-image.outputs.tag }}" }
+    secrets: inherit
