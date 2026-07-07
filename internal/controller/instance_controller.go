@@ -277,8 +277,11 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 		Volumes:            volumes,
 		EnableServiceLinks: ptr.To(false),
 		RestartPolicy:      core.RestartPolicyAlways,
+		// Place guests on any per-host Kraftlet virtual-kubelet node
+		// (kraftlet-<host>), selected by label rather than a single
+		// hard-coded node name.
 		NodeSelector: map[string]string{
-			"kubernetes.io/hostname": "kraftlet",
+			"unikraft.com/virtual-kubelet": "true",
 		},
 		Tolerations: []core.Toleration{
 			{

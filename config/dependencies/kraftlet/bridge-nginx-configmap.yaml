@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kraftlet-bridge-nginx
+  namespace: kraftlet
+  labels:
+    app.kubernetes.io/name: kraftlet
+    app.kubernetes.io/part-of: ukc
+data:
+  # TLS terminator: kraftlet dials https://api.local.unikraft.cloud (pinned to
+  # 127.0.0.1 by the pod hostAlias); this answers on 127.0.0.1:443 and proxies
+  # to the node-local ukpd plain-HTTP API on 127.0.0.1:45232.
+  nginx.conf: |
+    worker_processes 1;
+    events { worker_connections 1024; }
+    http {
+      access_log /dev/stdout;
+      error_log  /dev/stderr info;
+      server {
+        listen 127.0.0.1:443 ssl;
+        http2 on;
+        server_name api.local.unikraft.cloud;
+        ssl_certificate     /etc/nginx/tls/tls.crt;
+        ssl_certificate_key /etc/nginx/tls/tls.key;
+        client_max_body_size 0;
+        location / {
+          proxy_pass http://127.0.0.1:45232;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header Connection "";
+          proxy_read_timeout 300s;
+          proxy_send_timeout 300s;
+        }
+      }
+    }

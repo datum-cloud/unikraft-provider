@@ -1,0 +1,114 @@
+# Per-host co-located kraftlet: one virtual-kubelet node per ukpd runtime
+# host, each talking to its LOCAL ukpd. kraftlet 0.4.0 hard-codes the UKC
+# endpoint as https://api.<metro>.unikraft.cloud:443 (it ignores UKC_METRO and
+# its --ukc-allow-insecure flag is inert), so each pod ships a tiny nginx TLS
+# bridge that terminates that hostname on loopback and forwards to the ukpd
+# plain-HTTP API on 127.0.0.1:45232. See README.md for the full rationale.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kraftlet
+  namespace: kraftlet
+  labels:
+    app.kubernetes.io/name: kraftlet
+    app.kubernetes.io/part-of: ukc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kraftlet
+      app.kubernetes.io/part-of: ukc
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kraftlet
+        app.kubernetes.io/part-of: ukc
+    spec:
+      serviceAccountName: kraftlet
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      # Land exactly on the ukpd runtime hosts (same selector as ukp-runtime),
+      # never on a kraftlet virtual-kubelet node.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: compute.datumapis.com/runtime
+                    operator: In
+                    values: ["unikraft"]
+                  - key: unikraft.com/virtual-kubelet
+                    operator: DoesNotExist
+      tolerations:
+        - operator: Exists
+      # kraftlet dials https://api.local.unikraft.cloud -> local bridge.
+      hostAliases:
+        - ip: "127.0.0.1"
+          hostnames: ["api.local.unikraft.cloud"]
+      containers:
+        # TLS terminator: https 127.0.0.1:443 -> http 127.0.0.1:45232 (ukpd)
+        - name: bridge
+          image: nginx:1.27
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - { name: bridge-conf, mountPath: /etc/nginx/nginx.conf, subPath: nginx.conf, readOnly: true }
+            - { name: bridge-tls,  mountPath: /etc/nginx/tls, readOnly: true }
+        - name: kraftlet
+          image: ghcr.io/unikraft-cloud/kraftlet:0.4.0
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          # Distinct virtual-kubelet node name per host: kraftlet-<node>.
+          args:
+            - |
+              export KRAFTLET_NODE_NAME="kraftlet-${NODE_NAME}"
+              export KRAFTLET_NODE_HOSTNAME="kraftlet-${NODE_NAME}"
+              exec kraftlet run
+          env:
+            - name: NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+            # metro name is constant across the fleet: each node's bridge
+            # answers api.local.unikraft.cloud on its own loopback.
+            - name: KRAFTLET_UKC_DEFAULT_METRO
+              value: "local"
+            - name: KRAFTLET_UKC_TOKEN
+              valueFrom: { secretKeyRef: { name: kraftlet-ukc-token, key: token } }
+            # Go trusts the bridge CA here (kraftlet's --ukc-allow-insecure
+            # flag does NOT work, so a real, trusted CA is required). ca.crt
+            # comes from the cert-manager-issued kraftlet-bridge-tls secret.
+            - name: SSL_CERT_FILE
+              value: "/etc/ukc-ca/ca.crt"
+            - name: KRAFTLET_ADDR
+              value: ":10251"                # :10250 is the node kubelet
+            - name: KRAFTLET_LOG_TYPE
+              value: "json"
+            # Parity with the previous HelmRelease values.
+            - name: KRAFTLET_POD_SYNC_WORKERS
+              value: "64"
+            - name: KRAFTLET_POD_STATUS_UPDATE_INTERVAL
+              value: "5s"
+            - name: KRAFTLET_ENABLE_INSTANCE_FQDN_ANNOTATIONS
+              value: "true"
+            - name: KRAFTLET_ENABLE_NODE_TAINT
+              value: "true"
+            - name: KRAFTLET_NODE_TAINT_KEY
+              value: "virtual-kubelet.io/provider"
+            - name: KRAFTLET_NODE_TAINT_VALUE
+              value: "ukc"
+            - name: KRAFTLET_NODE_TAINT_EFFECT
+              value: "NoSchedule"
+            - name: KRAFTLET_NODE_LABELS
+              value: "unikraft.com/metro=local;unikraft.com/virtual-kubelet=true"
+            # Multiple independent kraftlets would otherwise run N cluster-wide
+            # PVC watchers and double-provision ukc-volume PVCs. OFF until a
+            # single-owner/leader design lands (see README open items).
+            - name: KRAFTLET_ENABLE_PVC_WATCHER
+              value: "false"
+            - name: APISERVER_CA_CERT_LOCATION
+              value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+            - name: KRAFTLET_NODE_INTERNAL_IP
+              valueFrom: { fieldRef: { fieldPath: status.hostIP } }
+          volumeMounts:
+            # Same cert-manager secret as the bridge; kraftlet reads only ca.crt.
+            - { name: bridge-tls, mountPath: /etc/ukc-ca, readOnly: true }
+      volumes:
+        - { name: bridge-conf, configMap: { name: kraftlet-bridge-nginx } }
+        - { name: bridge-tls,  secret: { secretName: kraftlet-bridge-tls } }

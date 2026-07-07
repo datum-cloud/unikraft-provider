@@ -1,0 +1,43 @@
+# Copied verbatim from the vendor kraftlet chart 0.4.0
+# (templates/clusterrole.yaml) — the RBAC kraftlet's virtual-kubelet needs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kraftlet
+  labels:
+    app.kubernetes.io/name: kraftlet
+    app.kubernetes.io/part-of: ukc
+rules:
+  - apiGroups: [""]
+    resources: [configmaps, secrets, services]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [delete, get, list, watch, patch]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [create, get]
+  - apiGroups: [""]
+    resources: [nodes/status]
+    verbs: [update, patch]
+  - apiGroups: [""]
+    resources: [pods/status]
+    verbs: [update, patch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [persistentvolumes]
+    verbs: [get, list, watch, create, delete, patch, update]
+  - apiGroups: [""]
+    resources: [serviceaccounts]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [serviceaccounts/token]
+    verbs: [create]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, create, update]

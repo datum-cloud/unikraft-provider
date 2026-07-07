@@ -18,6 +18,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../../.." && pwd)"
 CLUSTER=ukp-e2e
 NODE=${CLUSTER}-control-plane
+# Seeds the ukpd `ci` user below; MUST match config/dependencies/kraftlet/token-secret.yaml.
 CI_TOKEN=$(printf 'ci$datum.users.kraftcloud:ci-e2e-token' | base64 | tr -d '\n')
 export KUBECONFIG=${KUBECONFIG:-/tmp/${CLUSTER}.kubeconfig}
 
@@ -54,11 +55,10 @@ kubectl -n cert-manager wait --for=condition=Available deployment --all --timeou
 
 log "runtime: config + credentials, then deploy"
 # The runtime pulls the test workload image from the vendor registry using
-# the provided agent credentials; also bind the API on all interfaces so
-# the in-cluster ukpd Service can reach it.
+# the provided agent credentials. ukpd keeps its default loopback API
+# (127.0.0.1:45232); the co-located Kraftlet bridge reaches it there.
 kubectl create namespace ukp-system --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-{ printf '%s\n' "$UKP_AGENT_CREDENTIALS"
-  printf 'UKPD_EXTRA_ARGS+=("--api-endpoint" "0.0.0.0:45232")\n'; } > /tmp/ukp.secrets.conf
+printf '%s\n' "$UKP_AGENT_CREDENTIALS" > /tmp/ukp.secrets.conf
 kubectl -n ukp-system create secret generic ukp-runtime-credentials \
   --from-file=ukp.secrets.conf=/tmp/ukp.secrets.conf --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 rm -f /tmp/ukp.secrets.conf
@@ -69,23 +69,6 @@ for c in 0 1 2; do
 done
 kubectl -n ukp-system patch ds ukp-runtime --type=json \
   -p="[{\"op\":\"replace\",\"path\":\"/spec/template/spec/initContainers/0/image\",\"value\":\"$RUNTIME_IMAGE\"}]" >/dev/null
-# Expose ukpd on a port-80 Service (Kraftlet derives a node label from the
-# metro host, and a :port colon is an invalid label). ukpd is hostNetwork,
-# so a selector-less Service + Endpoints points at the node IP:45232.
-NODE_IP=$(kubectl get node ${NODE} -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
-kubectl apply -f - >/dev/null <<EOF
-apiVersion: v1
-kind: Service
-metadata: { name: ukpd, namespace: ukp-system }
-spec: { ports: [{ name: api, port: 80, targetPort: 45232 }] }
----
-apiVersion: v1
-kind: Endpoints
-metadata: { name: ukpd, namespace: ukp-system }
-subsets:
-  - addresses: [{ ip: ${NODE_IP} }]
-    ports: [{ name: api, port: 45232 }]
-EOF
 kubectl -n ukp-system rollout status ds/ukp-runtime --timeout=180s
 
 log "compute control plane (Flux OCIRepository is v1 in current Flux)"
@@ -94,17 +77,19 @@ sed -i 's#source.toolkit.fluxcd.io/v1beta2#source.toolkit.fluxcd.io/v1#' "$tmp/c
 kubectl apply -k "$tmp/compute" >/dev/null
 kubectl -n flux-system wait kustomization/compute --for=condition=Ready --timeout=240s
 
-log "Kraftlet -> local runtime, and the provider"
-kubectl create namespace kraftlet --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-kubectl -n kraftlet create secret generic ukc-credentials \
-  --from-literal=values.yaml="$(printf 'ukc:\n  metro: %s\n  token: %s\n' 'http://ukpd.ukp-system.svc' "$CI_TOKEN")" \
-  --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+log "Kraftlet -> local runtime (per-host DaemonSet + TLS bridge), and the provider"
+# Runtime nodes carry the label the Kraftlet DaemonSet selects on; it
+# co-locates a kraftlet + an nginx TLS bridge with each node's ukpd.
+kubectl label node "${NODE}" compute.datumapis.com/runtime=unikraft --overwrite >/dev/null
+# cert-manager (installed above) issues the bridge TLS via certificates.yaml,
+# and the committed TEST/DEV kraftlet-ukc-token Secret matches the seeded ukpd
+# `ci` user above — so the directory applies self-contained (no ESO needed).
 kubectl apply -k "$repo/config/dependencies/kraftlet" >/dev/null
-kubectl -n kraftlet wait helmrelease/kraftlet --for=condition=Ready --timeout=180s || true
 kubectl apply -k "$repo/config/overlays/test-infra" >/dev/null
 kubectl -n infra-provider-unikraft-system rollout status deployment/infra-provider-unikraft-controller-manager --timeout=180s
+kubectl -n kraftlet rollout status ds/kraftlet --timeout=180s
 
-log "wait for the Kraftlet virtual node to register"
-for i in $(seq 1 30); do kubectl get node kraftlet >/dev/null 2>&1 && break; sleep 4; done
+log "wait for the per-host Kraftlet virtual node to register"
+for i in $(seq 1 30); do kubectl get node "kraftlet-${NODE}" >/dev/null 2>&1 && break; sleep 4; done
 kubectl get nodes
 log "environment ready"

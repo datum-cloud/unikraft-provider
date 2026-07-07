@@ -3,6 +3,15 @@ kind: Kustomization
 namespace: kraftlet
 resources:
   - namespace.yaml
-  - helmrepository.yaml
-  - helmrelease.yaml
-  - ukc-credentials-fallback.yaml
+  - serviceaccount.yaml
+  - clusterrole.yaml
+  - clusterrolebinding.yaml
+  - bridge-nginx-configmap.yaml
+  - certificates.yaml
+  - token-secret.yaml
+  - daemonset.yaml
+# TLS material (kraftlet-bridge-tls + its ca.crt) is issued by cert-manager
+# (certificates.yaml). The ukpd token (kraftlet-ukc-token) ships here as a
+# self-contained TEST/DEV-only Secret (token-secret.yaml); real clusters
+# override it with an External Secrets Operator ExternalSecret in
+# datum-cloud/infra (gcp-secret-store).
