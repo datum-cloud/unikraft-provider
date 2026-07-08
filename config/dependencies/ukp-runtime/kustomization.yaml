@@ -4,11 +4,8 @@ namespace: ukp-system
 resources:
   - namespace.yaml
   - daemonset.yaml
-# The runtime image tag is stamped in by CI at bundle-publish time
-# (`kustomize edit set image`), so the published bundle pins the exact
-# image built from the same commit instead of the mutable `:latest`. The
-# `:latest` default keeps `kustomize build` and the local e2e apply working
-# unchanged; e2e overrides it with its locally built ukp-runtime:e2e image.
+# CI stamps the commit-pinned tag here at bundle-publish time; the :latest default
+# keeps `kustomize build` and local e2e working (e2e overrides with ukp-runtime:e2e).
 images:
   - name: ghcr.io/datum-cloud/ukp-runtime
     newTag: latest

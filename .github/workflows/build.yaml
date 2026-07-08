@@ -5,10 +5,7 @@ on:
   release:
     types: ["published"]
 
-# Shared tag templates. docker/metadata-action derives the same version tag
-# from the ref + commit date in every job, so the provider image, the runtime
-# image, and the kustomize bundle all carry an identical, commit-pinned tag.
-# Keep these in sync with datum-cloud/actions publish-docker.yaml.
+# All jobs derive the same commit-pinned tag, so the images and bundle stay in lockstep.
 
 jobs:
   validate-kustomize:
@@ -28,16 +25,8 @@ jobs:
       platforms: linux/amd64,linux/arm64
     secrets: inherit
 
-  # The runtime image installs the ukp packages from the vendor's
-  # authenticated apt repository, which needs a BuildKit secret
-  # (`--mount=type=secret,id=unikraft-apt-auth`). The shared publish-docker.yaml
-  # forwards build-secrets straight to BuildKit, so the credentials never land
-  # in an image layer or the image history. The secret is passed under this
-  # job's `secrets:` block -- GitHub forbids the secrets context in a
-  # reusable-workflow `with:` -- and the id=value entry is quoted because the
-  # apt auth.conf is multi-line (machine/login/password) and build-push-action's
-  # `secrets:` parser would otherwise split it on newlines and apt 401. Same
-  # commit-pinned tag scheme (and `tag` output) as the provider image and bundle.
+  # Runtime image installs vendor ukp packages from an authenticated apt repo, so it
+  # needs the auth as a BuildKit secret (quoted so the multi-line auth.conf isn't split on newlines).
   publish-runtime-image:
     needs:
       - validate-kustomize
@@ -50,20 +39,13 @@ jobs:
       image-name: ukp-runtime
       context: build/ukp-runtime
       dockerfile-path: build/ukp-runtime/Dockerfile
-      # amd64 only for now: KVM guests on this runtime are x86, and the vendor
-      # apt repository is only validated for amd64. Revisit arm64 once there is
-      # a runtime host target for it.
+      # amd64 only: the runtime's KVM guests are x86 and the vendor apt repo is amd64-only.
       platforms: linux/amd64
     secrets:
       build-secrets: |
         "unikraft-apt-auth=${{ secrets.UNIKRAFT_APT_AUTH }}"
 
-  # The bundle must pin TWO differently-named images -- the provider image in
-  # config/default and the runtime image in config/dependencies/ukp-runtime --
-  # so it uses the shared workflow's multi-image `images:` input, stamping each
-  # overlay with the tag its image job actually published (consumed from that
-  # job's `tag` output, so the bundle can never drift from the images it
-  # references) before flux-pushing the config tree.
+  # Pin both images to the tags their jobs published, then push the config tree as the bundle.
   publish-kustomize-bundle:
     needs:
       - publish-container-image
