@@ -3,20 +3,11 @@ version: '3'
 dotenv: ['.env']
 
 vars:
-  TEST_INFRA_REPO_REF: 'v0.6.4'
-  TEST_INFRA_CLUSTER_NAME: 'test-infra'
   IMG_NAME: 'ghcr.io/datum-cloud/unikraft-provider'
   IMG_TAG: 'dev'
   IMG: '{{.IMG_NAME}}:{{.IMG_TAG}}'
   # The single-cluster e2e kind cluster (created by test/e2e/kind/setup.sh).
   E2E_CLUSTER: 'ukp-e2e'
-
-includes:
-  test-infra:
-    taskfile: https://raw.githubusercontent.com/datum-cloud/test-infra/{{.TEST_INFRA_REPO_REF}}/Taskfile.yml
-    checksum: fe14263f3d0c3f246f1d8bc7fb90b3d82f0069792e1a46cdb49e761624051223
-    vars:
-      REPO_REF: '{{.TEST_INFRA_REPO_REF}}'
 
 tasks:
   default:
@@ -29,12 +20,6 @@ tasks:
     silent: true
     cmds:
       - docker build -t {{.IMG}} .
-
-  dev:load:
-    desc: Load the provider image into the shared test-infra kind cluster
-    silent: true
-    cmds:
-      - kind load docker-image {{.IMG}} --name {{.TEST_INFRA_CLUSTER_NAME}}
 
   e2e:up:
     desc: >
