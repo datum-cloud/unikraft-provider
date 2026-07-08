@@ -5,8 +5,7 @@ metadata:
     control-plane: controller-manager
     app.kubernetes.io/name: infra-provider-unikraft
     app.kubernetes.io/managed-by: kustomize
-  name: controller-manager-metrics-service
-  namespace: system
+  name: unikraft-provider-metrics
 spec:
   ports:
   - name: metrics

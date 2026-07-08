@@ -1,17 +1,7 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  labels:
-    control-plane: controller-manager
-    app.kubernetes.io/name: infra-provider-unikraft
-    app.kubernetes.io/managed-by: kustomize
-  name: system
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: controller-manager
-  namespace: system
+  name: unikraft-provider
   labels:
     control-plane: controller-manager
     app.kubernetes.io/name: infra-provider-unikraft
@@ -106,5 +96,5 @@ spec:
           requests:
             cpu: 10m
             memory: 64Mi
-      serviceAccountName: controller-manager
+      serviceAccountName: unikraft-provider
       terminationGracePeriodSeconds: 10

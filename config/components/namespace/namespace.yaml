@@ -1,0 +1,13 @@
+# The unikraft-system namespace holds the whole Unikraft stack (this provider,
+# ukp-runtime, and kraftlet). ukp-runtime and kraftlet run hostNetwork/privileged,
+# so the namespace enforces the privileged Pod Security level.
+#
+# On real clusters the datum-cloud/infra edge app owns this namespace, and the
+# kind e2e creates it in setup.sh — so the bundles do NOT ship it by default.
+# Include this component only where the deploying layer should create it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: unikraft-system
+  labels:
+    pod-security.kubernetes.io/enforce: privileged

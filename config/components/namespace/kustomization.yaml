@@ -1,0 +1,7 @@
+# Optional: creates the unikraft-system namespace (privileged Pod Security).
+# Add to an overlay's `components:` when the deploying layer should own the
+# namespace; omit it when infra (real clusters) or setup.sh (kind e2e) create it.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - namespace.yaml

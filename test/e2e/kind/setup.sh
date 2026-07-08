@@ -101,7 +101,7 @@ kubectl label node "${NODE}" compute.datumapis.com/runtime=unikraft --overwrite 
 # in-namespace by the ukp-runtime overlay).
 kubectl apply -k "$repo/config/overlays/kraftlet-e2e" >/dev/null
 kubectl apply -k "$repo/config/overlays/test-infra" >/dev/null
-kubectl -n infra-provider-unikraft-system rollout status deployment/infra-provider-unikraft-controller-manager --timeout=180s
+kubectl -n unikraft-system rollout status deployment/unikraft-provider --timeout=180s
 kubectl -n unikraft-system rollout status ds/kraftlet --timeout=180s
 
 log "wait for the per-host Kraftlet virtual node to register"

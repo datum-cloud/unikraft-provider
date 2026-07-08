@@ -4,12 +4,11 @@ metadata:
   labels:
     app.kubernetes.io/name: infra-provider-unikraft
     app.kubernetes.io/managed-by: kustomize
-  name: manager-rolebinding
+  name: unikraft-provider-manager-rolebinding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: manager-role
+  name: unikraft-provider-manager-role
 subjects:
 - kind: ServiceAccount
-  name: controller-manager
-  namespace: system
+  name: unikraft-provider
