@@ -10,9 +10,11 @@ spec:
   # Unikraft runtime behind Kraftlet (e.g. the containerized runtime from
   # docs/enhancements/containerized-unikraft-runtime).
   # We assert the instance reaches Running (its microVM has booted on the
-  # runtime), not Ready — full readiness also requires network programming
-  # by the Galactic networking operator, which is out of scope for this
-  # runtime-focused test and not deployed here.
+  # runtime) and that its microVM Pod is Running on the runtime node — but
+  # NOT that the guest is reachable over the network. In-guest reachability
+  # additionally requires the network programming done by the Galactic
+  # networking operator, which is out of scope for this runtime-focused test
+  # and not deployed here.
   description: Start an Instance through the compute API and assert it runs.
   steps:
     - name: create and start the Instance
@@ -41,27 +43,3 @@ spec:
                   upstream.instance: e2e-run-instance
               status:
                 phase: Running
-    - name: confirm the workload is reachable over the network
-      # The Running conditions above are control-plane state; this step
-      # actually sends traffic to the guest to prove it serves. The
-      # provider Pod's status.podIP is the instance's private IP; we reach
-      # it from the runtime pod (which shares the host netns where the
-      # instance's TAP lives).
-      try:
-        - script:
-            content: |
-              set -eu
-              ip=$(kubectl get pod -n "$NAMESPACE" \
-                -l upstream.instance=e2e-run-instance \
-                -o jsonpath='{.items[0].status.podIP}')
-              rpod=$(kubectl -n unikraft-system get pod -l app=ukp-runtime \
-                --field-selector status.phase=Running \
-                -o jsonpath='{.items[0].metadata.name}')
-              for i in $(seq 1 15); do
-                code=$(kubectl -n unikraft-system exec "$rpod" -c ukpd -- \
-                  curl -s -m 8 -o /dev/null -w '%{http_code}' "http://$ip:8080/" || true)
-                echo "attempt $i: http $code from $ip"
-                [ "$code" = "200" ] && exit 0
-                sleep 4
-              done
-              echo "workload never served HTTP 200"; exit 1

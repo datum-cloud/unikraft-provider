@@ -13,15 +13,29 @@ runs:
       env:
         KUBECONFIG: ${{ inputs.kubeconfig }}
       run: |
-        kubectl get nodes -o wide || true
-        kubectl -n ukp-system get pods -o wide || true
-        kubectl -n ukp-system logs -l app=ukp-runtime -c ukpd --tail=50 || true
+        # Never abort mid-dump; best-effort diagnostics only.
+        set +e
+        echo "=== nodes ==="
+        kubectl get nodes -o wide
+        echo "=== pods (all namespaces) ==="
+        kubectl get pods -A -o wide
+        # The whole runtime stack (ukp-runtime + kraftlet) lives in unikraft-system.
+        echo "=== ukpd container logs ==="
+        kubectl -n unikraft-system logs -l app=ukp-runtime -c ukpd --tail=50
         # ukpd logs the microVM lifecycle to a file, not stdout — dump it to
         # see whether an instance actually booted (VMM start, or a failure).
-        POD=$(kubectl -n ukp-system get pod -l app=ukp-runtime --field-selector status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+        POD=$(kubectl -n unikraft-system get pod -l app=ukp-runtime --field-selector status.phase=Running -o jsonpath='{.items[0].metadata.name}')
         echo "=== ukpd.log (microVM lifecycle) ==="
-        kubectl -n ukp-system exec "$POD" -c ukpd -- tail -100 /var/log/ukp/platform/ukpd.log 2>/dev/null || true
+        [ -n "$POD" ] && kubectl -n unikraft-system exec "$POD" -c ukpd -- tail -100 /var/log/ukp/platform/ukpd.log
+        echo "=== kraftlet logs ==="
+        kubectl -n unikraft-system logs -l app.kubernetes.io/name=kraftlet --tail=50
+        echo "=== provider logs ==="
+        for ns in unikraft-system infra-provider-unikraft-system; do
+          kubectl -n "$ns" logs -l control-plane=controller-manager --tail=50 2>/dev/null
+        done
         echo "=== compute Instances ==="
-        kubectl get instances.compute.datumapis.com -A -o wide || true
-        kubectl -n kraftlet logs -l app.kubernetes.io/name=kraftlet --tail=30 || true
-        kubectl -n infra-provider-unikraft-system logs -l control-plane=controller-manager --tail=30 || true
+        kubectl get instances.compute.datumapis.com -A -o wide
+        echo "=== microVM pods (managed-by infra-provider-unikraft) + events ==="
+        kubectl get pods -A -l managed-by=infra-provider-unikraft -o wide
+        kubectl get events -A --sort-by=.lastTimestamp | tail -40
+        true
