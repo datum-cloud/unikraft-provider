@@ -1,0 +1,17 @@
+# Kind e2e: the base pins the runtime data volume to the Talos UserVolume path
+# (/var/mnt/ukp). The kind cluster instead bind-mounts the runner's XFS-quota
+# loopback filesystem to /var/lib/ukp on the node (see test/e2e/kind/kind.yaml
+# extraMounts), so point the hostPath there. The in-container mountPath
+# (/var/lib/ukp) is unchanged.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ukp-runtime
+spec:
+  template:
+    spec:
+      volumes:
+        - name: ukp-data
+          hostPath:
+            path: /var/lib/ukp
+            type: Directory

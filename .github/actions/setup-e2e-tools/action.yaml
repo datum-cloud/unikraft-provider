@@ -1,7 +1,8 @@
 name: Set up e2e tooling
 description: >
-  Install the tools the runtime e2e needs on the runner: kubectl, chainsaw,
-  kind, and xfsprogs (for the loopback XFS data volume).
+  Install the tools the runtime e2e needs on the runner: Task (the e2e entry
+  point), kubectl, chainsaw, kind, and xfsprogs (for the loopback XFS data
+  volume).
 
 inputs:
   kind-version:
@@ -14,6 +15,11 @@ inputs:
 runs:
   using: composite
   steps:
+    - uses: arduino/setup-task@v2
+      with:
+        version: 3.x
+        repo-token: ${{ github.token }}
+
     - uses: azure/setup-kubectl@v4
       with:
         version: ${{ inputs.kubectl-version }}

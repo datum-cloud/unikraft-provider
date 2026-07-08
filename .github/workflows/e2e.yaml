@@ -61,12 +61,12 @@ jobs:
           PROVIDER_IMAGE: ghcr.io/datum-cloud/unikraft-provider:dev
           RUNTIME_IMAGE: ukp-runtime:e2e
           UKP_AGENT_CREDENTIALS: ${{ secrets.UKP_AGENT_CREDENTIALS }}
-        run: bash test/e2e/kind/setup.sh
+        run: task e2e:up
 
       - name: Run chainsaw
         env:
           KUBECONFIG: /tmp/ukp-e2e.kubeconfig
-        run: chainsaw test test/e2e --config test/e2e/.chainsaw.yaml
+        run: task e2e
 
       - name: Diagnostics
         if: failure()
