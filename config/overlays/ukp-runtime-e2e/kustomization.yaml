@@ -1,0 +1,25 @@
+# Kind e2e overlay for the Unikraft runtime. The kind cluster differs from a
+# real Talos node in two ways the base can't assume, so this overlay carries
+# both declaratively (instead of imperative `kubectl patch` in setup.sh):
+#
+#   - image: the runtime image is built per-run and kind-loaded as
+#     ghcr.io/datum-cloud/ukp-runtime:e2e (see test/e2e/kind/setup.sh).
+#   - data volume: the base uses the Talos path /var/mnt/ukp; kind bind-mounts
+#     the XFS-quota filesystem to /var/lib/ukp (data-volume-patch.yaml).
+#
+# The `ci` ukpd user (users.json) is seeded onto the XFS by setup.sh, which owns
+# the host-side quota-filesystem provisioning; the real-cluster ESO seed lives
+# in config/overlays/ukp-runtime instead.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: unikraft-system
+resources:
+  - ../../dependencies/ukp-runtime
+images:
+  - name: ghcr.io/datum-cloud/ukp-runtime
+    newTag: e2e
+patches:
+  - path: data-volume-patch.yaml
+    target:
+      kind: DaemonSet
+      name: ukp-runtime

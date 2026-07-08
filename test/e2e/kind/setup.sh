@@ -44,7 +44,10 @@ kind create cluster --config "$here/kind.yaml"
 kind get kubeconfig --name $CLUSTER > "$KUBECONFIG"
 
 log "load images into kind"
-kind load docker-image "$RUNTIME_IMAGE" --name $CLUSTER >/dev/null
+# Retag the runtime image to the fixed tag the ukp-runtime-e2e overlay pins
+# (its images: transformer), so the deploy is fully declarative.
+docker tag "$RUNTIME_IMAGE" ghcr.io/datum-cloud/ukp-runtime:e2e
+kind load docker-image ghcr.io/datum-cloud/ukp-runtime:e2e --name $CLUSTER >/dev/null
 kind load docker-image "$PROVIDER_IMAGE" --name $CLUSTER >/dev/null
 
 log "cert-manager + Flux (control-plane dependencies)"
@@ -76,13 +79,9 @@ rm -f /tmp/ukp.secrets.conf
 # The runtime DaemonSet only schedules onto compute nodes; label the single
 # kind node so its affinity (compute.datumapis.com/runtime=unikraft) matches.
 kubectl label node "$NODE" compute.datumapis.com/runtime=unikraft --overwrite >/dev/null
-kubectl apply -k "$repo/config/dependencies/ukp-runtime" >/dev/null
-for c in 0 1 2; do
-  kubectl -n unikraft-system patch ds ukp-runtime --type=json \
-    -p="[{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/$c/image\",\"value\":\"$RUNTIME_IMAGE\"}]" >/dev/null
-done
-kubectl -n unikraft-system patch ds ukp-runtime --type=json \
-  -p="[{\"op\":\"replace\",\"path\":\"/spec/template/spec/initContainers/0/image\",\"value\":\"$RUNTIME_IMAGE\"}]" >/dev/null
+# Kind-specific runtime shape (image + XFS hostPath) lives in the overlay, not
+# imperative patches here.
+kubectl apply -k "$repo/config/overlays/ukp-runtime-e2e" >/dev/null
 kubectl -n unikraft-system rollout status ds/ukp-runtime --timeout=180s
 
 log "compute control plane (Flux OCIRepository is v1 in current Flux)"
