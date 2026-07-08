@@ -27,15 +27,20 @@ spec:
       hostIPC: true
       dnsPolicy: Default
       priorityClassName: system-node-critical
-      # Never schedule onto Kraftlet virtual-kubelet nodes: those represent
-      # runtime hosts as seen from an edge cluster, not real machines with
-      # a hypervisor. (The broad tolerations below would otherwise place a
+      # Run only on compute nodes: bare-metal hosts with a hypervisor,
+      # labeled by the provisioner with `compute.datumapis.com/runtime`.
+      # Also never schedule onto the Kraftlet virtual-kubelet node, which
+      # represents the metro as seen from an edge cluster, not a real
+      # machine. (The broad tolerations below would otherwise place a
       # phantom pod there.)
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
               - matchExpressions:
+                  - key: compute.datumapis.com/runtime
+                    operator: In
+                    values: ["unikraft"]
                   - key: unikraft.com/virtual-kubelet
                     operator: DoesNotExist
       # On SIGTERM ukpd parks scale-to-zero instances into standby
@@ -43,8 +48,10 @@ spec:
       # is up). The grace period must cover parking every guest on the
       # node; size it for guest density.
       terminationGracePeriodSeconds: 120
-      # Tolerate everything, like CNI/kube-proxy DaemonSets: runtime nodes
-      # are deliberately CNI-less and permanently NotReady.
+      # Tolerate everything, like a CNI/kube-proxy DaemonSet: the runtime
+      # must run on every compute node regardless of its taints — including
+      # the `compute.datumapis.com/runtime=unikraft:NoSchedule` dedication
+      # taint that keeps ordinary workloads off these privileged KVM hosts.
       tolerations:
         - operator: Exists
       initContainers:
