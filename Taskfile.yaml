@@ -8,6 +8,8 @@ vars:
   IMG_NAME: 'ghcr.io/datum-cloud/unikraft-provider'
   IMG_TAG: 'dev'
   IMG: '{{.IMG_NAME}}:{{.IMG_TAG}}'
+  # The single-cluster e2e kind cluster (created by test/e2e/kind/setup.sh).
+  E2E_CLUSTER: 'ukp-e2e'
 
 includes:
   test-infra:
@@ -29,59 +31,28 @@ tasks:
       - docker build -t {{.IMG}} .
 
   dev:load:
-    desc: Load the image into the kind cluster
+    desc: Load the provider image into the shared test-infra kind cluster
     silent: true
     cmds:
       - kind load docker-image {{.IMG}} --name {{.TEST_INFRA_CLUSTER_NAME}}
 
-  test:create-ukc-credentials:
-    desc: Create UKC credentials Secret from UKC_METRO / UKC_TOKEN env vars
-    silent: true
-    status:
-      - test -z "${UKC_METRO}" -a -z "${UKC_TOKEN}"
-    cmds:
-      - task test-infra:kubectl -- create namespace kraftlet --dry-run=client -o yaml | task test-infra:kubectl -- apply -f -
-      - |
-        task test-infra:kubectl -- create secret generic ukc-credentials \
-          --namespace kraftlet \
-          --from-literal=values.yaml="$(printf 'ukc:\n  metro: %s\n  token: %s\n' "${UKC_METRO}" "${UKC_TOKEN}")" \
-          --dry-run=client -o yaml | task test-infra:kubectl -- apply -f -
-
-  test:install-dependencies:
-    desc: Install compute and Kraftlet via Flux
+  e2e:up:
+    desc: >
+      Bring up the full single-cluster e2e environment — kind + the containerized
+      Unikraft runtime + kraftlet + the provider. Expects the RUNTIME_IMAGE,
+      PROVIDER_IMAGE and UKP_AGENT_CREDENTIALS env vars (see test/e2e/kind/setup.sh).
     silent: true
     cmds:
-      - task: test:create-ukc-credentials
-      - task test-infra:kubectl -- apply -k config/dependencies/compute
-      - task test-infra:kubectl -- apply -k config/dependencies/kraftlet
-      - task test-infra:kubectl -- wait -n flux-system kustomization/compute --for=condition=Ready --timeout=300s
-      - task test-infra:kubectl -- wait -n kraftlet helmrelease/kraftlet --for=condition=Ready --timeout=180s || true
-
-  test:deploy:
-    desc: Deploy the unikraft-provider via the test-infra overlay
-    silent: true
-    cmds:
-      - task test-infra:kubectl -- apply -k config/overlays/test-infra
-      - task test-infra:kubectl -- rollout status -n infra-provider-unikraft-system deployment/infra-provider-unikraft-controller-manager --timeout=180s
-
-  test:setup:
-    desc: Bring up kind, install deps, build/load image, deploy
-    silent: true
-    deps: [test-infra:cluster-up]
-    cmds:
-      - task: test:install-dependencies
-      - task: dev:build
-      - task: dev:load
-      - task: test:deploy
+      - bash test/e2e/kind/setup.sh
 
   e2e:
-    desc: Run chainsaw e2e tests
+    desc: Run the chainsaw e2e tests (bring the environment up first with `task e2e:up`)
     silent: true
     cmds:
       - chainsaw test test/e2e --config test/e2e/.chainsaw.yaml
 
-  test:teardown:
-    desc: Tear down the kind cluster
+  e2e:down:
+    desc: Tear down the e2e kind cluster
     silent: true
     cmds:
-      - task: test-infra:cluster-down
+      - kind delete cluster --name {{.E2E_CLUSTER}}
