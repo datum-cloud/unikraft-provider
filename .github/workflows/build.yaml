@@ -68,7 +68,7 @@ jobs:
     needs:
       - publish-container-image
       - publish-runtime-image
-    uses: datum-cloud/actions/.github/workflows/publish-kustomize-bundle.yaml@feat/publish-kustomize-bundle-multi-image
+    uses: datum-cloud/actions/.github/workflows/publish-kustomize-bundle.yaml@v1.20.0
     with:
       bundle-name: ghcr.io/datum-cloud/unikraft-provider-kustomize
       bundle-path: config
