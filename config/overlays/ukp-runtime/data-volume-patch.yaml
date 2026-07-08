@@ -1,0 +1,17 @@
+# Real-cluster only: repoint the runtime's persistent data volume to Talos's
+# XFS-quota UserVolume, which Talos mounts at /var/mnt/ukp (the default /var is
+# not a separate quota-enabled filesystem). The base uses /var/lib/ukp so the
+# kind e2e, which bind-mounts its quota fs there, is unaffected. The in-container
+# mountPath stays /var/lib/ukp, where ukpd expects its data dir.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ukp-runtime
+spec:
+  template:
+    spec:
+      volumes:
+        - name: ukp-data
+          hostPath:
+            path: /var/mnt/ukp
+            type: Directory

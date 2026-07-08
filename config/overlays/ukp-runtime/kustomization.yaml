@@ -15,3 +15,9 @@ patches:
     target:
       kind: DaemonSet
       name: ukp-runtime
+  # Talos mounts the runtime UserVolume at /var/mnt/ukp; repoint the data
+  # volume's host source there (the base keeps /var/lib/ukp for the kind e2e).
+  - path: data-volume-patch.yaml
+    target:
+      kind: DaemonSet
+      name: ukp-runtime

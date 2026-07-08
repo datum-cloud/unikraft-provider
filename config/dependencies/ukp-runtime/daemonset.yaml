@@ -151,15 +151,14 @@ spec:
               mountPath: /etc/ukp-secrets
               readOnly: true
       volumes:
-        # Persistent runtime data lives on the node's XFS-quota UserVolume,
-        # which Talos mounts at /var/mnt/ukp (the default /var is not a
-        # separate quota-enabled filesystem). type: Directory asserts the
-        # volume is present — the runtime cannot start without it. Note the
-        # host source (/var/mnt/ukp) is deliberately not the in-container
-        # mountPath (/var/lib/ukp, where ukpd expects its data dir).
+        # Persistent runtime data lives on the node's XFS-quota filesystem,
+        # mounted at /var/lib/ukp (where ukpd expects its data dir). type:
+        # Directory asserts the volume is present — the runtime cannot start
+        # without it. On Talos the quota-enabled UserVolume lives elsewhere,
+        # so the real-cluster overlay repoints this host source to /var/mnt/ukp.
         - name: ukp-data
           hostPath:
-            path: /var/mnt/ukp
+            path: /var/lib/ukp
             type: Directory
         - name: ukp-run
           hostPath:
