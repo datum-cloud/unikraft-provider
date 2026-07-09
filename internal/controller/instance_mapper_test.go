@@ -138,6 +138,231 @@ func TestBuildPodSpecFromContainers_OtherFieldsPassthrough(t *testing.T) {
 	}
 }
 
+// TestResolveContainerResources verifies the three-tier sizing precedence for
+// Pod container resources: explicit Limits > instanceType catalog > legacy
+// default. The catalog values must equal what compute's quota claim accounts
+// for (1 vCPU / 2 GiB for datumcloud/d1-standard-2) so that Pod sizing and
+// quota are always consistent.
+func TestResolveContainerResources(t *testing.T) {
+	instanceWithType := func(instanceType string) *computev1alpha.Instance {
+		return &computev1alpha.Instance{
+			Spec: computev1alpha.InstanceSpec{
+				Runtime: computev1alpha.InstanceRuntimeSpec{
+					Resources: computev1alpha.InstanceRuntimeResources{
+						InstanceType: instanceType,
+					},
+				},
+			},
+		}
+	}
+
+	containerWithLimits := func(cpu, mem string) *computev1alpha.SandboxContainer {
+		sc := &computev1alpha.SandboxContainer{
+			Resources: &computev1alpha.ContainerResourceRequirements{
+				Limits: corev1.ResourceList{},
+			},
+		}
+		if cpu != "" {
+			sc.Resources.Limits[corev1.ResourceCPU] = resource.MustParse(cpu)
+		}
+		if mem != "" {
+			sc.Resources.Limits[corev1.ResourceMemory] = resource.MustParse(mem)
+		}
+		return sc
+	}
+
+	tests := []struct {
+		name      string
+		instance  *computev1alpha.Instance
+		container *computev1alpha.SandboxContainer
+		wantCPU   int64
+		wantMem   int64
+	}{
+		{
+			// Common production shape: instanceType only, no explicit limits.
+			// The Pod must receive the catalog values so it matches the quota claim.
+			name:      "d1-standard-2 with no explicit limits → catalog values",
+			instance:  instanceWithType("datumcloud/d1-standard-2"),
+			container: &computev1alpha.SandboxContainer{},
+			wantCPU:   1000, // 1 vCPU
+			wantMem:   2048, // 2 GiB
+		},
+		{
+			// Both cpu and memory Limits set explicitly — catalog must not override.
+			name:      "explicit cpu+memory limits take precedence over catalog",
+			instance:  instanceWithType("datumcloud/d1-standard-2"),
+			container: containerWithLimits("500m", "512Mi"),
+			wantCPU:   500,
+			wantMem:   512,
+		},
+		{
+			// Only memory limit set — memory comes from explicit limit, CPU from catalog.
+			name:      "explicit memory only: explicit memory wins, catalog supplies CPU",
+			instance:  instanceWithType("datumcloud/d1-standard-2"),
+			container: containerWithLimits("", "256Mi"),
+			wantCPU:   1000, // catalog d1-standard-2
+			wantMem:   256,  // explicit
+		},
+		{
+			// Only CPU limit set — cpu from explicit, memory from catalog.
+			name:      "explicit cpu only: explicit cpu wins, catalog supplies memory",
+			instance:  instanceWithType("datumcloud/d1-standard-2"),
+			container: containerWithLimits("2", ""),
+			wantCPU:   2000, // explicit 2 cores
+			wantMem:   2048, // catalog d1-standard-2
+		},
+		{
+			// Unknown instanceType with no explicit limits → legacy fallback.
+			// No fabricated CPU value; memory uses the hardcoded default.
+			name:      "unknown instanceType, no limits → legacy default memory, no CPU",
+			instance:  instanceWithType("datumcloud/unknown-type-99"),
+			container: &computev1alpha.SandboxContainer{},
+			wantCPU:   0,
+			wantMem:   int64(defaultInstanceMemoryMB),
+		},
+		{
+			// No instanceType, no explicit limits → same legacy fallback.
+			name:      "empty instanceType, no limits → legacy default memory, no CPU",
+			instance:  instanceWithType(""),
+			container: &computev1alpha.SandboxContainer{},
+			wantCPU:   0,
+			wantMem:   int64(defaultInstanceMemoryMB),
+		},
+		{
+			// nil instance (defensive) → legacy fallback.
+			name:      "nil instance → legacy default memory, no CPU",
+			instance:  nil,
+			container: &computev1alpha.SandboxContainer{},
+			wantCPU:   0,
+			wantMem:   int64(defaultInstanceMemoryMB),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cpu, mem := resolveContainerResources(tc.instance, tc.container)
+			if cpu != tc.wantCPU {
+				t.Errorf("cpuMillicores = %d, want %d", cpu, tc.wantCPU)
+			}
+			if mem != tc.wantMem {
+				t.Errorf("memoryMiB = %d, want %d", mem, tc.wantMem)
+			}
+		})
+	}
+}
+
+// TestBuildPodSpecFromContainers_InstanceTypeSizing verifies that
+// buildPodSpecFromContainers sets both Requests and Limits for cpu and memory
+// on the downstream Pod container when the instance is sized by instanceType
+// only. This ensures the Pod footprint equals what the quota claim accounts for.
+func TestBuildPodSpecFromContainers_InstanceTypeSizing(t *testing.T) {
+	ctx := context.Background()
+	r := &InstanceReconciler{}
+
+	instance := &computev1alpha.Instance{
+		Spec: computev1alpha.InstanceSpec{
+			Runtime: computev1alpha.InstanceRuntimeSpec{
+				Resources: computev1alpha.InstanceRuntimeResources{
+					InstanceType: "datumcloud/d1-standard-2",
+				},
+				Sandbox: &computev1alpha.SandboxRuntime{
+					Containers: []computev1alpha.SandboxContainer{
+						{
+							Name:  "app",
+							Image: "index.unikraft.io/datum/myapp:latest",
+							// No Resources set — instanceType drives sizing.
+						},
+					},
+				},
+			},
+		},
+	}
+
+	spec, err := r.buildPodSpecFromContainers(ctx, instance, instance.Spec.Runtime.Sandbox.Containers)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(spec.Containers) != 1 {
+		t.Fatalf("expected 1 container, got %d", len(spec.Containers))
+	}
+	c := spec.Containers[0]
+
+	wantCPU := resource.MustParse("1000m")
+	wantMem := resource.MustParse("2048Mi")
+
+	// Both Limits and Requests must be set with catalog values.
+	gotCPULimit := c.Resources.Limits[corev1.ResourceCPU]
+	if gotCPULimit.Cmp(wantCPU) != 0 {
+		t.Errorf("CPU Limit = %s, want %s", gotCPULimit.String(), wantCPU.String())
+	}
+	gotMemLimit := c.Resources.Limits[corev1.ResourceMemory]
+	if gotMemLimit.Cmp(wantMem) != 0 {
+		t.Errorf("Memory Limit = %s, want %s", gotMemLimit.String(), wantMem.String())
+	}
+	gotCPUReq := c.Resources.Requests[corev1.ResourceCPU]
+	if gotCPUReq.Cmp(wantCPU) != 0 {
+		t.Errorf("CPU Request = %s, want %s", gotCPUReq.String(), wantCPU.String())
+	}
+	gotMemReq := c.Resources.Requests[corev1.ResourceMemory]
+	if gotMemReq.Cmp(wantMem) != 0 {
+		t.Errorf("Memory Request = %s, want %s", gotMemReq.String(), wantMem.String())
+	}
+}
+
+// TestBuildPodSpecFromContainers_ExplicitLimitsPreserved verifies that explicit
+// container Limits are not overridden by the instanceType catalog, so a workload
+// with custom sizing is programmed at its declared footprint.
+func TestBuildPodSpecFromContainers_ExplicitLimitsPreserved(t *testing.T) {
+	ctx := context.Background()
+	r := &InstanceReconciler{}
+
+	instance := &computev1alpha.Instance{
+		Spec: computev1alpha.InstanceSpec{
+			Runtime: computev1alpha.InstanceRuntimeSpec{
+				Resources: computev1alpha.InstanceRuntimeResources{
+					InstanceType: "datumcloud/d1-standard-2",
+				},
+				Sandbox: &computev1alpha.SandboxRuntime{
+					Containers: []computev1alpha.SandboxContainer{
+						{
+							Name:  "app",
+							Image: "index.unikraft.io/datum/myapp:latest",
+							Resources: &computev1alpha.ContainerResourceRequirements{
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("500m"),
+									corev1.ResourceMemory: resource.MustParse("512Mi"),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	spec, err := r.buildPodSpecFromContainers(ctx, instance, instance.Spec.Runtime.Sandbox.Containers)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	c := spec.Containers[0]
+
+	wantCPU := resource.MustParse("500m")
+	wantMem := resource.MustParse("512Mi")
+
+	gotCPU := c.Resources.Limits[corev1.ResourceCPU]
+	if gotCPU.Cmp(wantCPU) != 0 {
+		t.Errorf("CPU Limit = %s, want %s (explicit value must not be overridden by catalog)",
+			gotCPU.String(), wantCPU.String())
+	}
+	gotMem := c.Resources.Limits[corev1.ResourceMemory]
+	if gotMem.Cmp(wantMem) != 0 {
+		t.Errorf("Memory Limit = %s, want %s (explicit value must not be overridden by catalog)",
+			gotMem.String(), wantMem.String())
+	}
+}
+
+// sliceEqual reports whether two string slices are element-wise equal.
+// nil and an empty slice are treated as equivalent.
 func sliceEqual(a, b []string) bool {
 	if len(a) == 0 && len(b) == 0 {
 		return true
