@@ -1,18 +1,18 @@
 # Real-cluster only: seed ukpd's user database from the ESO-generated secret.
 #
 # ukpd loads --users /var/lib/ukp/data/users.json at boot and syncs it into its
-# persistent userdb. This initContainer writes that file from the generated
-# `kraftlet-ukc-token` secret before ukpd starts, so the ukpd credential and the
-# kraftlet bearer derive from the same generated value. The secret carries
-# identity + permissions only; the vmdb/vmm quotas are computed HERE, per node,
-# from the host's resources (the pod is hostNetwork on Talos, so nproc and
-# /proc/meminfo report the real host) and merged in before install. Knobs live
-# in ukp.conf (UKP_QUOTA_*). The secret volume is optional and the copy is
-# JSON-validated: where the secret is absent (or ever malformed) the runtime
-# keeps its existing/vendor-seeded users.json rather than writing a bad file
-# (a broken users.json crash-loops ukpd). Quota computation likewise never
-# fails the init: any error falls back to the previous static values with a
-# logged warning.
+# persistent userdb. This initContainer runs seed-users.sh (mounted from the
+# ukp-seed-script ConfigMap, hash-suffixed so script changes roll the
+# DaemonSet) to write that file from the generated `kraftlet-ukc-token` secret
+# before ukpd starts, so the ukpd credential and the kraftlet bearer derive
+# from the same generated value. The secret carries identity + permissions
+# only; the script computes the vmdb/vmm quotas per node from host resources
+# (knobs in ukp.conf, UKP_QUOTA_*) and merges them in before install.
+#
+# Failure semantics (see seed-users.sh): a missing/invalid secret is lenient
+# by design (optional volume; the runtime keeps its existing users.json), but
+# a quota computation failure fails this initContainer — the pod does not
+# start rather than assuming a node's capacity.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -26,101 +26,7 @@ spec:
         - name: seed-users
           image: ghcr.io/datum-cloud/ukp-runtime:latest
           imagePullPolicy: IfNotPresent
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              set -eu
-              src=/etc/ukp-auth/users.json
-              dst=/var/lib/ukp/data/users.json
-              tmp=/tmp/users.json.seed
-              mkdir -p /var/lib/ukp/data
-              if [ -f "$src" ] && python3 -m json.tool "$src" >/dev/null 2>&1; then
-                # Load the UKP_QUOTA_* knobs. ukp.conf is bash-syntax (arrays),
-                # so /bin/sh cannot source it wholesale: extract only the simple
-                # UKP_QUOTA_* assignments and export them for the merge below.
-                set -a
-                eval "$(grep -E '^UKP_QUOTA_[A-Z0-9_]+=' /etc/ukp.conf 2>/dev/null || true)"
-                set +a
-                # Merge per-node quotas into the generated identity. These
-                # quotas double as the platform's capacity enforcement: the
-                # node's full resources minus a fixed reserve, which is what
-                # keeps guests from starving ukpd, the agent, and Talos
-                # system components.
-                if python3 - "$src" "$tmp" <<'PYEOF'
-              import json, os, sys
-
-              src, out = sys.argv[1], sys.argv[2]
-
-              # Previous static values, sized for 64-core/256GB hosts: used
-              # verbatim whenever computation fails, so the init never
-              # crash-loops the runtime over a quota problem.
-              FALLBACK_VMM = {"max_vcpus": 32, "max_memory_mb": 65536}
-              FALLBACK_VMDB = {"max_instances": 64, "min_memory_mb": 16,
-                               "def_memory_mb": 128, "max_memory_mb": 8192,
-                               "min_vcpus": 1, "max_vcpus": 8}
-
-              def knob(name, default):
-                  val = os.environ.get(name, "").strip()
-                  return int(val) if val else default
-
-              def compute():
-                  # UKP_QUOTA_HOST_CPUS / UKP_QUOTA_MEMINFO are test/override
-                  # hooks; on a hostNetwork pod the defaults see the real host.
-                  cpus = knob("UKP_QUOTA_HOST_CPUS", os.cpu_count() or 0)
-                  if cpus < 1:
-                      raise ValueError("could not determine host cpu count")
-                  mem_mb = 0
-                  with open(os.environ.get("UKP_QUOTA_MEMINFO") or "/proc/meminfo") as f:
-                      for line in f:
-                          if line.startswith("MemTotal:"):
-                              mem_mb = int(line.split()[1]) // 1024
-                              break
-                  if mem_mb < 1:
-                      raise ValueError("could not determine host memory")
-                  vmm_vcpus = max(1, cpus - knob("UKP_QUOTA_CPU_RESERVE", 4))
-                  vmm_mem = max(1024, mem_mb - knob("UKP_QUOTA_MEM_RESERVE_MB", 8192))
-                  vmm = {"max_vcpus": vmm_vcpus, "max_memory_mb": vmm_mem}
-                  vmdb = {
-                      "max_instances": max(1, vmm_vcpus * knob("UKP_QUOTA_INSTANCES_PER_VCPU", 2)),
-                      "min_memory_mb": 16,
-                      "def_memory_mb": 128,
-                      "max_memory_mb": knob("UKP_QUOTA_VM_MAX_MEM_MB", 8192),
-                      "min_vcpus": 1,
-                      "max_vcpus": knob("UKP_QUOTA_VM_MAX_VCPUS", 8),
-                  }
-                  return vmm, vmdb
-
-              try:
-                  vmm, vmdb = compute()
-                  print("seed-users: computed node quotas: vmm=%s vmdb.max_instances=%d"
-                        % (vmm, vmdb["max_instances"]))
-              except Exception as exc:
-                  print("seed-users: WARNING: quota computation failed (%s); "
-                        "falling back to static quotas" % exc, file=sys.stderr)
-                  vmm, vmdb = FALLBACK_VMM, FALLBACK_VMDB
-
-              with open(src) as f:
-                  users = json.load(f)
-              for user in users:
-                  user["vmm"] = vmm
-                  user["vmdb"] = vmdb
-              with open(out, "w") as f:
-                  json.dump(users, f, indent=2)
-                  f.write("\n")
-              PYEOF
-                then
-                  install -m 0600 "$tmp" "$dst"
-                  echo "seed-users: wrote generated users.json with computed node quotas to $dst"
-                else
-                  # python itself failed (not a computation error — those fall
-                  # back inside). Install the validated identity so the ukpd
-                  # credential still matches the kraftlet bearer.
-                  echo "seed-users: WARNING: quota merge failed; writing identity without quotas" >&2
-                  install -m 0600 "$src" "$dst"
-                fi
-              else
-                echo "seed-users: no valid generated users.json at $src; leaving existing $dst"
-              fi
+          command: ["/bin/sh", "/etc/ukp-seed/seed-users.sh"]
           securityContext:
             privileged: true
           volumeMounts:
@@ -133,6 +39,9 @@ spec:
               mountPath: /etc/ukp.conf
               subPath: ukp.conf
               readOnly: true
+            - name: ukp-seed
+              mountPath: /etc/ukp-seed
+              readOnly: true
       volumes:
         - name: ukp-auth
           secret:
@@ -141,3 +50,6 @@ spec:
               - key: users.json
                 path: users.json
             optional: true
+        - name: ukp-seed
+          configMap:
+            name: ukp-seed-script
