@@ -1,0 +1,55 @@
+# Real-cluster only: seed ukpd's user database from the ESO-generated secret.
+#
+# ukpd loads --users /var/lib/ukp/data/users.json at boot and syncs it into its
+# persistent userdb. This initContainer runs seed-users.sh (mounted from the
+# ukp-seed-script ConfigMap, hash-suffixed so script changes roll the
+# DaemonSet) to write that file from the generated `kraftlet-ukc-token` secret
+# before ukpd starts, so the ukpd credential and the kraftlet bearer derive
+# from the same generated value. The secret carries identity + permissions
+# only; the script computes the vmdb/vmm quotas per node from host resources
+# (knobs in ukp.conf, UKP_QUOTA_*) and merges them in before install.
+#
+# Failure semantics (see seed-users.sh): a missing/invalid secret is lenient
+# by design (optional volume; the runtime keeps its existing users.json), but
+# a quota computation failure fails this initContainer — the pod does not
+# start rather than assuming a node's capacity.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ukp-runtime
+spec:
+  template:
+    spec:
+      initContainers:
+        # An initContainer (ordering vs netsetup is immaterial — it only writes
+        # the data dir); like every initContainer it completes before ukpd starts.
+        - name: seed-users
+          image: ghcr.io/datum-cloud/ukp-runtime:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "/etc/ukp-seed/seed-users.sh"]
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: ukp-data
+              mountPath: /var/lib/ukp
+            - name: ukp-auth
+              mountPath: /etc/ukp-auth
+              readOnly: true
+            - name: ukp-conf
+              mountPath: /etc/ukp.conf
+              subPath: ukp.conf
+              readOnly: true
+            - name: ukp-seed
+              mountPath: /etc/ukp-seed
+              readOnly: true
+      volumes:
+        - name: ukp-auth
+          secret:
+            secretName: kraftlet-ukc-token
+            items:
+              - key: users.json
+                path: users.json
+            optional: true
+        - name: ukp-seed
+          configMap:
+            name: ukp-seed-script

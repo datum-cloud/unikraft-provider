@@ -1,0 +1,97 @@
+# Per-host co-located kraftlet: one virtual-kubelet node per ukpd runtime host,
+# each talking to its LOCAL ukpd directly over the plain-HTTP API on
+# 127.0.0.1:45232 via --ukc-default-metro + --ukc-allow-insecure (no TLS bridge).
+# ukpd still authenticates every request, so the bearer token (KRAFTLET_UKC_TOKEN)
+# is still required. See README.md for the full rationale.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kraftlet
+  namespace: unikraft-system
+  labels:
+    app.kubernetes.io/name: kraftlet
+    app.kubernetes.io/part-of: ukc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kraftlet
+      app.kubernetes.io/part-of: ukc
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kraftlet
+        app.kubernetes.io/part-of: ukc
+    spec:
+      serviceAccountName: kraftlet
+      # hostNetwork so kraftlet reaches ukpd on the host loopback (127.0.0.1:45232).
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      # Land exactly on the ukpd runtime hosts (same selector as ukp-runtime),
+      # never on a kraftlet virtual-kubelet node.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: compute.datumapis.com/runtime
+                    operator: In
+                    values: ["unikraft"]
+                  - key: unikraft.com/virtual-kubelet
+                    operator: DoesNotExist
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: kraftlet
+          # Staging build: adds per-instance image pull credentials (a Pod's
+          # imagePullSecrets are forwarded to ukpd). Released kraftlet stops at
+          # 0.2, so the feature track is -staging.
+          image: ghcr.io/unikraft-cloud/kraftlet:0.6.0-staging.12
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          # Distinct virtual-kubelet node name per host: kraftlet-<node>.
+          args:
+            - |
+              export KRAFTLET_NODE_NAME="kraftlet-${NODE_NAME}"
+              export KRAFTLET_NODE_HOSTNAME="kraftlet-${NODE_NAME}"
+              exec kraftlet run
+          env:
+            - name: NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+            # Talk straight to the local ukpd plain-HTTP API on the host loopback.
+            - name: KRAFTLET_UKC_DEFAULT_METRO
+              value: "http://localhost:45232"
+            # Skip TLS/cert verification for the loopback HTTP endpoint.
+            - name: KRAFTLET_ALLOW_INSECURE
+              value: "true"
+            - name: KRAFTLET_UKC_TOKEN
+              valueFrom: { secretKeyRef: { name: kraftlet-ukc-token, key: token } }
+            - name: KRAFTLET_ADDR
+              value: ":10251"                # :10250 is the node kubelet
+            - name: KRAFTLET_LOG_TYPE
+              value: "json"
+            # Parity with the previous HelmRelease values.
+            - name: KRAFTLET_POD_SYNC_WORKERS
+              value: "64"
+            - name: KRAFTLET_POD_STATUS_UPDATE_INTERVAL
+              value: "5s"
+            - name: KRAFTLET_ENABLE_INSTANCE_FQDN_ANNOTATIONS
+              value: "true"
+            - name: KRAFTLET_ENABLE_NODE_TAINT
+              value: "true"
+            - name: KRAFTLET_NODE_TAINT_KEY
+              value: "virtual-kubelet.io/provider"
+            - name: KRAFTLET_NODE_TAINT_VALUE
+              value: "ukc"
+            - name: KRAFTLET_NODE_TAINT_EFFECT
+              value: "NoSchedule"
+            - name: KRAFTLET_NODE_LABELS
+              value: "unikraft.com/metro=local;unikraft.com/virtual-kubelet=true"
+            # Multiple independent kraftlets would otherwise run N cluster-wide
+            # PVC watchers and double-provision ukc-volume PVCs. OFF until a
+            # single-owner/leader design lands (see README open items).
+            - name: KRAFTLET_ENABLE_PVC_WATCHER
+              value: "false"
+            - name: APISERVER_CA_CERT_LOCATION
+              value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+            - name: KRAFTLET_NODE_INTERNAL_IP
+              valueFrom: { fieldRef: { fieldPath: status.hostIP } }

@@ -4,7 +4,7 @@ metadata:
   labels:
     app.kubernetes.io/name: infra-provider-unikraft
     app.kubernetes.io/managed-by: kustomize
-  name: manager-role
+  name: unikraft-provider-manager-role
 rules:
 - apiGroups: [""]
   resources: ["pods"]

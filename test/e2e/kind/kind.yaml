@@ -1,0 +1,15 @@
+# KVM-capable single-node kind cluster for the full control-plane e2e:
+# the Datum control plane and the containerized Unikraft runtime run
+# together in one cluster. See test/e2e/kind/setup.sh.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: ukp-e2e
+nodes:
+  - role: control-plane
+    extraMounts:
+      # Hardware virtualization + TAP for the microVMs.
+      - { hostPath: /dev/kvm, containerPath: /dev/kvm }
+      - { hostPath: /dev/net/tun, containerPath: /dev/net/tun }
+      # ukpd requires a quota-enabled filesystem; the runner provides an
+      # XFS loopback mount here (setup.sh) that we bind through to the node.
+      - { hostPath: /var/lib/ukp-e2e, containerPath: /var/lib/ukp }

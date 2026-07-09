@@ -1,0 +1,18 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  # ukp-* (not the vendor chart's "kraftlet"): keeps this stack's cluster RBAC
+  # from being deleted by name when the old vendor HelmRelease is uninstalled
+  # during the GitOps swap. The ServiceAccount stays "kraftlet" (namespaced).
+  name: ukp-kraftlet
+  labels:
+    app.kubernetes.io/name: kraftlet
+    app.kubernetes.io/part-of: ukc
+subjects:
+  - kind: ServiceAccount
+    name: kraftlet
+    namespace: unikraft-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ukp-kraftlet

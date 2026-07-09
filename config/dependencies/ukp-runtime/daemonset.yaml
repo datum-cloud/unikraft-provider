@@ -1,0 +1,183 @@
+# Unikraft runtime (ukp) as a node component, minimal profile:
+# netsetup (init) + ukpd + agent. Ingress and network policy are owned by
+# the platform; the vendor firewall/proxy/certificate stack is not
+# deployed. See docs/enhancements/containerized-unikraft-runtime/.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ukp-runtime
+  namespace: unikraft-system
+  labels:
+    app.kubernetes.io/name: ukp-runtime
+    app.kubernetes.io/component: runtime
+    app.kubernetes.io/part-of: unikraft-provider
+spec:
+  selector:
+    matchLabels:
+      app: ukp-runtime
+  template:
+    metadata:
+      labels:
+        app: ukp-runtime
+        app.kubernetes.io/name: ukp-runtime
+        app.kubernetes.io/component: runtime
+        app.kubernetes.io/part-of: unikraft-provider
+    spec:
+      hostNetwork: true
+      hostIPC: true
+      dnsPolicy: Default
+      priorityClassName: system-node-critical
+      # Run only on compute nodes: bare-metal hosts with a hypervisor,
+      # labeled by the provisioner with `compute.datumapis.com/runtime`.
+      # Also never schedule onto the Kraftlet virtual-kubelet node, which
+      # represents the metro as seen from an edge cluster, not a real
+      # machine. (The broad tolerations below would otherwise place a
+      # phantom pod there.)
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: compute.datumapis.com/runtime
+                    operator: In
+                    values: ["unikraft"]
+                  - key: unikraft.com/virtual-kubelet
+                    operator: DoesNotExist
+      # On SIGTERM ukpd parks scale-to-zero instances into standby
+      # (stateful snapshot; they wake on first packet after the new pod
+      # is up). The grace period must cover parking every guest on the
+      # node; size it for guest density.
+      terminationGracePeriodSeconds: 120
+      # Tolerate everything, like a CNI/kube-proxy DaemonSet: the runtime
+      # must run on every compute node regardless of its taints — including
+      # the `compute.datumapis.com/runtime=unikraft:NoSchedule` dedication
+      # taint that keeps ordinary workloads off these privileged KVM hosts.
+      tolerations:
+        - operator: Exists
+      initContainers:
+        - name: netsetup
+          image: ghcr.io/datum-cloud/ukp-runtime:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/lib/ukp/networking/netsetup", "start"]
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: ukp-conf
+              mountPath: /etc/ukp.conf
+              subPath: ukp.conf
+              readOnly: true
+      containers:
+        - name: ukpd
+          image: ghcr.io/datum-cloud/ukp-runtime:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/lib/ukp/platform/launcher/ukpd"]
+          securityContext:
+            privileged: true
+          # No resource limits: guest VM memory is charged to this
+          # container's cgroup.
+          #
+          # TCP readiness against the loopback listener: ukpd binds
+          # 127.0.0.1 only (hence the explicit host), and exposes no
+          # unauthenticated HTTP endpoint (every path returns 401), so an
+          # httpGet probe cannot be used. Raised upstream as a /healthz
+          # ask. No liveness probe on purpose: a false-positive restart
+          # would interrupt every guest on the node.
+          readinessProbe:
+            tcpSocket:
+              host: 127.0.0.1
+              port: 45232
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: ukp-data
+              mountPath: /var/lib/ukp
+            - name: ukp-run
+              mountPath: /var/run/ukp
+            - name: ukp-log
+              mountPath: /var/log/ukp
+            - name: ukp-conf
+              mountPath: /etc/ukp.conf
+              subPath: ukp.conf
+              readOnly: true
+            - name: ukp-secrets
+              mountPath: /etc/ukp-secrets
+              readOnly: true
+        # Guests are configured (via ukpd boot args) with the host-side TAP
+        # gateway IP as their only DNS resolver; coredns answers there for
+        # both .internal names (from ukpd) and upstream forwarding. Without
+        # it guests have no DNS at all.
+        #
+        # We do NOT run the vendor launcher directly: its CoreDNS build is
+        # stripped (no `bind` plugin) so it can only bind the wildcard `.:53`,
+        # which collides with Talos hostDNS on 127.0.0.53:53. The Datum wrapper
+        # runs CoreDNS on UKP_DNS_PORT (default 5300) and installs an nftables
+        # redirect (guest gateway:53 -> that port) + forward to UKP_DNS_UPSTREAM
+        # (default hostDNS). privileged: needs nft + the ukpd iDNS socket.
+        - name: coredns
+          image: ghcr.io/datum-cloud/ukp-runtime:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/local/bin/coredns-redirect.sh"]
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: ukp-data
+              mountPath: /var/lib/ukp
+            - name: ukp-run
+              mountPath: /var/run/ukp
+            - name: ukp-log
+              mountPath: /var/log/ukp
+            - name: ukp-conf
+              mountPath: /etc/ukp.conf
+              subPath: ukp.conf
+              readOnly: true
+        - name: agent
+          image: ghcr.io/datum-cloud/ukp-runtime:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/lib/ukp/agent/launcher/agent", "run"]
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: ukp-data
+              mountPath: /var/lib/ukp
+            - name: ukp-run
+              mountPath: /var/run/ukp
+            - name: ukp-log
+              mountPath: /var/log/ukp
+            - name: ukp-conf
+              mountPath: /etc/ukp.conf
+              subPath: ukp.conf
+              readOnly: true
+            - name: ukp-secrets
+              mountPath: /etc/ukp-secrets
+              readOnly: true
+      volumes:
+        # Persistent runtime data lives on the node's XFS-quota UserVolume,
+        # which Talos mounts at /var/mnt/ukp (the default /var is not a
+        # separate quota-enabled filesystem). type: Directory asserts the
+        # volume is present — the runtime cannot start without it. Note the
+        # host source (/var/mnt/ukp) is deliberately not the in-container
+        # mountPath (/var/lib/ukp, where ukpd expects its data dir).
+        - name: ukp-data
+          hostPath:
+            path: /var/mnt/ukp
+            type: Directory
+        - name: ukp-run
+          hostPath:
+            path: /var/run/ukp
+            type: DirectoryOrCreate
+        - name: ukp-log
+          hostPath:
+            path: /var/log/ukp
+            type: DirectoryOrCreate
+        # Runtime configuration, generated by kustomize from ukp.conf
+        # (hash-suffixed: config changes roll the DaemonSet).
+        - name: ukp-conf
+          configMap:
+            name: ukp-runtime-config
+        # Credentials overlay, sourced by ukp.conf if present. Optional:
+        # without it the runtime serves already-pulled images but cannot
+        # fetch new ones.
+        - name: ukp-secrets
+          secret:
+            secretName: ukp-runtime-credentials
+            optional: true

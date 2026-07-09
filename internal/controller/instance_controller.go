@@ -374,13 +374,13 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 	}
 
 	// Apply node selector: use the operator-supplied override when set, otherwise
-	// default to the standard single-node kraftlet label. The default routes all
-	// Instance Pods to the node named "kraftlet", which is the convention for a
-	// single-node kraftlet deployment. Override via
+	// default to the per-host Kraftlet virtual-kubelet label. The default places
+	// guests on any per-host virtual-kubelet node (kraftlet-<host>), selected by
+	// label rather than a single hard-coded node name. Override via
 	// DownstreamResourceManagementConfig.NodeSelector for multi-node or relabelled
 	// environments (e.g. Layer-2 e2e where the node has a different hostname label).
 	nodeSelector := map[string]string{
-		"kubernetes.io/hostname": "kraftlet",
+		"unikraft.com/virtual-kubelet": "true",
 	}
 	if r.Config != nil && len(r.Config.DownstreamResourceManagement.NodeSelector) > 0 {
 		nodeSelector = r.Config.DownstreamResourceManagement.NodeSelector

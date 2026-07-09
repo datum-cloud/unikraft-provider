@@ -39,8 +39,8 @@ func TestBuildPodSpec_DisablesServiceAccountToken(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestBuildPodSpec_DefaultNodeSelector verifies that when no NodeSelector
-// override is set in config, the pod spec carries the default kraftlet
-// hostname selector and ukc toleration.
+// override is set in config, the pod spec carries the default per-host
+// virtual-kubelet selector and ukc toleration.
 func TestBuildPodSpec_DefaultNodeSelector(t *testing.T) {
 	ctx := context.Background()
 	inst := newTestInstance()
@@ -53,8 +53,8 @@ func TestBuildPodSpec_DefaultNodeSelector(t *testing.T) {
 		t.Fatalf("buildPodSpecFromContainers returned error: %v", err)
 	}
 
-	if v, ok := spec.NodeSelector["kubernetes.io/hostname"]; !ok || v != "kraftlet" {
-		t.Errorf("default NodeSelector: want kubernetes.io/hostname=kraftlet, got %v", spec.NodeSelector)
+	if v, ok := spec.NodeSelector["unikraft.com/virtual-kubelet"]; !ok || v != "true" {
+		t.Errorf("default NodeSelector: want unikraft.com/virtual-kubelet=true, got %v", spec.NodeSelector)
 	}
 
 	if len(spec.Tolerations) != 1 {
@@ -92,9 +92,9 @@ func TestBuildPodSpec_NodeSelectorOverride(t *testing.T) {
 		t.Errorf("NodeSelector zone = %q, want us-east", spec.NodeSelector["zone"])
 	}
 
-	// Default hostname selector must not bleed through.
-	if _, ok := spec.NodeSelector["kubernetes.io/hostname"]; ok {
-		t.Error("default kubernetes.io/hostname must not appear when NodeSelector override is set")
+	// Default virtual-kubelet selector must not bleed through.
+	if _, ok := spec.NodeSelector["unikraft.com/virtual-kubelet"]; ok {
+		t.Error("default unikraft.com/virtual-kubelet must not appear when NodeSelector override is set")
 	}
 }
 

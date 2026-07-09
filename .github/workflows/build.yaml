@@ -5,9 +5,11 @@ on:
   release:
     types: ["published"]
 
+# All jobs derive the same commit-pinned tag, so the images and bundle stay in lockstep.
+
 jobs:
   validate-kustomize:
-    uses: datum-cloud/actions/.github/workflows/validate-kustomize.yaml@v1.15.0
+    uses: datum-cloud/actions/.github/workflows/validate-kustomize.yaml@v1.20.0
 
   publish-container-image:
     needs:
@@ -17,24 +19,47 @@ jobs:
       contents: read
       packages: write
       attestations: write
-    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.15.0
+    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.20.0
     with:
       image-name: unikraft-provider
       platforms: linux/amd64,linux/arm64
     secrets: inherit
 
-  publish-kustomize-bundle:
+  # Runtime image installs vendor ukp packages from an authenticated apt repo, so it
+  # needs the auth as a BuildKit secret (quoted so the multi-line auth.conf isn't split on newlines).
+  publish-runtime-image:
     needs:
       - validate-kustomize
-      - publish-container-image
     permissions:
       id-token: write
       contents: read
       packages: write
-    uses: datum-cloud/actions/.github/workflows/publish-kustomize-bundle.yaml@v1.15.0
+    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.20.0
+    with:
+      image-name: ukp-runtime
+      context: build/ukp-runtime
+      dockerfile-path: build/ukp-runtime/Dockerfile
+      # amd64 only: the runtime's KVM guests are x86 and the vendor apt repo is amd64-only.
+      platforms: linux/amd64
+    secrets:
+      build-secrets: |
+        "unikraft-apt-auth=${{ secrets.UNIKRAFT_APT_AUTH }}"
+
+  # Pin every image to the tag its job published, then push the config tree as the bundle.
+  publish-kustomize-bundle:
+    needs:
+      - publish-container-image
+      - publish-runtime-image
+    uses: datum-cloud/actions/.github/workflows/publish-kustomize-bundle.yaml@v1.20.0
     with:
       bundle-name: ghcr.io/datum-cloud/unikraft-provider-kustomize
       bundle-path: config
-      image-overlays: config/default
-      image-name: ghcr.io/datum-cloud/unikraft-provider
+      # The ukp-runtime overlay adds a seed-users container via a patch, so its
+      # image can only be pinned by an images transformer that runs AFTER the
+      # patch — i.e. one on the overlay itself, not the base. Stamp the overlay
+      # with the same tag as the base so seed-users matches netsetup/ukpd/agent.
+      images: |
+        - { path: config/default, name: ghcr.io/datum-cloud/unikraft-provider, tag: "${{ needs.publish-container-image.outputs.tag }}" }
+        - { path: config/dependencies/ukp-runtime, name: ghcr.io/datum-cloud/ukp-runtime, tag: "${{ needs.publish-runtime-image.outputs.tag }}" }
+        - { path: config/overlays/ukp-runtime, name: ghcr.io/datum-cloud/ukp-runtime, tag: "${{ needs.publish-runtime-image.outputs.tag }}" }
     secrets: inherit

@@ -1,0 +1,110 @@
+#!/bin/bash -e
+# Bring up the full control-plane e2e environment in a single KVM-capable
+# kind cluster: cert-manager, Flux, the compute control plane, Kraftlet,
+# the unikraft-provider, and the containerized Unikraft runtime — all in
+# one cluster, so a compute Instance is driven end to end to a running
+# microVM on the local runtime.
+#
+# Env:
+#   PROVIDER_IMAGE          provider image, loadable by `kind load` (built by caller)
+#   RUNTIME_IMAGE           ukp-runtime image, loadable by `kind load` (built by caller)
+#   UKP_AGENT_CREDENTIALS   ukp.secrets.conf content (AGENT_PULL_* vendor pull
+#                           credentials); the runtime pulls the test workload
+#                           image with these.
+#
+# Produces a cluster where `chainsaw test test/e2e` (incl. run-instance)
+# passes against the real runtime.
+here="$(cd "$(dirname "$0")" && pwd)"
+repo="$(cd "$here/../../.." && pwd)"
+CLUSTER=ukp-e2e
+NODE=${CLUSTER}-control-plane
+# Seeds the ukpd `ci` user below; MUST match config/overlays/kraftlet-e2e/token-secret.yaml.
+CI_TOKEN=$(printf 'ci$datum.users.kraftcloud:ci-e2e-token' | base64 | tr -d '\n')
+export KUBECONFIG=${KUBECONFIG:-/tmp/${CLUSTER}.kubeconfig}
+
+log(){ printf '\n== %s\n' "$*"; }
+# Use sudo only for the operations that need root (the loopback XFS mount and
+# writes beneath it, the Flux CLI install); everything else runs as the
+# invoking user. Empty when already root (e.g. running against a bare box).
+SUDO=""; [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+
+log "host XFS with quotas at /var/lib/ukp-e2e (ukpd requires quota support)"
+$SUDO umount /var/lib/ukp-e2e 2>/dev/null || true
+$SUDO mkdir -p /var/lib/ukp-e2e
+[ -e /ukp-e2e.img ] || { $SUDO truncate -s 10G /ukp-e2e.img; $SUDO mkfs.xfs -q /ukp-e2e.img; }
+$SUDO mount -o loop,usrquota,grpquota,prjquota /ukp-e2e.img /var/lib/ukp-e2e
+$SUDO mkdir -p /var/lib/ukp-e2e/data
+$SUDO tee /var/lib/ukp-e2e/data/users.json >/dev/null <<JSON
+[{"uuid":"aecc16c4-3a34-4f3e-9c31-f77dbbb0f68c","name":"ci","auth_token":"${CI_TOKEN}","network_id":0,"autoscale":{"min_size":0,"max_size":4},"vmdb":{"max_vcpus":4,"max_memory_mb":4096,"max_instances":16},"net":{"max_service_groups":64,"max_services":64},"vmm":{"max_vcpus":4,"max_memory_mb":4096},"stor":{"max_volumes":16,"max_volume_mb":2048,"max_total_volume_mb":8192}}]
+JSON
+
+log "create the KVM kind cluster"
+kind delete cluster --name $CLUSTER >/dev/null 2>&1 || true
+kind create cluster --config "$here/kind.yaml"
+kind get kubeconfig --name $CLUSTER > "$KUBECONFIG"
+
+log "load images into kind"
+# Retag the runtime image to the fixed tag the ukp-runtime-e2e overlay pins
+# (its images: transformer), so the deploy is fully declarative.
+docker tag "$RUNTIME_IMAGE" ghcr.io/datum-cloud/ukp-runtime:e2e
+kind load docker-image ghcr.io/datum-cloud/ukp-runtime:e2e --name $CLUSTER >/dev/null
+kind load docker-image "$PROVIDER_IMAGE" --name $CLUSTER >/dev/null
+
+log "cert-manager + Flux (control-plane dependencies)"
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml >/dev/null
+command -v flux >/dev/null || curl -s https://fluxcd.io/install.sh | $SUDO bash >/dev/null 2>&1
+flux install --components=source-controller,kustomize-controller,helm-controller >/dev/null
+kubectl -n cert-manager wait --for=condition=Available deployment --all --timeout=180s >/dev/null
+
+log "runtime: config + credentials, then deploy"
+# The runtime pulls the test workload image from the vendor registry using
+# the provided agent credentials. ukpd keeps its default loopback API
+# (127.0.0.1:45232); the co-located Kraftlet bridge reaches it there.
+# unikraft-system holds the whole runtime stack (ukp-runtime + kraftlet). It is
+# privileged (both are hostNetwork/privileged); on real clusters this namespace
+# and its PSA label are owned by the datum-cloud/infra edge app, so the bundles
+# no longer ship a namespace.yaml — create it here for the kind e2e.
+kubectl apply -f - >/dev/null <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: unikraft-system
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+EOF
+printf '%s\n' "$UKP_AGENT_CREDENTIALS" > /tmp/ukp.secrets.conf
+kubectl -n unikraft-system create secret generic ukp-runtime-credentials \
+  --from-file=ukp.secrets.conf=/tmp/ukp.secrets.conf --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+rm -f /tmp/ukp.secrets.conf
+# The runtime DaemonSet only schedules onto compute nodes; label the single
+# kind node so its affinity (compute.datumapis.com/runtime=unikraft) matches.
+kubectl label node "$NODE" compute.datumapis.com/runtime=unikraft --overwrite >/dev/null
+# Kind-specific runtime shape (image + XFS hostPath) lives in the overlay, not
+# imperative patches here.
+kubectl apply -k "$repo/config/overlays/ukp-runtime-e2e" >/dev/null
+kubectl -n unikraft-system rollout status ds/ukp-runtime --timeout=180s
+
+log "compute control plane (Flux OCIRepository is v1 in current Flux)"
+tmp=$(mktemp -d); cp -r "$repo/config/dependencies/compute" "$tmp/"
+sed -i 's#source.toolkit.fluxcd.io/v1beta2#source.toolkit.fluxcd.io/v1#' "$tmp/compute/ocirepository.yaml"
+kubectl apply -k "$tmp/compute" >/dev/null
+kubectl -n flux-system wait kustomization/compute --for=condition=Ready --timeout=240s
+
+log "Kraftlet -> local runtime (per-host DaemonSet + TLS bridge), and the provider"
+# Runtime nodes carry the label the Kraftlet DaemonSet selects on; it
+# co-locates a kraftlet + an nginx TLS bridge with each node's ukpd.
+kubectl label node "${NODE}" compute.datumapis.com/runtime=unikraft --overwrite >/dev/null
+# cert-manager (installed above) issues the bridge TLS via certificates.yaml.
+# The kraftlet-e2e overlay ships the TEST/DEV kraftlet-ukc-token Secret, which
+# matches the seeded ukpd `ci` user above — so it applies self-contained (no ESO
+# needed; real clusters use config/overlays/kraftlet, whose token is generated
+# in-namespace by the ukp-runtime overlay).
+kubectl apply -k "$repo/config/overlays/kraftlet-e2e" >/dev/null
+kubectl apply -k "$repo/config/overlays/test-infra" >/dev/null
+kubectl -n unikraft-system rollout status deployment/unikraft-provider --timeout=180s
+kubectl -n unikraft-system rollout status ds/kraftlet --timeout=180s
+
+log "wait for the per-host Kraftlet virtual node to register"
+for i in $(seq 1 30); do kubectl get node "kraftlet-${NODE}" >/dev/null 2>&1 && break; sleep 4; done
+kubectl get nodes
+log "environment ready"

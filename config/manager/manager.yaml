@@ -1,17 +1,7 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  labels:
-    control-plane: controller-manager
-    app.kubernetes.io/name: infra-provider-unikraft
-    app.kubernetes.io/managed-by: kustomize
-  name: system
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: controller-manager
-  namespace: system
+  name: unikraft-provider
   labels:
     control-plane: controller-manager
     app.kubernetes.io/name: infra-provider-unikraft
@@ -28,6 +18,16 @@ spec:
       labels:
         control-plane: controller-manager
     spec:
+      # unikraft-provider is a cell control component, so keep it on the
+      # cluster's control-plane nodes and off the worker/runtime nodes (which
+      # run tenant microVMs). Requires the node selector plus a toleration for
+      # the standard control-plane taint.
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
       # TODO(user): Uncomment the following code to configure the nodeAffinity expression
       # according to the platforms which are supported by your solution.
       # It is considered best practice to support multiple architectures. You can
@@ -106,5 +106,5 @@ spec:
           requests:
             cpu: 10m
             memory: 64Mi
-      serviceAccountName: controller-manager
+      serviceAccountName: unikraft-provider
       terminationGracePeriodSeconds: 10

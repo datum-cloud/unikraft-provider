@@ -112,10 +112,10 @@ func (m *MetricsServerConfig) Options(ctx context.Context, c client.Client) metr
 // ConfigMap/Secret data.
 type DownstreamResourceManagementConfig struct {
 	// NodeSelector overrides the node selector applied to every Instance Pod.
-	// When unset, the provider defaults to {"kubernetes.io/hostname": "kraftlet"},
-	// which is the standard target node label for a single-node kraftlet deployment.
-	// Set this field to select a different node or to use a label-based selector
-	// (e.g. {"node-role": "kraftlet"}) in multi-node deployments.
+	// When unset, the provider defaults to {"unikraft.com/virtual-kubelet": "true"},
+	// which places guests on any per-host kraftlet virtual-kubelet node (kraftlet-<host>).
+	// Set this field to select a different node or to use a different label-based
+	// selector (e.g. {"node-role": "kraftlet"}) in multi-node deployments.
 	//
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`

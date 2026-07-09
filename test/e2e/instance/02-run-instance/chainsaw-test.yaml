@@ -1,0 +1,45 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: run-instance
+spec:
+  # Unlike 01-create-instance (which only asserts the provider translates an
+  # Instance into a scheduled Pod, and so passes against the e2e-fake metro),
+  # this test exercises the compute API to actually START an instance and
+  # asserts it reaches a running microVM. It therefore requires a real
+  # Unikraft runtime behind Kraftlet (e.g. the containerized runtime from
+  # docs/enhancements/containerized-unikraft-runtime).
+  # We assert the instance reaches Running (its microVM has booted on the
+  # runtime) and that its microVM Pod is Running on the runtime node — but
+  # NOT that the guest is reachable over the network. In-guest reachability
+  # additionally requires the network programming done by the Galactic
+  # networking operator, which is out of scope for this runtime-focused test
+  # and not deployed here.
+  description: Start an Instance through the compute API and assert it runs.
+  steps:
+    - name: create and start the Instance
+      try:
+        - apply:
+            file: instance.yaml
+        - assert:
+            resource:
+              apiVersion: compute.datumapis.com/v1alpha
+              kind: Instance
+              metadata:
+                name: e2e-run-instance
+              status:
+                # Subset match: assert the Running condition is True without
+                # requiring the full condition list to match exactly.
+                (conditions[?type == 'Running'] | [0].status): "True"
+    - name: assert the microVM is running on the runtime node
+      try:
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  managed-by: infra-provider-unikraft
+                  upstream.instance: e2e-run-instance
+              status:
+                phase: Running
