@@ -6,7 +6,7 @@
 // and BUG-2 (conflict-loop starvation) fixes:
 //
 //  1. A Pod transitioning to Running re-enqueues via Owns() and causes the
-//     Instance to surface Programmed=True / Running=True using the local
+//     Instance to surface Programmed=True / Available=True using the local
 //     client only (no upstreamClient/downstreamClient split).
 //  2. The status write is a scoped MergeFrom patch; QuotaGranted/Ready
 //     owned by compute's quota controller survive and are not overwritten.
@@ -94,7 +94,7 @@ func findCondition(t *testing.T, conditions []metav1.Condition, condType string)
 //
 //   - reconcileSandboxContainers uses r.Client (one client, local cluster)
 //   - the pod phase is observed correctly without any upstreamClient split
-//   - Programmed=True and Running=True are set on the Instance
+//   - Programmed=True and Available=True are set on the Instance
 func TestReconcileSandboxContainers_RunningPod_SetsConditions(t *testing.T) {
 	ctx := context.Background()
 	s := testScheme(t)
@@ -127,13 +127,13 @@ func TestReconcileSandboxContainers_RunningPod_SetsConditions(t *testing.T) {
 		t.Errorf("Programmed.Reason = %q, want %q", programmed.Reason, computev1alpha.InstanceProgrammedReasonProgrammed)
 	}
 
-	// Running must be True.
-	running := findCondition(t, instance.Status.Conditions, computev1alpha.InstanceRunning)
+	// Available must be True.
+	running := findCondition(t, instance.Status.Conditions, computev1alpha.InstanceAvailable)
 	if running.Status != metav1.ConditionTrue {
-		t.Errorf("Running.Status = %q, want True", running.Status)
+		t.Errorf("Available.Status = %q, want True", running.Status)
 	}
-	if running.Reason != computev1alpha.InstanceRunningReasonRunning {
-		t.Errorf("Running.Reason = %q, want %q", running.Reason, computev1alpha.InstanceRunningReasonRunning)
+	if running.Reason != computev1alpha.InstanceAvailableReasonAvailable {
+		t.Errorf("Available.Reason = %q, want %q", running.Reason, computev1alpha.InstanceAvailableReasonAvailable)
 	}
 }
 
@@ -167,9 +167,9 @@ func TestReconcileSandboxContainers_PendingPod_SetsUnknown(t *testing.T) {
 	if programmed.Status != metav1.ConditionUnknown {
 		t.Errorf("Programmed.Status = %q, want Unknown for PodPending", programmed.Status)
 	}
-	running := findCondition(t, instance.Status.Conditions, computev1alpha.InstanceRunning)
+	running := findCondition(t, instance.Status.Conditions, computev1alpha.InstanceAvailable)
 	if running.Status != metav1.ConditionUnknown {
-		t.Errorf("Running.Status = %q, want Unknown for PodPending", running.Status)
+		t.Errorf("Available.Status = %q, want Unknown for PodPending", running.Status)
 	}
 }
 
@@ -198,7 +198,7 @@ func TestSyncInstancePowerState_PatchPreservesStoredConditions(t *testing.T) {
 		{
 			Type:               computev1alpha.InstanceReady,
 			Status:             metav1.ConditionTrue,
-			Reason:             "Running",
+			Reason:             "Available",
 			ObservedGeneration: 1,
 		},
 	}
@@ -244,9 +244,9 @@ func TestSyncInstancePowerState_PatchPreservesStoredConditions(t *testing.T) {
 	if programmed == nil || programmed.Status != metav1.ConditionTrue {
 		t.Errorf("stored Programmed should be True, got %v", programmed)
 	}
-	running := apimeta.FindStatusCondition(stored.Status.Conditions, computev1alpha.InstanceRunning)
+	running := apimeta.FindStatusCondition(stored.Status.Conditions, computev1alpha.InstanceAvailable)
 	if running == nil || running.Status != metav1.ConditionTrue {
-		t.Errorf("stored Running should be True, got %v", running)
+		t.Errorf("stored Available should be True, got %v", running)
 	}
 }
 
