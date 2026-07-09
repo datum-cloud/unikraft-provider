@@ -42,19 +42,30 @@ spec:
         # kraftlet bearer == ukpd auth_token == base64("kraftlet:<generated>").
         token: "{{ printf \"kraftlet:%s\" .password | b64enc }}"
         # ukpd users.json (consumed by the seed-users initContainer). It is the
-        # vendor's default `root` user with ONLY the auth_token replaced:
+        # vendor's default `root` user with the auth_token replaced, permissions
+        # dropped to `developer`, and explicit quotas added:
         #  - uuid/name are kept as the vendor seed. ukpd enforces user-name
         #    immutability on in-place update, so an already-seeded node (whose
-        #    uuid holds name "root") can only have its token rotated, not be
-        #    renamed. Reusing this uuid makes the seed a clean in-place rotation
-        #    on existing nodes and a clean first-seed on fresh ones.
+        #    uuid holds name "root") can only have its token/permissions/quotas
+        #    updated, not be renamed. Reusing this uuid makes the seed a clean
+        #    in-place update on existing nodes and a clean first-seed on fresh
+        #    ones.
+        #  - permissions are `developer`, NOT `root`: root bypasses quota
+        #    enforcement, so ukpd reports empty hard/limits for the user and
+        #    kraftlet advertises a 0-capacity node. developer is sufficient for
+        #    kraftlet's instance lifecycle.
+        #  - the quotas ARE the node capacity kraftlet advertises:
+        #    cpu = vmm.max_vcpus, memory = vmm.max_memory_mb,
+        #    pods = vmdb.max_instances (values sized for 64-core/256GB hosts).
         users.json: |
           [
             {
               "uuid": "3b2f013a-6c5e-4c6c-b993-60ed3b95b32c",
               "name": "root",
               "auth_token": "{{ printf "kraftlet:%s" .password | b64enc }}",
-              "permissions": ["root"],
+              "permissions": ["developer"],
+              "vmdb": {"max_instances": 64, "min_memory_mb": 16, "def_memory_mb": 128, "max_memory_mb": 8192, "min_vcpus": 1, "max_vcpus": 8},
+              "vmm": {"max_vcpus": 32, "max_memory_mb": 65536},
               "network_id": 0
             }
           ]

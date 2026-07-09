@@ -51,14 +51,17 @@ provides the token in this namespace).
 - **PVC watcher is OFF.** N independent kraftlets would run N cluster-wide
   `ukc-volume` PVC watchers and double-provision volumes. A single-owner/leader
   design is needed before enabling PVC-backed volumes.
-- **Dedicated non-root kraftlet user.** Real clusters no longer pull a GCP
+- **Dedicated kraftlet user.** Real clusters no longer pull a GCP
   token: the runtime overlay generates it with External Secrets in this
   namespace and both sides read it in-namespace (see the Secrets table). The
-  generated token seeds the ukpd `root` user (only its `auth_token` is
-  generated); ukpd enforces
-  user-name immutability on in-place update, so giving kraftlet its own
-  non-root user per ukpd — a fresh uuid seeded before the node's first boot —
-  remains the follow-up.
+  generated token seeds the vendor's `root`-named ukpd user, but with
+  `developer` permissions and explicit quotas (`root` permissions bypass quota
+  enforcement, so ukpd reports empty limits and kraftlet advertises a
+  0-capacity node; the quotas are what kraftlet derives node capacity from:
+  cpu = `vmm.max_vcpus`, memory = `vmm.max_memory_mb`,
+  pods = `vmdb.max_instances`). ukpd enforces user-name immutability on
+  in-place update, so giving kraftlet its own user — a fresh uuid seeded
+  before the node's first boot — remains the follow-up.
 
 Validated on `us-central-1-lab` (eris-giune + ludum-lodaar) with kraftlet
 0.5.0: the DaemonSet registers the VK node per host and kraftlet connects
