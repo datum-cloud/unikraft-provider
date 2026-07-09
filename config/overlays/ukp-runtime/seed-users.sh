@@ -77,11 +77,14 @@ def compute():
             "host memory (%d MB) - UKP_QUOTA_MEM_RESERVE_MB (%d) leaves no "
             "memory for guests; fix the reserve for this node"
             % (mem_mb, mem_reserve))
-    instances = vmm_vcpus * knob("UKP_QUOTA_INSTANCES_PER_VCPU", 2)
+    # Pods capacity is intentionally a high static ceiling: CPU and memory
+    # (the vmm quotas) are the binding scheduling constraints. The vendor
+    # documents max_instances scaling to very large values (the practical
+    # bound is controller DB footprint).
+    instances = knob("UKP_QUOTA_MAX_INSTANCES", 5000)
     if instances < 1:
         raise ValueError(
-            "vmm.max_vcpus (%d) * UKP_QUOTA_INSTANCES_PER_VCPU yields no "
-            "instances" % vmm_vcpus)
+            "UKP_QUOTA_MAX_INSTANCES (%d) must be positive" % instances)
     vmm = {"max_vcpus": vmm_vcpus, "max_memory_mb": vmm_mem}
     vmdb = {
         "max_instances": instances,
