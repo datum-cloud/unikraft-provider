@@ -42,10 +42,10 @@ spec:
                 eval "$(grep -E '^UKP_QUOTA_[A-Z0-9_]+=' /etc/ukp.conf 2>/dev/null || true)"
                 set +a
                 # Merge per-node quotas into the generated identity. These
-                # quotas double as the platform's capacity enforcement and
-                # deliberately undershoot the host: the reserve/percentages
-                # leave headroom for ukpd, the agent, and Talos system
-                # components.
+                # quotas double as the platform's capacity enforcement: the
+                # node's full resources minus a fixed reserve, which is what
+                # keeps guests from starving ukpd, the agent, and Talos
+                # system components.
                 if python3 - "$src" "$tmp" <<'PYEOF'
               import json, os, sys
 
@@ -77,9 +77,8 @@ spec:
                               break
                   if mem_mb < 1:
                       raise ValueError("could not determine host memory")
-                  vmm_vcpus = max(1, cpus * knob("UKP_QUOTA_VMM_VCPU_PCT", 50) // 100)
-                  usable_mb = mem_mb - knob("UKP_QUOTA_MEM_RESERVE_MB", 8192)
-                  vmm_mem = max(1024, usable_mb * knob("UKP_QUOTA_VMM_MEM_PCT", 25) // 100)
+                  vmm_vcpus = max(1, cpus - knob("UKP_QUOTA_CPU_RESERVE", 4))
+                  vmm_mem = max(1024, mem_mb - knob("UKP_QUOTA_MEM_RESERVE_MB", 8192))
                   vmm = {"max_vcpus": vmm_vcpus, "max_memory_mb": vmm_mem}
                   vmdb = {
                       "max_instances": max(1, vmm_vcpus * knob("UKP_QUOTA_INSTANCES_PER_VCPU", 2)),
