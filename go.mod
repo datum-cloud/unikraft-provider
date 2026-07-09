@@ -7,7 +7,7 @@ require (
 	// (commit fa711b9, includes compute#125: SandboxContainer.Command/Args).
 	// Repin to a stable go.datum.net/compute tag once the #107 chain reaches compute main.
 	go.datum.net/compute v0.7.1-0.20260529122150-fa711b9b2676
-	go.datum.net/network-services-operator v0.23.4
+	go.datum.net/network-services-operator v0.23.6
 	go.miloapis.com/milo v0.30.2
 	golang.org/x/sync v0.21.0
 	k8s.io/api v0.36.2
