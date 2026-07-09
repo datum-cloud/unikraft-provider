@@ -55,13 +55,16 @@ provides the token in this namespace).
   token: the runtime overlay generates it with External Secrets in this
   namespace and both sides read it in-namespace (see the Secrets table). The
   generated token seeds the vendor's `root`-named ukpd user, but with
-  `developer` permissions and explicit quotas (`root` permissions bypass quota
+  `developer` permissions and per-node quotas (`root` permissions bypass quota
   enforcement, so ukpd reports empty limits and kraftlet advertises a
   0-capacity node; the quotas are what kraftlet derives node capacity from:
   cpu = `vmm.max_vcpus`, memory = `vmm.max_memory_mb`,
-  pods = `vmdb.max_instances`). ukpd enforces user-name immutability on
-  in-place update, so giving kraftlet its own user — a fresh uuid seeded
-  before the node's first boot — remains the follow-up.
+  pods = `vmdb.max_instances`). Quotas are computed per node at seed time from
+  host resources by the runtime overlay's seed-users initContainer; the knobs
+  (`UKP_QUOTA_*`) live in `config/dependencies/ukp-runtime/ukp.conf`. ukpd
+  enforces user-name immutability on in-place update, so giving kraftlet its
+  own user — a fresh uuid seeded before the node's first boot — remains the
+  follow-up.
 
 Validated on `us-central-1-lab` (eris-giune + ludum-lodaar) with kraftlet
 0.5.0: the DaemonSet registers the VK node per host and kraftlet connects
