@@ -15,3 +15,9 @@ patches:
     target:
       kind: DaemonSet
       name: ukp-runtime
+# The seed script, injected as a ConfigMap (hash-suffixed: script changes
+# roll the DaemonSet).
+configMapGenerator:
+  - name: ukp-seed-script
+    files:
+      - seed-users.sh
