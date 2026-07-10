@@ -5,6 +5,7 @@ package config
 import (
 	"context"
 
+	core "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -110,4 +111,21 @@ func (m *MetricsServerConfig) Options(ctx context.Context, c client.Client) metr
 // its own node/kubelet identity at runtime. The provider never reads or writes
 // ConfigMap/Secret data.
 type DownstreamResourceManagementConfig struct {
+	// NodeSelector overrides the node selector applied to every Instance Pod.
+	// When unset, the provider defaults to {"unikraft.com/virtual-kubelet": "true"},
+	// which places guests on any per-host kraftlet virtual-kubelet node (kraftlet-<host>).
+	// Set this field to select a different node or to use a different label-based
+	// selector (e.g. {"node-role": "kraftlet"}) in multi-node deployments.
+	//
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// Tolerations overrides the tolerations applied to every Instance Pod.
+	// When unset, the provider applies a single default toleration for the
+	// virtual-kubelet.io/provider=ukc:NoSchedule taint that kraftlet nodes carry.
+	// Set this field to add or replace tolerations (e.g. for custom taint keys
+	// or to support nodes without the ukc taint in lab/testing environments).
+	//
+	// +optional
+	Tolerations []core.Toleration `json:"tolerations,omitempty"`
 }

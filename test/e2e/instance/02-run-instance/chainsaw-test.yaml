@@ -9,7 +9,7 @@ spec:
   # asserts it reaches a running microVM. It therefore requires a real
   # Unikraft runtime behind Kraftlet (e.g. the containerized runtime from
   # docs/enhancements/containerized-unikraft-runtime).
-  # We assert the instance reaches Running (its microVM has booted on the
+  # We assert the instance reaches Available (its microVM has booted on the
   # runtime) and that its microVM Pod is Running on the runtime node — but
   # NOT that the guest is reachable over the network. In-guest reachability
   # additionally requires the network programming done by the Galactic
@@ -28,9 +28,9 @@ spec:
               metadata:
                 name: e2e-run-instance
               status:
-                # Subset match: assert the Running condition is True without
+                # Subset match: assert the Available condition is True without
                 # requiring the full condition list to match exactly.
-                (conditions[?type == 'Running'] | [0].status): "True"
+                (conditions[?type == 'Available'] | [0].status): "True"
     - name: assert the microVM is running on the runtime node
       try:
         - assert:

@@ -3,8 +3,9 @@ module go.datum.net/unikraft-provider
 go 1.26.4
 
 require (
-	// TEMP: pseudo-version of datum-cloud/compute feat/federated-deployment-scheduling
-	// (commit fa711b9, includes compute#125: SandboxContainer.Command/Args).
+	// TEMP: dev pre-release of datum-cloud/compute. v0.8.0-dev.7 carries both
+	// compute#125 (SandboxContainer.Command/Args) and the Instance "Running" ->
+	// "Available" condition rename that this provider owns.
 	// Repin to a stable go.datum.net/compute tag once the #107 chain reaches compute main.
 	go.datum.net/compute v0.8.0-dev.7
 	go.datum.net/network-services-operator v0.23.6

@@ -6,4 +6,7 @@ metricsServer:
   bindAddress: "0"
   secureServing: false
 downstreamResourceManagement:
+  # NodeSelector and Tolerations are optional overrides. When unset the
+  # provider defaults to: kubernetes.io/hostname=kraftlet and the
+  # virtual-kubelet.io/provider=ukc:NoSchedule toleration.
 locationClassName: "self-managed"

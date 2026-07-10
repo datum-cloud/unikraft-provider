@@ -6,7 +6,7 @@
 // and BUG-2 (conflict-loop starvation) fixes:
 //
 //  1. A Pod transitioning to Running re-enqueues via Owns() and causes the
-//     Instance to surface Programmed=True / Running=True using the local
+//     Instance to surface Programmed=True / Available=True using the local
 //     client only (no upstreamClient/downstreamClient split).
 //  2. The status write is a scoped MergeFrom patch; QuotaGranted/Ready
 //     owned by compute's quota controller survive and are not overwritten.
@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -93,7 +94,7 @@ func findCondition(t *testing.T, conditions []metav1.Condition, condType string)
 //
 //   - reconcileSandboxContainers uses r.Client (one client, local cluster)
 //   - the pod phase is observed correctly without any upstreamClient split
-//   - Programmed=True and Running=True are set on the Instance
+//   - Programmed=True and Available=True are set on the Instance
 func TestReconcileSandboxContainers_RunningPod_SetsConditions(t *testing.T) {
 	ctx := context.Background()
 	s := testScheme(t)
@@ -126,13 +127,13 @@ func TestReconcileSandboxContainers_RunningPod_SetsConditions(t *testing.T) {
 		t.Errorf("Programmed.Reason = %q, want %q", programmed.Reason, computev1alpha.InstanceProgrammedReasonProgrammed)
 	}
 
-	// Running must be True.
-	running := findCondition(t, instance.Status.Conditions, computev1alpha.InstanceRunning)
+	// Available must be True.
+	running := findCondition(t, instance.Status.Conditions, computev1alpha.InstanceAvailable)
 	if running.Status != metav1.ConditionTrue {
-		t.Errorf("Running.Status = %q, want True", running.Status)
+		t.Errorf("Available.Status = %q, want True", running.Status)
 	}
-	if running.Reason != computev1alpha.InstanceRunningReasonRunning {
-		t.Errorf("Running.Reason = %q, want %q", running.Reason, computev1alpha.InstanceRunningReasonRunning)
+	if running.Reason != computev1alpha.InstanceAvailableReasonAvailable {
+		t.Errorf("Available.Reason = %q, want %q", running.Reason, computev1alpha.InstanceAvailableReasonAvailable)
 	}
 }
 
@@ -166,9 +167,9 @@ func TestReconcileSandboxContainers_PendingPod_SetsUnknown(t *testing.T) {
 	if programmed.Status != metav1.ConditionUnknown {
 		t.Errorf("Programmed.Status = %q, want Unknown for PodPending", programmed.Status)
 	}
-	running := findCondition(t, instance.Status.Conditions, computev1alpha.InstanceRunning)
+	running := findCondition(t, instance.Status.Conditions, computev1alpha.InstanceAvailable)
 	if running.Status != metav1.ConditionUnknown {
-		t.Errorf("Running.Status = %q, want Unknown for PodPending", running.Status)
+		t.Errorf("Available.Status = %q, want Unknown for PodPending", running.Status)
 	}
 }
 
@@ -197,7 +198,7 @@ func TestSyncInstancePowerState_PatchPreservesStoredConditions(t *testing.T) {
 		{
 			Type:               computev1alpha.InstanceReady,
 			Status:             metav1.ConditionTrue,
-			Reason:             "Running",
+			Reason:             "Available",
 			ObservedGeneration: 1,
 		},
 	}
@@ -243,9 +244,9 @@ func TestSyncInstancePowerState_PatchPreservesStoredConditions(t *testing.T) {
 	if programmed == nil || programmed.Status != metav1.ConditionTrue {
 		t.Errorf("stored Programmed should be True, got %v", programmed)
 	}
-	running := apimeta.FindStatusCondition(stored.Status.Conditions, computev1alpha.InstanceRunning)
+	running := apimeta.FindStatusCondition(stored.Status.Conditions, computev1alpha.InstanceAvailable)
 	if running == nil || running.Status != metav1.ConditionTrue {
-		t.Errorf("stored Running should be True, got %v", running)
+		t.Errorf("stored Available should be True, got %v", running)
 	}
 }
 
@@ -542,9 +543,10 @@ func TestPodAndService_SameNamespaceAsInstance(t *testing.T) {
 	}
 }
 
-// TestReconcile_DeletedInstance_Noop verifies that reconciliation of a deleted
-// instance (DeletionTimestamp set) returns immediately without error. With
-// ownerRef-based GC the provider has no finalizer to process.
+// TestReconcile_DeletedInstance_Noop verifies that reconciliation of a deleting
+// instance that does NOT carry the provider finalizer (e.g. it never had a
+// backing Pod — non-sandbox or still scheduling-gated — or was already
+// finalized) returns immediately without error and without touching anything.
 func TestReconcile_DeletedInstance_Noop(t *testing.T) {
 	ctx := context.Background()
 	s := testScheme(t)
@@ -552,7 +554,7 @@ func TestReconcile_DeletedInstance_Noop(t *testing.T) {
 	now := metav1.Now()
 	instance := instanceWithUID("deleted-uid-1")
 	instance.DeletionTimestamp = &now
-	instance.Finalizers = []string{"foregroundDeletion"} // prevents actual removal in fake client
+	instance.Finalizers = []string{"foregroundDeletion"} // not ours; prevents removal in fake client
 
 	cl := fake.NewClientBuilder().
 		WithScheme(s).
@@ -568,5 +570,137 @@ func TestReconcile_DeletedInstance_Noop(t *testing.T) {
 	}
 	if result.Requeue || result.RequeueAfter != 0 {
 		t.Errorf("expected empty Result for deleted instance, got: %+v", result)
+	}
+}
+
+// TestReconcile_NewInstance_AddsFinalizer verifies the deploy path stamps the
+// provider finalizer on a live Instance before its backing resources exist, so
+// that teardown is always routed through handleDeletion.
+func TestReconcile_NewInstance_AddsFinalizer(t *testing.T) {
+	ctx := context.Background()
+	s := testScheme(t)
+
+	instance := instanceWithUID("add-fin-uid-1")
+
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(instance).
+		WithStatusSubresource(&computev1alpha.Instance{}).
+		Build()
+
+	r := &InstanceReconciler{Client: cl, Scheme: s}
+
+	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(instance)}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var got computev1alpha.Instance
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(instance), &got); err != nil {
+		t.Fatalf("failed to re-get instance: %v", err)
+	}
+	if !controllerutil.ContainsFinalizer(&got, instanceFinalizer) {
+		t.Errorf("expected instance to carry finalizer %q after reconcile, got %v", instanceFinalizer, got.Finalizers)
+	}
+}
+
+// TestHandleDeletion_PodStillTerminating_HoldsFinalizer verifies the ordering
+// gate: while the backing Pod still exists (Terminating), the provider requeues
+// and does NOT remove its finalizer — so the Instance (and the upstream objects
+// waiting on it) cannot be removed before the Pod is gone.
+func TestHandleDeletion_PodStillTerminating_HoldsFinalizer(t *testing.T) {
+	ctx := context.Background()
+	s := testScheme(t)
+
+	now := metav1.Now()
+	instance := instanceWithUID("term-uid-1")
+	instance.DeletionTimestamp = &now
+	instance.Finalizers = []string{instanceFinalizer}
+
+	// A Pod that carries its own finalizer survives Delete as Terminating in the
+	// fake client, modelling a pod still draining its grace period.
+	pod := &core.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       instance.Name,
+			Namespace:  instance.Namespace,
+			Finalizers: []string{"test/keep-terminating"},
+		},
+		Spec:   core.PodSpec{Containers: []core.Container{{Name: "app", Image: "img"}}},
+		Status: core.PodStatus{Phase: core.PodRunning},
+	}
+
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(instance, pod).
+		WithStatusSubresource(&computev1alpha.Instance{}).
+		Build()
+
+	r := &InstanceReconciler{Client: cl, Scheme: s}
+
+	result, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(instance)})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RequeueAfter <= 0 {
+		t.Errorf("expected RequeueAfter > 0 while pod is terminating, got %+v", result)
+	}
+
+	// Finalizer must still be held.
+	var got computev1alpha.Instance
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(instance), &got); err != nil {
+		t.Fatalf("failed to re-get instance: %v", err)
+	}
+	if !controllerutil.ContainsFinalizer(&got, instanceFinalizer) {
+		t.Errorf("expected finalizer %q to still be held while pod terminates, got %v", instanceFinalizer, got.Finalizers)
+	}
+
+	// Pod must have been issued a delete (deletionTimestamp set) but still exist.
+	var gotPod core.Pod
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(pod), &gotPod); err != nil {
+		t.Fatalf("expected pod to still exist while terminating: %v", err)
+	}
+	if gotPod.DeletionTimestamp.IsZero() {
+		t.Errorf("expected pod to have a deletionTimestamp after handleDeletion issued the delete")
+	}
+}
+
+// TestHandleDeletion_PodGone_RemovesFinalizer verifies that once the backing Pod
+// (and Service) are gone, the provider removes its finalizer, allowing the
+// Instance to be reclaimed.
+func TestHandleDeletion_PodGone_RemovesFinalizer(t *testing.T) {
+	ctx := context.Background()
+	s := testScheme(t)
+
+	now := metav1.Now()
+	instance := instanceWithUID("gone-uid-1")
+	instance.DeletionTimestamp = &now
+	instance.Finalizers = []string{instanceFinalizer} // only ours: removal lets the fake client reclaim it
+
+	// No Pod/Service seeded — they are already gone.
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(instance).
+		WithStatusSubresource(&computev1alpha.Instance{}).
+		Build()
+
+	r := &InstanceReconciler{Client: cl, Scheme: s}
+
+	result, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(instance)})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Requeue || result.RequeueAfter != 0 {
+		t.Errorf("expected empty Result once pod is gone, got %+v", result)
+	}
+
+	// With its only finalizer removed and a deletionTimestamp set, the Instance is
+	// reclaimed by the (fake) API server.
+	var got computev1alpha.Instance
+	err = cl.Get(ctx, client.ObjectKeyFromObject(instance), &got)
+	if err == nil {
+		if controllerutil.ContainsFinalizer(&got, instanceFinalizer) {
+			t.Errorf("expected finalizer %q to be removed, still present: %v", instanceFinalizer, got.Finalizers)
+		}
+	} else if !apierrors.IsNotFound(err) {
+		t.Fatalf("unexpected error re-getting instance: %v", err)
 	}
 }
