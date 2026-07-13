@@ -57,6 +57,9 @@ ARG UKP_NETWORKING_VERSION=5:1.5.6-f842be3-9stable+deb13
 ARG UKP_OPENRESTY_VERSION=5:1.31.1.1-25+711fcc1-9stable+deb13
 ARG UKP_PLATFORM_VERSION=5:0.11.0-2+bebb30c-9stable+deb13
 
+# ukp-remote-cni: server-side CNI shim for kraftlet.
+ARG UKP_REMOTE_CNI_VERSION=5:0.1.0-12-g86a1337-9stable+deb13
+
 # Install the ukp packages from the vendor repo. The BuildKit secret provides
 # the apt basic-auth credentials at /etc/apt/auth.conf.d/unikraft.conf for the
 # duration of this RUN only, so they leave no trace in any layer.
@@ -78,6 +81,7 @@ RUN --mount=type=secret,id=unikraft-apt-auth,target=/etc/apt/auth.conf.d/unikraf
         ukp-networking="${UKP_NETWORKING_VERSION}" \
         ukp-openresty="${UKP_OPENRESTY_VERSION}" \
         ukp-platform="${UKP_PLATFORM_VERSION}" \
+        ukp-remote-cni="${UKP_REMOTE_CNI_VERSION}" \
     && rm -rf /var/lib/apt/lists/*
 
 # The ukpd launcher resolves this user for storage quota ownership
