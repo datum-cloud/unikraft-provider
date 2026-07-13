@@ -1,0 +1,62 @@
+# Real-cluster only: run the vendor ukp-remote-cni gRPC CNI shim
+# (cnishim.cni.v1.CNI, :9555) alongside the runtime. No published kraftlet
+# release has a client for this yet (0.6.0-staging.12 has none) — this wires
+# the daemon up so it is ready for when one ships; nothing calls it today.
+#
+# Without CNI_SHIM_TOKEN_FILE the process crash-loops on start, so this
+# container only exists in the overlay where ESO can generate a token — the
+# kind e2e applies the base directly and must not carry a container that is
+# guaranteed to crash-loop there.
+#
+# The CNI plugin bin dir and conflist dir are wired (hostPath, ready to
+# receive real content) but deliberately left empty: which plugins/conflist
+# the vendor's chain expects is unresolved, and no one — including the
+# vendor — currently runs this with a real plugin chain. Shipping a guessed
+# conflist risks silently misconfiguring guest networking.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ukp-runtime
+spec:
+  template:
+    spec:
+      containers:
+        - name: remote-cni
+          image: ghcr.io/datum-cloud/ukp-runtime:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/lib/ukp/remote-cni/bin/remote-cni", "run"]
+          securityContext:
+            privileged: true
+          env:
+            - name: CNI_SHIM_TOKEN_FILE
+              value: /etc/ukp-remote-cni-secrets/token
+          volumeMounts:
+            - name: cni-cache
+              mountPath: /var/lib/cni
+            - name: cni-bin
+              mountPath: /opt/cni/bin
+            - name: cni-conf
+              mountPath: /etc/cni/net.d
+            - name: remote-cni-token
+              mountPath: /etc/ukp-remote-cni-secrets
+              readOnly: true
+      volumes:
+        # Persistent, not emptyDir: libcni persists Add-call state here so a
+        # later Del finds it, including across pod restarts.
+        - name: cni-cache
+          hostPath:
+            path: /var/lib/cni
+            type: DirectoryOrCreate
+        # Empty: no CNI plugin binaries ship with the package or this repo.
+        - name: cni-bin
+          hostPath:
+            path: /opt/cni/bin
+            type: DirectoryOrCreate
+        # Empty: no conflist ships with the package or this repo.
+        - name: cni-conf
+          hostPath:
+            path: /etc/cni/net.d
+            type: DirectoryOrCreate
+        - name: remote-cni-token
+          secret:
+            secretName: ukp-remote-cni-token

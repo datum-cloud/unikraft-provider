@@ -1,0 +1,47 @@
+# Real-cluster bearer token for ukp-remote-cni (the vendor CNI gRPC shim,
+# cnishim.cni.v1.CNI on :9555). Kept separate from auth-token.yaml, which is
+# scoped specifically to the ukpd/kraftlet credential pair: this token has a
+# different consumer (remote-cni's CNI_SHIM_TOKEN_FILE) and shares no
+# identity concerns with that pair.
+#
+# Needs the External Secrets Operator; it therefore lives in this overlay,
+# never in the base (the kind e2e applies the base with no ESO installed,
+# and the remote-cni container itself is base-absent for the same reason:
+# without a token it crash-loops).
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: ukp-remote-cni-auth-password
+  namespace: unikraft-system
+spec:
+  length: 40
+  digits: 10
+  symbols: 0
+  noUpper: false
+  allowRepeat: true
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: ukp-remote-cni-token
+  namespace: unikraft-system
+spec:
+  # Generate once and persist (ESO GeneratorState); do NOT rotate on a
+  # timer. remote-cni only reads CNI_SHIM_TOKEN_FILE at process start.
+  refreshInterval: "0"
+  target:
+    name: ukp-remote-cni-token
+    creationPolicy: Owner
+    deletionPolicy: Delete
+    template:
+      engineVersion: v2
+      data:
+        # Raw bearer value: remote-cni has no config-file format for this,
+        # just CNI_SHIM_TOKEN_FILE pointing at a file holding the token.
+        token: "{{ .password }}"
+  dataFrom:
+    - sourceRef:
+        generatorRef:
+          apiVersion: generators.external-secrets.io/v1alpha1
+          kind: Password
+          name: ukp-remote-cni-auth-password

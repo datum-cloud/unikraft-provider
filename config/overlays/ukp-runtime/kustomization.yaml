@@ -10,8 +10,13 @@ namespace: unikraft-system
 resources:
   - ../../dependencies/ukp-runtime
   - auth-token.yaml
+  - remote-cni-token.yaml
 patches:
   - path: seed-users-patch.yaml
+    target:
+      kind: DaemonSet
+      name: ukp-runtime
+  - path: remote-cni-patch.yaml
     target:
       kind: DaemonSet
       name: ukp-runtime
