@@ -1,0 +1,38 @@
+# Bearer token for ukp-remote-cni's CNI_SHIM_TOKEN_FILE. Separate from
+# auth-token.yaml — different consumer, no shared identity with the
+# ukpd/kraftlet pair.
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: ukp-remote-cni-auth-password
+  namespace: unikraft-system
+spec:
+  length: 40
+  digits: 10
+  symbols: 0
+  noUpper: false
+  allowRepeat: true
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: ukp-remote-cni-token
+  namespace: unikraft-system
+spec:
+  # Generate once, never rotate on a timer — remote-cni only reads this at startup.
+  refreshInterval: "0"
+  target:
+    name: ukp-remote-cni-token
+    creationPolicy: Owner
+    deletionPolicy: Delete
+    template:
+      engineVersion: v2
+      data:
+        # Raw value — CNI_SHIM_TOKEN_FILE just points at a file holding this.
+        token: "{{ .password }}"
+  dataFrom:
+    - sourceRef:
+        generatorRef:
+          apiVersion: generators.external-secrets.io/v1alpha1
+          kind: Password
+          name: ukp-remote-cni-auth-password

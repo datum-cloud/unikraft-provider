@@ -1,0 +1,90 @@
+# Real-cluster only: the vendor ukp-remote-cni gRPC CNI shim (cnishim.cni.v1,
+# :9555), as its own DaemonSet so its restarts don't couple to ukpd's (which
+# parks every guest on restart). No published kraftlet has a client for it
+# yet — this is prep, nothing calls it today.
+#
+# Overlay-only: without CNI_SHIM_TOKEN_FILE it crash-loops, and the kind e2e
+# applies the base directly with no ESO to provide one.
+#
+# CNI bin/conf/cache dirs point at the shim's defaults (/opt/cni/bin,
+# /etc/cni/net.d, /var/lib/cni) — the node's real CNI paths, shared
+# intentionally so remote-cni integrates with the cluster's Multus CNI.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ukp-remote-cni
+  namespace: unikraft-system
+  labels:
+    app.kubernetes.io/name: ukp-remote-cni
+    app.kubernetes.io/component: cni-shim
+    app.kubernetes.io/part-of: unikraft-provider
+spec:
+  selector:
+    matchLabels:
+      app: ukp-remote-cni
+  template:
+    metadata:
+      labels:
+        app: ukp-remote-cni
+        app.kubernetes.io/name: ukp-remote-cni
+        app.kubernetes.io/component: cni-shim
+        app.kubernetes.io/part-of: unikraft-provider
+    spec:
+      hostNetwork: true
+      dnsPolicy: Default
+      priorityClassName: system-node-critical
+      # Same node targeting as ukp-runtime: compute nodes only, not the
+      # kraftlet virtual-kubelet node.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: compute.datumapis.com/runtime
+                    operator: In
+                    values: ["unikraft"]
+                  - key: unikraft.com/virtual-kubelet
+                    operator: DoesNotExist
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: remote-cni
+          image: ghcr.io/datum-cloud/ukp-runtime:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/lib/ukp/remote-cni/bin/remote-cni", "run"]
+          securityContext:
+            privileged: true
+          env:
+            - name: CNI_SHIM_TOKEN_FILE
+              value: /etc/ukp-remote-cni-secrets/token
+          volumeMounts:
+            - name: cni-cache
+              mountPath: /var/lib/cni
+            - name: cni-bin
+              mountPath: /opt/cni/bin
+            - name: cni-conf
+              mountPath: /etc/cni/net.d
+            - name: remote-cni-token
+              mountPath: /etc/ukp-remote-cni-secrets
+              readOnly: true
+      volumes:
+        # Persistent, not emptyDir: libcni caches Add results here for Del to
+        # find later. Shared with the cluster's real CNI cache — different ID
+        # space than pod sandbox IDs, so no collision.
+        - name: cni-cache
+          hostPath:
+            path: /var/lib/cni
+            type: DirectoryOrCreate
+        # Node's real CNI plugin binaries (Multus, Cilium, etc.) — remote-cni execs these.
+        - name: cni-bin
+          hostPath:
+            path: /opt/cni/bin
+            type: DirectoryOrCreate
+        # Node's real CNI conflists (Multus, Cilium).
+        - name: cni-conf
+          hostPath:
+            path: /etc/cni/net.d
+            type: DirectoryOrCreate
+        - name: remote-cni-token
+          secret:
+            secretName: ukp-remote-cni-token

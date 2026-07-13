@@ -15,6 +15,9 @@ patches:
     target:
       kind: DaemonSet
       name: ukp-runtime
+# ukp-remote-cni: independent DaemonSet, see config/components/ukp-remote-cni.
+components:
+  - ../../components/ukp-remote-cni
 # The seed script, injected as a ConfigMap (hash-suffixed: script changes
 # roll the DaemonSet).
 configMapGenerator:

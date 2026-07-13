@@ -1,0 +1,9 @@
+# Optional: ukp-remote-cni DaemonSet + ESO bearer token. Needs the External
+# Secrets Operator — add to a real-cluster overlay's `components:`; omit
+# where ESO isn't present (e.g. kind e2e), since the shim crash-loops
+# without a token.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - daemonset.yaml
+  - token.yaml
