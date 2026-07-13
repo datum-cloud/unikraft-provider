@@ -1,0 +1,83 @@
+name: update-ukp-versions
+
+# Checks the vendor's cloud/stable apt channel for newer ukp-* package
+# versions than what build/ukp-runtime/Dockerfile pins, and opens a PR
+# bumping any that have moved. Renovate can't do this: the vendor's ProGet
+# package-listing API 403s for our apt-only credential, so this queries the
+# same apt metadata `apt-get` itself uses instead.
+#
+# Caveat: PRs opened with the default GITHUB_TOKEN don't trigger other
+# `pull_request` workflows (GitHub's anti-recursion rule), so e2e won't
+# auto-run on the bumped PR — close/reopen it (or push a commit) to kick
+# off CI.
+#
+# Secrets:
+#   UNIKRAFT_APT_AUTH   apt auth.conf for pkg.unikraft.com (same as e2e.yaml)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 9 * * 1" # Monday 09:00 UTC
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Register the vendor apt repository
+        env:
+          UNIKRAFT_APT_AUTH: ${{ secrets.UNIKRAFT_APT_AUTH }}
+        run: |
+          sudo install -D -m 644 build/ukp-runtime/unikraft-cloud.gpg /usr/share/keyrings/unikraft-cloud.gpg
+          sudo install -D -m 644 build/ukp-runtime/unikraft-cloud.sources /etc/apt/sources.list.d/unikraft-cloud.sources
+          umask 077
+          echo "$UNIKRAFT_APT_AUTH" | sudo tee /etc/apt/auth.conf.d/unikraft.conf >/dev/null
+          sudo apt-get -o Dir::Etc::sourcelist="/etc/apt/sources.list.d/unikraft-cloud.sources" \
+              -o Dir::Etc::sourceparts="-" update
+
+      - name: Check for newer ukp-* package versions
+        run: |
+          set -uo pipefail
+          dockerfile=build/ukp-runtime/Dockerfile
+          bumps=()
+          while IFS='=' read -r arg_name current; do
+            name="${arg_name%_VERSION}"
+            name="${name#UKP_}"
+            pkg="ukp-$(echo "$name" | tr '[:upper:]_' '[:lower:]-')"
+            latest="$(apt-cache madison "$pkg" 2>/dev/null | awk '{print $3; exit}')"
+            if [ -z "$latest" ]; then
+              echo "::warning::no vendor version found for $pkg (ARG $arg_name), skipping"
+              continue
+            fi
+            if [ "$latest" != "$current" ]; then
+              echo "$pkg: $current -> $latest"
+              sed -i "s|^ARG ${arg_name}=.*|ARG ${arg_name}=${latest}|" "$dockerfile"
+              bumps+=("- \`$pkg\`: \`$current\` → \`$latest\`")
+            fi
+          done < <(grep -oP '^ARG \KUKP_\w+_VERSION=.*' "$dockerfile")
+
+          if [ "${#bumps[@]}" -eq 0 ]; then
+            echo "All ukp-* packages are up to date."
+            printf 'All ukp-* packages are already up to date.\n' > /tmp/ukp-bump-body.md
+          else
+            { printf 'Vendor released newer versions of the following ukp-* packages:\n\n'
+              printf '%s\n' "${bumps[@]}"
+            } > /tmp/ukp-bump-body.md
+          fi
+          cat /tmp/ukp-bump-body.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          add-paths: build/ukp-runtime/Dockerfile
+          commit-message: "build(runtime): bump ukp package versions"
+          title: "build(runtime): bump ukp package versions"
+          body-path: /tmp/ukp-bump-body.md
+          branch: chore/bump-ukp-versions
+          delete-branch: true
+          labels: dependencies
