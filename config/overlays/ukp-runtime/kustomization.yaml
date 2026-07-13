@@ -10,13 +10,15 @@ namespace: unikraft-system
 resources:
   - ../../dependencies/ukp-runtime
   - auth-token.yaml
-  - remote-cni-token.yaml
-  - remote-cni-daemonset.yaml
 patches:
   - path: seed-users-patch.yaml
     target:
       kind: DaemonSet
       name: ukp-runtime
+# ukp-remote-cni: its own DaemonSet, independent of ukp-runtime's lifecycle.
+# See config/components/ukp-remote-cni.
+components:
+  - ../../components/ukp-remote-cni
 # The seed script, injected as a ConfigMap (hash-suffixed: script changes
 # roll the DaemonSet).
 configMapGenerator:
