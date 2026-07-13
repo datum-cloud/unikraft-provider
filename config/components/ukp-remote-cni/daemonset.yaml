@@ -16,18 +16,13 @@
 # kind e2e applies the base directly and must not carry a component that is
 # guaranteed to crash-loop there.
 #
-# The CNI plugin bin/conf/cache dirs are wired (hostPath, ready to receive
-# real content) but deliberately left empty and deliberately NOT at the
-# shim's default paths (/opt/cni/bin, /etc/cni/net.d, /var/lib/cni): on any
-# real node those are the live paths the cluster's own CNI (Cilium/Multus)
-# uses. Live-tested on us-central-1-lab: pointing the shim at the real paths
-# made it discover and log the cluster's actual Cilium/Multus conflists, and
-# it would default to invoking them on a call with no explicit config — never
-# tested with an actual Add, but that's the cluster's pod network, not
-# something a guest microVM's CNI call should ever touch. Isolated,
-# ukp-remote-cni-only paths avoid that collision entirely. Which plugins the
-# vendor's chain expects is still unresolved, and no one — including the
-# vendor — currently runs this with a real plugin chain, so these stay empty.
+# The CNI plugin bin/conf/cache dirs are mounted at the shim's default paths
+# (/opt/cni/bin, /etc/cni/net.d, /var/lib/cni) — the same live paths the
+# cluster's own CNI (Multus/Cilium) uses. That's intentional, not a leak:
+# remote-cni is meant to integrate with the cluster's real Multus CNI rather
+# than run a separate guest-only plugin chain. Live-tested on us-central-1-lab:
+# the shim discovers and logs the existing Multus/Cilium conflists at start,
+# which is the expected precondition for that integration.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -76,38 +71,36 @@ spec:
           env:
             - name: CNI_SHIM_TOKEN_FILE
               value: /etc/ukp-remote-cni-secrets/token
-            - name: CNI_SHIM_CNI_CACHE_DIR
-              value: /var/lib/ukp-remote-cni/cni-cache
-            - name: CNI_SHIM_CNI_BIN_DIR
-              value: /var/lib/ukp-remote-cni/cni-bin
-            - name: CNI_SHIM_CNI_CONF_DIR
-              value: /var/lib/ukp-remote-cni/cni-conf
           volumeMounts:
             - name: cni-cache
-              mountPath: /var/lib/ukp-remote-cni/cni-cache
+              mountPath: /var/lib/cni
             - name: cni-bin
-              mountPath: /var/lib/ukp-remote-cni/cni-bin
+              mountPath: /opt/cni/bin
             - name: cni-conf
-              mountPath: /var/lib/ukp-remote-cni/cni-conf
+              mountPath: /etc/cni/net.d
             - name: remote-cni-token
               mountPath: /etc/ukp-remote-cni-secrets
               readOnly: true
       volumes:
         # Persistent, not emptyDir: libcni persists Add-call state here so a
-        # later Del finds it, including across pod restarts.
+        # later Del finds it, including across pod restarts. Shared with the
+        # cluster's own CNI cache: libcni keys entries by network name +
+        # container ID + interface, and guest IDs come from a different ID
+        # space than pod sandbox IDs, so entries don't collide.
         - name: cni-cache
           hostPath:
-            path: /var/lib/ukp-remote-cni/cni-cache
+            path: /var/lib/cni
             type: DirectoryOrCreate
-        # Empty: no CNI plugin binaries ship with the package or this repo.
+        # The node's real CNI plugin binaries (Multus, Cilium, and the
+        # standard plugins Multus may delegate to) — remote-cni execs these.
         - name: cni-bin
           hostPath:
-            path: /var/lib/ukp-remote-cni/cni-bin
+            path: /opt/cni/bin
             type: DirectoryOrCreate
-        # Empty: no conflist ships with the package or this repo.
+        # The node's real CNI conflists (Multus, Cilium) — see comment above.
         - name: cni-conf
           hostPath:
-            path: /var/lib/ukp-remote-cni/cni-conf
+            path: /etc/cni/net.d
             type: DirectoryOrCreate
         - name: remote-cni-token
           secret:
