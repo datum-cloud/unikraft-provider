@@ -1,28 +1,14 @@
-# Real-cluster only: run the vendor ukp-remote-cni gRPC CNI shim
-# (cnishim.cni.v1.CNI, :9555) as its own DaemonSet, not a container inside
-# ukp-runtime's pod. No published kraftlet release has a client for this yet
-# (0.6.0-staging.12 has none) — this wires the daemon up so it is ready for
-# when one ships; nothing calls it today.
+# Real-cluster only: the vendor ukp-remote-cni gRPC CNI shim (cnishim.cni.v1,
+# :9555), as its own DaemonSet so its restarts don't couple to ukpd's (which
+# parks every guest on restart). No published kraftlet has a client for it
+# yet — this is prep, nothing calls it today.
 #
-# Kept as its own DaemonSet rather than folded into ukp-runtime: bundling it
-# into that pod would couple its restarts to ukpd's, and any future
-# remote-cni-only change (new vendor version, a real conflist once the
-# plugin-chain question below is answered) would then force ukpd/coredns/agent
-# to restart too — which parks every running guest into standby first. This
-# component has nothing to do with guest lifecycle, so it restarts on its own.
+# Overlay-only: without CNI_SHIM_TOKEN_FILE it crash-loops, and the kind e2e
+# applies the base directly with no ESO to provide one.
 #
-# Without CNI_SHIM_TOKEN_FILE the process crash-loops on start, so this
-# DaemonSet only exists in the overlay where ESO can generate a token — the
-# kind e2e applies the base directly and must not carry a component that is
-# guaranteed to crash-loop there.
-#
-# The CNI plugin bin/conf/cache dirs are mounted at the shim's default paths
-# (/opt/cni/bin, /etc/cni/net.d, /var/lib/cni) — the same live paths the
-# cluster's own CNI (Multus/Cilium) uses. That's intentional, not a leak:
-# remote-cni is meant to integrate with the cluster's real Multus CNI rather
-# than run a separate guest-only plugin chain. Live-tested on us-central-1-lab:
-# the shim discovers and logs the existing Multus/Cilium conflists at start,
-# which is the expected precondition for that integration.
+# CNI bin/conf/cache dirs point at the shim's defaults (/opt/cni/bin,
+# /etc/cni/net.d, /var/lib/cni) — the node's real CNI paths, shared
+# intentionally so remote-cni integrates with the cluster's Multus CNI.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -47,8 +33,8 @@ spec:
       hostNetwork: true
       dnsPolicy: Default
       priorityClassName: system-node-critical
-      # Same node targeting as ukp-runtime: only real compute nodes, never
-      # the kraftlet virtual-kubelet node.
+      # Same node targeting as ukp-runtime: compute nodes only, not the
+      # kraftlet virtual-kubelet node.
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -82,22 +68,19 @@ spec:
               mountPath: /etc/ukp-remote-cni-secrets
               readOnly: true
       volumes:
-        # Persistent, not emptyDir: libcni persists Add-call state here so a
-        # later Del finds it, including across pod restarts. Shared with the
-        # cluster's own CNI cache: libcni keys entries by network name +
-        # container ID + interface, and guest IDs come from a different ID
-        # space than pod sandbox IDs, so entries don't collide.
+        # Persistent, not emptyDir: libcni caches Add results here for Del to
+        # find later. Shared with the cluster's real CNI cache — different ID
+        # space than pod sandbox IDs, so no collision.
         - name: cni-cache
           hostPath:
             path: /var/lib/cni
             type: DirectoryOrCreate
-        # The node's real CNI plugin binaries (Multus, Cilium, and the
-        # standard plugins Multus may delegate to) — remote-cni execs these.
+        # Node's real CNI plugin binaries (Multus, Cilium, etc.) — remote-cni execs these.
         - name: cni-bin
           hostPath:
             path: /opt/cni/bin
             type: DirectoryOrCreate
-        # The node's real CNI conflists (Multus, Cilium) — see comment above.
+        # Node's real CNI conflists (Multus, Cilium).
         - name: cni-conf
           hostPath:
             path: /etc/cni/net.d
