@@ -35,6 +35,13 @@ const (
 	unikraftAnnotationPrefix   = "cloud.unikraft.v1"
 	ukcInstanceFqdnsAnnotation = "cloud.unikraft.v1.instances/fqdns"
 
+	// ukcCniEnabledAnnotation opts an Instance's Pod into kraftlet's
+	// remote-CNI integration. It is a platform decision (config.EnableCNI),
+	// not a tenant-facing knob, so it is excluded from the generic
+	// Instance->Pod annotation passthrough below and set by the controller
+	// instead.
+	ukcCniEnabledAnnotation = "cloud.unikraft.v1.instances/cni-enabled"
+
 	// instanceFinalizer gates Instance deletion on teardown of the backing Pod
 	// (and Service). The provider holds this finalizer until it has deleted the
 	// Pod and observed it fully removed, so the Instance — and the upstream
@@ -204,8 +211,19 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 		}
 
 		// Mirror any cloud.unikraft.v1.* annotations from the upstream
-		// Instance onto the downstream Pod.
+		// Instance onto the downstream Pod, aside from the platform-controlled
+		// ones set explicitly below.
 		copyUnikraftAnnotations(instance.Annotations, instancePod.Annotations)
+
+		// CNI is a platform decision, not a tenant one: set it from provider
+		// config rather than letting it flow through from the Instance, so a
+		// tenant can't enable or disable it by setting the annotation
+		// themselves.
+		if r.Config != nil && r.Config.DownstreamResourceManagement.EnableCNI {
+			instancePod.Annotations[ukcCniEnabledAnnotation] = "true"
+		} else {
+			delete(instancePod.Annotations, ukcCniEnabledAnnotation)
+		}
 
 		if instancePod.CreationTimestamp.IsZero() {
 			logger.Info("building pod spec for new instance pod", "name", instancePod.Name)
@@ -670,6 +688,11 @@ func (r *InstanceReconciler) syncInstancePowerState(
 
 func copyUnikraftAnnotations(src, dst map[string]string) {
 	for k, v := range src {
+		if k == ukcCniEnabledAnnotation {
+			// Platform-controlled; set by the caller from provider config, not
+			// copied from the tenant-facing Instance.
+			continue
+		}
 		if strings.HasPrefix(k, unikraftAnnotationPrefix) {
 			dst[k] = v
 		}

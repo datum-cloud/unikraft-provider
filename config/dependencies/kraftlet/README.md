@@ -58,11 +58,13 @@ and so omits this wiring.
 
 Per-instance opt-in is a guardrail on the vendor's side: kraftlet only routes
 an instance through CNI if its Pod carries
-`cloud.unikraft.v1.instances/cni-enabled: "true"`. Set this as an annotation on
-the upstream `Instance`; the provider already mirrors any
-`cloud.unikraft.v1.*` annotation from the `Instance` onto its backing Pod
-(`internal/controller/instance_controller.go`), so no provider change is
-needed to make the annotation take effect.
+`cloud.unikraft.v1.instances/cni-enabled: "true"`. This is a **platform**
+decision, not a tenant one: the provider sets it on every Instance Pod
+whenever `downstreamResourceManagement.enableCNI` is true — the default —
+and strips it from the generic `cloud.unikraft.v1.*` annotation passthrough
+so a tenant can't set or override it themselves via the `Instance` API. Set
+`enableCNI: false` only in environments that don't deploy `ukp-remote-cni`
+(e.g. the kind e2e overlay).
 
 Validated on `us-central-1-lab` with kraftlet `0.6.0-staging.15`: a Pod carrying
 the annotation triggers a real, authenticated `Add` call into `ukp-remote-cni`,

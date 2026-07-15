@@ -128,4 +128,16 @@ type DownstreamResourceManagementConfig struct {
 	//
 	// +optional
 	Tolerations []core.Toleration `json:"tolerations,omitempty"`
+
+	// EnableCNI turns on platform-managed instance networking: the provider
+	// marks every Instance Pod for kraftlet's remote-CNI integration, which
+	// hands network setup to the co-located ukp-remote-cni service instead of
+	// leaving it entirely internal to the runtime. This is a platform-wide
+	// setting, not something a tenant can opt in or out of per Instance.
+	// Defaults to enabled; set to false only in environments that don't
+	// deploy ukp-remote-cni (e.g. the kind e2e overlay).
+	//
+	// +optional
+	// +default=true
+	EnableCNI bool `json:"enableCNI,omitempty"`
 }
