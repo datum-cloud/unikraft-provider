@@ -43,9 +43,10 @@ spec:
       containers:
         - name: kraftlet
           # Staging build: adds per-instance image pull credentials (a Pod's
-          # imagePullSecrets are forwarded to ukpd). Released kraftlet stops at
-          # 0.2, so the feature track is -staging.
-          image: ghcr.io/unikraft-cloud/kraftlet:0.6.0-staging.12
+          # imagePullSecrets are forwarded to ukpd) and remote-CNI support
+          # (--cni-service/--cni-token). Released kraftlet stops at 0.2, so
+          # the feature track is -staging.
+          image: ghcr.io/unikraft-cloud/kraftlet:0.6.0-staging.15
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-c"]
           # Distinct virtual-kubelet node name per host: kraftlet-<node>.
@@ -76,6 +77,13 @@ spec:
               value: "5s"
             - name: KRAFTLET_ENABLE_INSTANCE_FQDN_ANNOTATIONS
               value: "true"
+            # The platform-health condition probes the UKC metro's /v1/healthz,
+            # which our direct-connect ukpd (no metro registry) never resolves —
+            # kraftlet's SDK client can't find an endpoint for it, and the node
+            # gets stuck permanently NotReady. Disable until Unikraft supports
+            # this check for direct-connect deployments.
+            - name: KRAFTLET_ENABLE_PLATFORM_HEALTH_CONDITION
+              value: "false"
             - name: KRAFTLET_ENABLE_NODE_TAINT
               value: "true"
             - name: KRAFTLET_NODE_TAINT_KEY

@@ -46,6 +46,41 @@ Because the token source differs per environment, this **base** ships no
 (kind) or `config/overlays/kraftlet` (real clusters, where the ukp-runtime overlay
 provides the token in this namespace).
 
+## Remote CNI (real clusters only)
+
+`config/overlays/kraftlet` patches in `KRAFTLET_CNI_SERVICE=localhost:9555` and
+`KRAFTLET_CNI_TOKEN` (from the `ukp-remote-cni-token` Secret) so kraftlet can
+hand instance networking to the co-located `ukp-remote-cni` shim
+(`config/components/ukp-remote-cni`, deployed by `config/overlays/ukp-runtime`).
+Both are hostNetwork DaemonSets on the same runtime host, hence the loopback
+address. The kind e2e overlay (`kraftlet-e2e`) does not deploy `ukp-remote-cni`
+and so omits this wiring.
+
+Per-instance opt-in is a guardrail on the vendor's side: kraftlet only routes
+an instance through CNI if its Pod carries
+`cloud.unikraft.v1.instances/cni-enabled: "true"`. Set this as an annotation on
+the upstream `Instance`; the provider already mirrors any
+`cloud.unikraft.v1.*` annotation from the `Instance` onto its backing Pod
+(`internal/controller/instance_controller.go`), so no provider change is
+needed to make the annotation take effect.
+
+Validated on `us-central-1-lab` with kraftlet `0.6.0-staging.15`: a Pod carrying
+the annotation triggers a real, authenticated `Add` call into `ukp-remote-cni`,
+which invokes the node's Multus CNI chain.
+
+### Platform-health condition disabled
+
+`KRAFTLET_ENABLE_PLATFORM_HEALTH_CONDITION=false` is set unconditionally (not
+CNI-specific). Starting in `0.6.0-staging.14`, kraftlet added a node condition
+that probes the UKC metro's `/v1/healthz`. Our direct-connect `ukpd` isn't a
+metro kraftlet's SDK can resolve an endpoint for, so the probe fails
+client-side before any request is even sent, and the node gets stuck
+permanently `NotReady` (`UnikraftPlatformHealthy: PlatformUnreachable`).
+`0.6.0-staging.15` added `--disable-platform-health-condition` specifically
+for this; disabling it restores `NodeReady` while keeping every other
+`0.6.0-staging` feature (image-pull creds, CNI). Revisit once Unikraft
+supports this check for direct-connect deployments.
+
 ## Open items (before production)
 
 - **PVC watcher is OFF.** N independent kraftlets would run N cluster-wide
