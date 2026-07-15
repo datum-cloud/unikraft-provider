@@ -16,4 +16,7 @@ spec:
             - name: KRAFTLET_CNI_SERVICE
               value: "localhost:9555"
             - name: KRAFTLET_CNI_TOKEN
-              valueFrom: { secretKeyRef: { name: ukp-remote-cni-token, key: token } }
+              valueFrom:
+                secretKeyRef:
+                  name: ukp-remote-cni-token
+                  key: token
