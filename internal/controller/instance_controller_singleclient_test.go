@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	computev1alpha "go.datum.net/compute/api/v1alpha"
+	"go.datum.net/unikraft-provider/internal/config"
 	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -540,6 +541,83 @@ func TestPodAndService_SameNamespaceAsInstance(t *testing.T) {
 	}
 	if svc.Namespace != instance.Namespace {
 		t.Errorf("service.Namespace = %q, want %q", svc.Namespace, instance.Namespace)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CNI annotation is platform-controlled, not tenant-controlled
+// ---------------------------------------------------------------------------
+
+// TestReconcileSandboxContainers_CNIOffWithoutConfig verifies that without
+// EnableCNI explicitly configured true, the Pod never carries the
+// cni-enabled annotation, even if the tenant tried to set it on the Instance
+// themselves. (Real deployments default EnableCNI to true via scheme
+// defaulting on the loaded config file; this exercises the reconciler's own
+// off-switch behavior directly.)
+func TestReconcileSandboxContainers_CNIOffWithoutConfig(t *testing.T) {
+	ctx := context.Background()
+	s := testScheme(t)
+
+	instance := instanceWithUID("cni-default-uid")
+	instance.Annotations = map[string]string{ukcCniEnabledAnnotation: "true"}
+
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(instance).
+		WithStatusSubresource(&computev1alpha.Instance{}).
+		Build()
+
+	r := &InstanceReconciler{Client: cl, Scheme: s}
+
+	if _, err := r.reconcileSandboxContainers(ctx, instance); err != nil {
+		t.Fatalf("reconcileSandboxContainers returned error: %v", err)
+	}
+
+	var pod core.Pod
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(instance), &pod); err != nil {
+		t.Fatalf("failed to get pod after reconcile: %v", err)
+	}
+	if v, ok := pod.Annotations[ukcCniEnabledAnnotation]; ok {
+		t.Errorf("pod carries %s=%q with CNI disabled in config; tenant-set annotation must not pass through", ukcCniEnabledAnnotation, v)
+	}
+}
+
+// TestReconcileSandboxContainers_CNIEnabledByConfig verifies that the provider
+// sets the cni-enabled annotation itself once the platform turns on
+// EnableCNI, regardless of what the tenant put on the Instance.
+func TestReconcileSandboxContainers_CNIEnabledByConfig(t *testing.T) {
+	ctx := context.Background()
+	s := testScheme(t)
+
+	instance := instanceWithUID("cni-enabled-uid")
+	// A tenant explicitly trying to opt out must not be able to override the
+	// platform's decision.
+	instance.Annotations = map[string]string{ukcCniEnabledAnnotation: "false"}
+
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(instance).
+		WithStatusSubresource(&computev1alpha.Instance{}).
+		Build()
+
+	r := &InstanceReconciler{
+		Client: cl,
+		Scheme: s,
+		Config: &config.UnikraftProvider{
+			DownstreamResourceManagement: config.DownstreamResourceManagementConfig{EnableCNI: true},
+		},
+	}
+
+	if _, err := r.reconcileSandboxContainers(ctx, instance); err != nil {
+		t.Fatalf("reconcileSandboxContainers returned error: %v", err)
+	}
+
+	var pod core.Pod
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(instance), &pod); err != nil {
+		t.Fatalf("failed to get pod after reconcile: %v", err)
+	}
+	if got := pod.Annotations[ukcCniEnabledAnnotation]; got != "true" {
+		t.Errorf("pod annotation %s = %q, want %q (platform-controlled, tenant value must be ignored)", ukcCniEnabledAnnotation, got, "true")
 	}
 }
 
