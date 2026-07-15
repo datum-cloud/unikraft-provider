@@ -72,7 +72,7 @@ jobs:
           cat /tmp/ukp-bump-body.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Open pull request
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           add-paths: build/ukp-runtime/Dockerfile
           commit-message: "build(runtime): bump ukp package versions"
