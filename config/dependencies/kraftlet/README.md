@@ -64,6 +64,23 @@ the upstream `Instance`; the provider already mirrors any
 (`internal/controller/instance_controller.go`), so no provider change is
 needed to make the annotation take effect.
 
+Validated on `us-central-1-lab` with kraftlet `0.6.0-staging.15`: a Pod carrying
+the annotation triggers a real, authenticated `Add` call into `ukp-remote-cni`,
+which invokes the node's Multus CNI chain.
+
+### Platform-health condition disabled
+
+`KRAFTLET_ENABLE_PLATFORM_HEALTH_CONDITION=false` is set unconditionally (not
+CNI-specific). Starting in `0.6.0-staging.14`, kraftlet added a node condition
+that probes the UKC metro's `/v1/healthz`. Our direct-connect `ukpd` isn't a
+metro kraftlet's SDK can resolve an endpoint for, so the probe fails
+client-side before any request is even sent, and the node gets stuck
+permanently `NotReady` (`UnikraftPlatformHealthy: PlatformUnreachable`).
+`0.6.0-staging.15` added `--disable-platform-health-condition` specifically
+for this; disabling it restores `NodeReady` while keeping every other
+`0.6.0-staging` feature (image-pull creds, CNI). Revisit once Unikraft
+supports this check for direct-connect deployments.
+
 ## Open items (before production)
 
 - **PVC watcher is OFF.** N independent kraftlets would run N cluster-wide
