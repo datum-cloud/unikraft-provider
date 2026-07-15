@@ -52,10 +52,10 @@ COPY unikraft-cloud.sources /etc/apt/sources.list.d/unikraft-cloud.sources
 ARG UKP_AGENT_VERSION=5:0.2.4-9stable+deb13
 ARG UKP_CONFIG_VERSION=5:1.4.14-26cf82c-9stable+deb13
 ARG UKP_COREDNS_VERSION=5:1.14.4-13+641bea1-9stable+deb13
-ARG UKP_FIRECRACKER_VERSION=5:1.16.0-31+b873e32-9stable+deb13
+ARG UKP_FIRECRACKER_VERSION=5:1.16.0-33+53b4d62-9stable+deb13
 ARG UKP_NETWORKING_VERSION=5:1.5.6-f842be3-9stable+deb13
 ARG UKP_OPENRESTY_VERSION=5:1.31.1.1-25+711fcc1-9stable+deb13
-ARG UKP_PLATFORM_VERSION=5:0.11.0-2+bebb30c-9stable+deb13
+ARG UKP_PLATFORM_VERSION=5:0.11.0-6+38f03f6-9stable+deb13
 
 # ukp-remote-cni: server-side CNI shim for kraftlet.
 ARG UKP_REMOTE_CNI_VERSION=5:0.1.0-12-g86a1337-9stable+deb13
