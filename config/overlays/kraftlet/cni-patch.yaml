@@ -1,0 +1,19 @@
+# Point kraftlet at the co-located ukp-remote-cni shim (config/components/ukp-remote-cni),
+# which this overlay's sibling ukp-runtime overlay always deploys on real clusters.
+# Both are hostNetwork DaemonSets on the same runtime host, so the shim is reachable
+# on the host loopback. The bearer token is the same Secret remote-cni itself reads
+# from (ukp-remote-cni-token) — one token, two consumers, no mirror.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kraftlet
+spec:
+  template:
+    spec:
+      containers:
+        - name: kraftlet
+          env:
+            - name: KRAFTLET_CNI_SERVICE
+              value: "localhost:9555"
+            - name: KRAFTLET_CNI_TOKEN
+              valueFrom: { secretKeyRef: { name: ukp-remote-cni-token, key: token } }

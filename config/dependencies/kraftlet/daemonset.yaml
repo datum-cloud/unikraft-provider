@@ -43,9 +43,10 @@ spec:
       containers:
         - name: kraftlet
           # Staging build: adds per-instance image pull credentials (a Pod's
-          # imagePullSecrets are forwarded to ukpd). Released kraftlet stops at
-          # 0.2, so the feature track is -staging.
-          image: ghcr.io/unikraft-cloud/kraftlet:0.6.0-staging.12
+          # imagePullSecrets are forwarded to ukpd) and remote-CNI support
+          # (--cni-service/--cni-token). Released kraftlet stops at 0.2, so
+          # the feature track is -staging.
+          image: ghcr.io/unikraft-cloud/kraftlet:0.6.0-staging.14
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-c"]
           # Distinct virtual-kubelet node name per host: kraftlet-<node>.
