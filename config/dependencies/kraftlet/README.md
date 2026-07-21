@@ -70,6 +70,10 @@ Validated on `us-central-1-lab` with kraftlet `0.6.0-staging.15`: a Pod carrying
 the annotation triggers a real, authenticated `Add` call into `ukp-remote-cni`,
 which invokes the node's Multus CNI chain.
 
+`0.6.0-staging.17` reads the tap device name from the NAD's
+`k8s.v1.cni.cncf.io/host-interface` annotation, rather than assuming one, so
+it works with whatever interface name the NAD assigns.
+
 ### Platform-health condition disabled
 
 `KRAFTLET_ENABLE_PLATFORM_HEALTH_CONDITION=false` is set unconditionally (not
