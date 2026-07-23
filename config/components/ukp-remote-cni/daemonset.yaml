@@ -9,6 +9,14 @@
 # CNI bin/conf/cache dirs point at the shim's defaults (/opt/cni/bin,
 # /etc/cni/net.d, /var/lib/cni) — the node's real CNI paths, shared
 # intentionally so remote-cni integrates with the cluster's Multus CNI.
+#
+# Also mounts /run/multus: multus's thick-plugin design splits into the
+# multus-shim binary (exec'd here as a CNI plugin per the CNI spec) and a
+# separate multus-daemon process (kube-multus-ds) holding the real pod/NAD
+# state. The shim hands off to the daemon over a Unix socket at
+# /run/multus/multus.sock — hardcoded to that transport, no TCP option —
+# so without this host mount the shim can never reach the daemon and every
+# CNI ADD/DEL times out after 60s waiting on the daemon's readiness check.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -64,6 +72,8 @@ spec:
               mountPath: /opt/cni/bin
             - name: cni-conf
               mountPath: /etc/cni/net.d
+            - name: run-multus
+              mountPath: /run/multus
             - name: remote-cni-token
               mountPath: /etc/ukp-remote-cni-secrets
               readOnly: true
@@ -84,6 +94,12 @@ spec:
         - name: cni-conf
           hostPath:
             path: /etc/cni/net.d
+            type: DirectoryOrCreate
+        # multus-daemon's Unix socket — see the comment above on why the
+        # exec'd multus-shim binary needs this to reach the daemon.
+        - name: run-multus
+          hostPath:
+            path: /run/multus
             type: DirectoryOrCreate
         - name: remote-cni-token
           secret:
