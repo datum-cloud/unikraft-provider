@@ -10,21 +10,20 @@
 # /etc/cni/net.d, /var/lib/cni) — the node's real CNI paths, shared
 # intentionally so remote-cni integrates with the cluster's Multus CNI.
 #
-# Also mounts /run: multus's thick-plugin design splits into the
-# multus-shim binary (exec'd here as a CNI plugin per the CNI spec) and a
-# separate multus-daemon process (kube-multus-ds) holding the real pod/NAD
-# state. The shim hands off to the daemon over a Unix socket at
-# /run/multus/multus.sock — hardcoded to that transport, no TCP option —
-# so without this host mount the shim can never reach the daemon and every
-# CNI ADD/DEL times out after 60s waiting on the daemon's readiness check.
+# Reaches multus-daemon's Unix socket at /run/multus/multus.sock: a fixed
+# path and transport (no TCP option) that must match exactly, since it's
+# shared with the node's real kubelet/containerd CNI calls.
 #
-# Mount /run itself, not /run/multus: multus-daemon removes and recreates
-# its socket directory on every restart. A bind mount pins the mounted
-# directory's inode, so mounting the leaf /run/multus goes stale across a
-# multus-daemon restart — the recreated directory is invisible to us until
-# this pod itself restarts. /run is never itself removed and recreated, so
-# mounting it one level up means the daemon's recreate is just a normal
-# write underneath our existing mount, visible immediately.
+# We reach it through a symlink, not a direct bind mount:
+#   - Bind-mounting all of /run blocks kubelet from creating
+#     /run/secrets/kubernetes.io/serviceaccount in this container, which
+#     crash-loops every pod.
+#   - Bind-mounting just the /run/multus leaf goes stale when
+#     multus-daemon recreates that directory on restart.
+# Mounting host /run read-only at /host/run, then symlinking
+# /run/multus -> /host/run/multus in the entrypoint, avoids both: our own
+# /run stays a normal tmpfs, and the symlink re-resolves on every open(),
+# so it survives multus-daemon restarts without restarting this pod.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -67,7 +66,14 @@ spec:
         - name: remote-cni
           image: ghcr.io/datum-cloud/ukp-runtime:latest
           imagePullPolicy: IfNotPresent
-          command: ["/usr/lib/ukp/remote-cni/bin/remote-cni", "run"]
+          # See the comment above on why we symlink /run/multus instead of
+          # bind-mounting it directly.
+          command:
+            - sh
+            - -c
+            - |
+              ln -sfn /host/run/multus /run/multus
+              exec /usr/lib/ukp/remote-cni/bin/remote-cni run
           securityContext:
             privileged: true
           env:
@@ -80,8 +86,8 @@ spec:
               mountPath: /opt/cni/bin
             - name: cni-conf
               mountPath: /etc/cni/net.d
-            - name: run-multus
-              mountPath: /run
+            - name: host-run
+              mountPath: /host/run
               readOnly: true
             - name: remote-cni-token
               mountPath: /etc/ukp-remote-cni-secrets
@@ -104,10 +110,8 @@ spec:
           hostPath:
             path: /etc/cni/net.d
             type: DirectoryOrCreate
-        # Host /run — see the comment above on why we mount this (not the
-        # /run/multus leaf) for the exec'd multus-shim binary to reliably
-        # reach multus-daemon's Unix socket across daemon restarts.
-        - name: run-multus
+        # Host /run, mounted at /host/run — see the comment above.
+        - name: host-run
           hostPath:
             path: /run
             type: Directory
