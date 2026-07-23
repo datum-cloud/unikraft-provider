@@ -79,6 +79,16 @@ spec:
           env:
             - name: CNI_SHIM_TOKEN_FILE
               value: /etc/ukp-remote-cni-secrets/token
+            # multus-shim (exec'd as our child, so it inherits this) is a
+            # CNI plugin itself and refuses to run if its own netns equals
+            # CNI_NETNS. Because this pod is hostNetwork with no isolated
+            # per-instance netns, that's always true here. Precautionary:
+            # only affects this container. multus-daemon (a separate
+            # process, invoked over the socket) doesn't read or forward
+            # this to the delegate plugins it execs, so it has no effect
+            # on delegate-level netns checks (e.g. cilium-cni's).
+            - name: CNI_NETNS_OVERRIDE
+              value: "true"
           volumeMounts:
             - name: cni-cache
               mountPath: /var/lib/cni
