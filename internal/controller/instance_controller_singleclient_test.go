@@ -446,6 +446,119 @@ func TestPodCarriesControllerOwnerReference(t *testing.T) {
 	}
 }
 
+func TestPodSyncsAllowedComputeLabels(t *testing.T) {
+	tests := []struct {
+		name           string
+		instanceLabels map[string]string
+		existingLabels map[string]string
+		wantLabels     map[string]string
+		wantAbsent     []string
+	}{
+		{
+			name: "propagates allowlisted labels only",
+			instanceLabels: map[string]string{
+				computev1alpha.WorkloadUIDLabel:            "workload-uid",
+				computev1alpha.WorkloadDeploymentUIDLabel:  "deployment-uid",
+				computev1alpha.WorkloadDeploymentNameLabel: "test-default-dfw",
+				computev1alpha.WorkloadNameLabel:           "test",
+				computev1alpha.PlacementNameLabel:          "default",
+				computev1alpha.CityCodeLabel:               "DFW",
+				computev1alpha.InstanceIndexLabel:          "0",
+				"tenant.example.com/not-propagated":        "true",
+				"compute.datumapis.com/not-in-allowlist":   "true",
+			},
+			wantLabels: map[string]string{
+				computev1alpha.WorkloadUIDLabel:            "workload-uid",
+				computev1alpha.WorkloadDeploymentUIDLabel:  "deployment-uid",
+				computev1alpha.WorkloadDeploymentNameLabel: "test-default-dfw",
+				computev1alpha.WorkloadNameLabel:           "test",
+				computev1alpha.PlacementNameLabel:          "default",
+				computev1alpha.CityCodeLabel:               "DFW",
+				computev1alpha.InstanceIndexLabel:          "0",
+			},
+			wantAbsent: []string{
+				"tenant.example.com/not-propagated",
+				"compute.datumapis.com/not-in-allowlist",
+			},
+		},
+		{
+			name: "removes stale allowlisted labels",
+			instanceLabels: map[string]string{
+				computev1alpha.WorkloadDeploymentUIDLabel: "new-deployment-uid",
+			},
+			existingLabels: map[string]string{
+				computev1alpha.WorkloadDeploymentUIDLabel:  "old-deployment-uid",
+				computev1alpha.WorkloadDeploymentNameLabel: "stale-name",
+				"unrelated.example.com/keep":               "true",
+			},
+			wantLabels: map[string]string{
+				computev1alpha.WorkloadDeploymentUIDLabel: "new-deployment-uid",
+				"unrelated.example.com/keep":              "true",
+			},
+			wantAbsent: []string{
+				computev1alpha.WorkloadDeploymentNameLabel,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			s := testScheme(t)
+			instance := instanceWithUID(types.UID(tt.name))
+			instance.Labels = tt.instanceLabels
+
+			objects := []client.Object{instance}
+			if tt.existingLabels != nil {
+				objects = append(objects, &core.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      instance.Name,
+						Namespace: instance.Namespace,
+						Labels:    tt.existingLabels,
+					},
+					Spec: core.PodSpec{Containers: []core.Container{{Name: "app", Image: "img"}}},
+				})
+			}
+
+			cl := fake.NewClientBuilder().
+				WithScheme(s).
+				WithObjects(objects...).
+				WithStatusSubresource(&computev1alpha.Instance{}).
+				Build()
+
+			r := &InstanceReconciler{Client: cl, Scheme: s}
+
+			if _, err := r.reconcileSandboxContainers(ctx, instance); err != nil {
+				t.Fatalf("reconcileSandboxContainers returned error: %v", err)
+			}
+
+			var pod core.Pod
+			if err := cl.Get(ctx, client.ObjectKey{Name: instance.Name, Namespace: instance.Namespace}, &pod); err != nil {
+				t.Fatalf("failed to get pod after reconcile: %v", err)
+			}
+
+			for key, want := range tt.wantLabels {
+				if got := pod.Labels[key]; got != want {
+					t.Errorf("pod label %q = %q, want %q", key, got, want)
+				}
+			}
+
+			for _, key := range tt.wantAbsent {
+				if _, ok := pod.Labels[key]; ok {
+					t.Errorf("pod label %q should be absent", key)
+				}
+			}
+
+			if got := pod.Labels["managed-by"]; got != "infra-provider-unikraft" {
+				t.Errorf("pod managed-by label = %q, want infra-provider-unikraft", got)
+			}
+			if got := pod.Labels["upstream.instance"]; got != instance.Name {
+				t.Errorf("pod upstream.instance label = %q, want %q", got, instance.Name)
+			}
+		})
+	}
+}
+
 // TestServiceCarriesControllerOwnerReference verifies that the Service created
 // for an Instance with container ports has a controller ownerReference to the
 // Instance. This allows Owns(&core.Service{}) to work and ensures GC handles
