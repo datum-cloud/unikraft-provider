@@ -99,6 +99,9 @@ spec:
             - name: host-run
               mountPath: /host/run
               readOnly: true
+            - name: run-netns
+              mountPath: /run/netns
+              mountPropagation: Bidirectional
             - name: remote-cni-token
               mountPath: /etc/ukp-remote-cni-secrets
               readOnly: true
@@ -125,6 +128,11 @@ spec:
           hostPath:
             path: /run
             type: Directory
+        # Node netns
+        - name: run-netns
+          hostPath:
+            path: /run/netns
+            type: DirectoryOrCreate
         - name: remote-cni-token
           secret:
             secretName: ukp-remote-cni-token
