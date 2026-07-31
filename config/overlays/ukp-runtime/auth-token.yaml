@@ -67,7 +67,7 @@ spec:
               "uuid": "3b2f013a-6c5e-4c6c-b993-60ed3b95b32c",
               "name": "root",
               "auth_token": "{{ printf "kraftlet:%s" .password | b64enc }}",
-              "permissions": ["developer"],
+              "permissions": ["developer", "net_manager"],
               "network_id": 0
             }
           ]
