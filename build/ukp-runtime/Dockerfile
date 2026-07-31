@@ -58,7 +58,7 @@ ARG UKP_OPENRESTY_VERSION=5:1.31.1.1-25+711fcc1-9stable+deb13
 ARG UKP_PLATFORM_VERSION=5:0.11.0-6+38f03f6-9stable+deb13
 
 # ukp-remote-cni: server-side CNI shim for kraftlet.
-ARG UKP_REMOTE_CNI_VERSION=6:0.1.0-19-g86d20f2-9stable+deb13
+ARG UKP_REMOTE_CNI_VERSION=5:0.1.0-12-g86a1337-9stable+deb13
 
 # Install the ukp packages from the vendor repo. The BuildKit secret provides
 # the apt basic-auth credentials at /etc/apt/auth.conf.d/unikraft.conf for the
