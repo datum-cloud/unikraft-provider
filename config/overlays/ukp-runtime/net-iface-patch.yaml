@@ -1,0 +1,28 @@
+# Real-cluster only: pin NET_IFACE to the bonded NIC (see ukp.conf's
+# NET_IFACE comment in config/dependencies/ukp-runtime). The kind e2e cluster
+# has no bond0, so this override lives here rather than in the base default.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ukp-runtime
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: netsetup
+          env:
+            - name: NET_IFACE
+              value: bond0
+      containers:
+        - name: ukpd
+          env:
+            - name: NET_IFACE
+              value: bond0
+        - name: coredns
+          env:
+            - name: NET_IFACE
+              value: bond0
+        - name: agent
+          env:
+            - name: NET_IFACE
+              value: bond0
