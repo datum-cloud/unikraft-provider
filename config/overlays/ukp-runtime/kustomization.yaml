@@ -15,6 +15,10 @@ patches:
     target:
       kind: DaemonSet
       name: ukp-runtime
+  - path: net-iface-patch.yaml
+    target:
+      kind: DaemonSet
+      name: ukp-runtime
 # ukp-remote-cni: independent DaemonSet, see config/components/ukp-remote-cni.
 components:
   - ../../components/ukp-remote-cni
