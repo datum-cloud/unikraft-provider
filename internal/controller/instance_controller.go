@@ -96,6 +96,13 @@ func (r *InstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, nil
 	}
 
+	// If instance.Status.Suspended is true, delete the backing Pod (which stops
+	// the process) but keep the Instance object, its finalizer, and the Service.
+	// On resume (Suspended=false), reconcileSandboxContainers will recreate the Pod.
+	if instance.Status.Suspended {
+		return r.reconcileSuspended(ctx, &instance)
+	}
+
 	// Ensure our finalizer is present before creating any backing resources, so
 	// that teardown is always routed through handleDeletion and ordered behind
 	// the Pod's removal. Adding it here (rather than on every Instance) means
@@ -180,6 +187,20 @@ func (r *InstanceReconciler) backingResourcesPending(ctx context.Context, instan
 	}
 
 	return false, nil
+}
+
+// reconcileSuspended deletes the backing Pod to stop the instance process without
+// deleting the Instance object itself, its finalizer, or the Service.
+func (r *InstanceReconciler) reconcileSuspended(ctx context.Context, instance *computev1alpha.Instance) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	pod := &core.Pod{ObjectMeta: metav1.ObjectMeta{Name: instance.Name, Namespace: instance.Namespace}}
+	if err := r.Delete(ctx, pod); err != nil && !apierrors.IsNotFound(err) {
+		return ctrl.Result{}, fmt.Errorf("failed to delete pod for suspended instance %s: %w", instance.Name, err)
+	}
+
+	logger.Info("instance suspended (pod deleted)", "name", instance.Name)
+	return ctrl.Result{}, nil
 }
 
 func (r *InstanceReconciler) reconcileSandboxContainers(

@@ -782,3 +782,78 @@ func TestHandleDeletion_PodGone_RemovesFinalizer(t *testing.T) {
 		t.Fatalf("unexpected error re-getting instance: %v", err)
 	}
 }
+
+// TestReconcile_SuspendedInstance_DeletesPod tests that a suspended instance
+// deletes the backing Pod but keeps the Instance and its finalizer intact.
+func TestReconcile_SuspendedInstance_DeletesPod(t *testing.T) {
+	ctx := context.Background()
+	s := testScheme(t)
+
+	instance := instanceWithUID("suspended-uid-1")
+	instance.Status.Suspended = true
+	// The finalizer would have been added by an earlier Reconcile before the
+	// instance was suspended.
+	instance.Finalizers = []string{instanceFinalizer}
+
+	pod := &core.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      instance.Name,
+			Namespace: instance.Namespace,
+		},
+	}
+
+	svc := &core.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      instance.Name,
+			Namespace: instance.Namespace,
+		},
+	}
+
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(instance, pod, svc).
+		WithStatusSubresource(&computev1alpha.Instance{}).
+		Build()
+
+	r := &InstanceReconciler{Client: cl, Scheme: s}
+
+	result, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(instance)})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should not requeue directly; the Pod deletion will trigger a requeue via the Owns watch
+	if result.Requeue || result.RequeueAfter != 0 {
+		t.Errorf("expected empty Result, got %+v", result)
+	}
+
+	// Instance should still exist with its finalizer
+	var gotInstance computev1alpha.Instance
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(instance), &gotInstance); err != nil {
+		t.Fatalf("expected instance to exist, got error: %v", err)
+	}
+	if !controllerutil.ContainsFinalizer(&gotInstance, instanceFinalizer) {
+		t.Errorf("expected finalizer %q to be preserved", instanceFinalizer)
+	}
+
+	// Pod should be deleted
+	var gotPod core.Pod
+	err = cl.Get(ctx, client.ObjectKeyFromObject(pod), &gotPod)
+	if err == nil {
+		if gotPod.DeletionTimestamp == nil {
+			t.Errorf("expected pod to be deleted")
+		}
+	} else if !apierrors.IsNotFound(err) {
+		t.Fatalf("unexpected error checking pod: %v", err)
+	}
+
+	// Service should be preserved (not deleted)
+	var gotSvc core.Service
+	err = cl.Get(ctx, client.ObjectKeyFromObject(svc), &gotSvc)
+	if err != nil {
+		t.Fatalf("expected service to be preserved, got error: %v", err)
+	}
+	if gotSvc.DeletionTimestamp != nil {
+		t.Errorf("expected service to be preserved, but it has a deletionTimestamp")
+	}
+}
