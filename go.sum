@@ -203,6 +203,7 @@ go.miloapis.com/milo v0.28.1/go.mod h1:p9O2kk194mvoL8rhqjwb+LWB+GIyY4vQqiTowwibV
 go.miloapis.com/milo v0.28.3 h1:mcwZDIkb3W7+6rDMIOPvoL7mG5ACIo4aC6jm5sV3hTs=
 go.miloapis.com/milo v0.28.3/go.mod h1:p9O2kk194mvoL8rhqjwb+LWB+GIyY4vQqiTowwibVWo=
 go.miloapis.com/milo v0.30.2/go.mod h1:GKK3afjCwshfZfvhjNe1wp/H45z4m7x5oG/8xbSgU1M=
+go.miloapis.com/milo v0.32.1/go.mod h1:GKK3afjCwshfZfvhjNe1wp/H45z4m7x5oG/8xbSgU1M=
 go.opentelemetry.io/auto/sdk v1.1.0 h1:cH53jehLUN6UFLY71z+NDOiNJqDdPRaXzTel0sJySYA=
 go.opentelemetry.io/auto/sdk v1.1.0/go.mod h1:3wSPjt5PWp2RhlCcmmOial7AvC4DQqZb7a7wCow3W8A=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=

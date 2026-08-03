@@ -9,7 +9,7 @@ require (
 	// Repin to a stable go.datum.net/compute tag once the #107 chain reaches compute main.
 	go.datum.net/compute v0.8.0-dev.7
 	go.datum.net/network-services-operator v0.23.6
-	go.miloapis.com/milo v0.30.2
+	go.miloapis.com/milo v0.32.1
 	golang.org/x/sync v0.22.0
 	k8s.io/api v0.36.2
 	k8s.io/apimachinery v0.36.2
