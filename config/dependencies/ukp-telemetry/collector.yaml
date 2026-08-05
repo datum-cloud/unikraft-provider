@@ -1,12 +1,13 @@
-# Unified node telemetry agent. A single stock OpenTelemetry Collector (via the
-# OpenTelemetry Operator) collects ALL runtime + guest telemetry on each compute
-# node — no custom collector, no Vector:
+# Unified node telemetry agent. A stock OpenTelemetry Collector (via the
+# OpenTelemetry Operator) collects runtime + guest telemetry on each compute
+# node, with small sidecars for node-local identity surfacing:
 #   logs    — guest app logs (vm.log). The stock k8sattributes processor stamps
 #             the Datum identity of the owning compute Instance, keyed on the
 #             guest IP; a tiny busybox sidecar just surfaces that IP onto the
 #             log path (it holds no Kubernetes logic).
 #   metrics — ukpd's Prometheus endpoints (/metrics/controller, /metrics/host,
-#             /metrics/agent), scraped directly.
+#             /metrics/agent), plus cAdvisor-shaped pod resource metrics from
+#             the local ukp-resource-metrics-exporter sidecar.
 #
 # Requires the OpenTelemetry Operator (OpenTelemetryCollector CRD). Deployed to
 # compute nodes only. See README.md.
@@ -22,6 +23,11 @@ spec:
   mode: daemonset
   serviceAccount: ukp-telemetry
   image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.144.0
+  # ukpd's control API binds host loopback only. Host networking lets the
+  # resource-metrics sidecar query 127.0.0.1:45232 and lets the collector scrape
+  # the sidecar on 127.0.0.1:9102.
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
   # vm.log is root:root 0640; a node log agent runs as root to read it.
   securityContext:
     runAsUser: 0
@@ -103,6 +109,28 @@ spec:
         - name: surfacer-script
           mountPath: /scripts
           readOnly: true
+    # Produces the cAdvisor-compatible pod resource metrics consumed by the
+    # Resource Metrics API path. It joins ukpd instance metrics to provider Pods
+    # by guest IP (ukpd instance private IP / vmm.json == pod.status.podIP).
+    - name: resource-metrics-exporter
+      image: ghcr.io/datum-cloud/unikraft-provider:latest
+      command: ["/ukp-resource-metrics-exporter"]
+      args:
+        - --listen-address=127.0.0.1:9102
+        - --ukpd-url=http://127.0.0.1:45232
+        - --platform-dir=/var/lib/ukp/data/platform
+        - --runtime-node-name=$(K8S_NODE_NAME)
+      securityContext:
+        runAsUser: 0
+      env:
+        - name: K8S_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+      volumeMounts:
+        - name: ukp-data
+          mountPath: /var/lib/ukp
+          readOnly: true
   config:
     extensions:
       file_storage:
@@ -154,6 +182,11 @@ spec:
                 credentials: ${env:UKP_METRICS_TOKEN}
               static_configs:
                 - targets: ['${env:HOST_IP}:45233']
+            - job_name: ukp-resource-metrics
+              scrape_interval: 15s
+              metrics_path: /metrics
+              static_configs:
+                - targets: ['127.0.0.1:9102']
     processors:
       # Enriches guest logs with the Datum identity of the owning compute
       # Instance, keyed on the guest IP (== the provider Pod's podIP). Pod

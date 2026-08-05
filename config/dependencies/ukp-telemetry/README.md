@@ -1,13 +1,15 @@
 # ukp-telemetry — node telemetry agent
 
-A single **stock** OpenTelemetry Collector (via the OpenTelemetry Operator) that
-collects all runtime + guest telemetry on each compute node and ships it
-onward. No custom collector build, no Vector — one agent, one config.
+A stock OpenTelemetry Collector (via the OpenTelemetry Operator) plus small
+node-local sidecars that collect all runtime + guest telemetry on each compute
+node and ship it onward. No custom collector build, no Vector — one agent pod,
+one config.
 
 | Signal | Source | Receiver | Destination |
 | --- | --- | --- | --- |
 | Guest app logs | `vm.log` per instance | `filelog` | OTLP → edge logs collector → ClickHouse |
 | Runtime + host metrics | ukpd `:45233` (`/metrics/{controller,host,agent}`) | `prometheus` | remote-write → VictoriaMetrics |
+| Pod resource metrics | `ukp-resource-metrics-exporter` sidecar | `prometheus` | remote-write → VictoriaMetrics |
 
 ## Logs — Datum-enriched
 
@@ -44,6 +46,23 @@ node_exporter, and agent metrics — and remote-writes them to VictoriaMetrics.
 This replaces annotation-based (`prometheus.io/scrape`) discovery, so those
 annotations are intentionally absent from the runtime DaemonSet.
 
+The same receiver also scrapes the `ukp-resource-metrics-exporter` sidecar on
+`127.0.0.1:9102`. The exporter queries the local ukpd control API
+(`127.0.0.1:45232`), joins instance metrics to provider Pods by guest IP
+(`ukpd private_ip` / `vmm.json` == `pod.status.podIP`), and emits the
+cAdvisor-compatible resource metrics expected by the HPA Resource Metrics path:
+
+```text
+datum_compute_instance_cpu_usage_seconds_total{namespace,pod,container,node,...}
+datum_compute_instance_memory_working_set_bytes{namespace,pod,container,node,...}
+```
+
+The exporter reads the ukpd bearer token from `UKPD_TOKEN`, `KRAFTLET_UKC_TOKEN`,
+`--ukpd-token-file`, or, by default, the node-local
+`/var/lib/ukp/data/users.json` mounted read-only from the runtime data volume.
+The collector pod runs with `hostNetwork: true` because ukpd's control API is
+bound to host loopback.
+
 ## Requirements
 
 - **OpenTelemetry Operator** in the cluster (provides the `OpenTelemetryCollector`
@@ -63,6 +82,9 @@ annotations are intentionally absent from the runtime DaemonSet.
 - `UKP_METRICS_TOKEN` — bearer token for ukpd's metrics API (same value as the
   runtime's `UKP_PROMETHEUS_API_TOKEN`); provide via the optional
   `ukp-metrics-token` Secret (`token` key).
+- `ghcr.io/datum-cloud/unikraft-provider:latest` — sidecar image containing
+  `/ukp-resource-metrics-exporter`; override/stamp this image the same way as
+  the manager image in real deployments.
 - The project comes from the Namespace label `resourcemanager.miloapis.com/project-name`,
   configured on the `k8sattributes` processor in `collector.yaml` — change the
   `key:` there if your environment uses a different label.
@@ -73,3 +95,19 @@ The log path was validated end to end on a full stack (compute control plane +
 provider + Kraftlet + runtime): a real `Instance`'s app stdout emerged from the
 stock collector carrying `datum.project.name` / `datum.instance.namespace` /
 `datum.instance.name` / `ukp.instance.uuid`.
+
+For HPA resource metrics, validate the sidecar locally first:
+
+```sh
+kubectl exec -n ukp-system <ukp-telemetry-collector-pod> -c resource-metrics-exporter -- \
+  /ukp-resource-metrics-exporter --help
+kubectl port-forward -n ukp-system <ukp-telemetry-collector-pod> 9102:9102
+curl http://127.0.0.1:9102/metrics
+```
+
+Expected samples for Running kraftlet-backed Pods:
+
+```text
+datum_compute_instance_cpu_usage_seconds_total{namespace="...",pod="...",container="app",node="kraftlet-...",...}
+datum_compute_instance_memory_working_set_bytes{namespace="...",pod="...",container="app",node="kraftlet-...",...}
+```
