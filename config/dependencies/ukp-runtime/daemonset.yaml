@@ -102,6 +102,12 @@ spec:
             - name: ukp-secrets
               mountPath: /etc/ukp-secrets
               readOnly: true
+            - name: host-machine-id
+              mountPath: /etc/machine-id
+              readOnly: true
+            - name: host-machine-id
+              mountPath: /va/lib/dbus/machine-id
+              readOnly: true
         # Guests are configured (via ukpd boot args) with the host-side TAP
         # gateway IP as their only DNS resolver; coredns answers there for
         # both .internal names (from ukpd) and upstream forwarding. Without
@@ -150,6 +156,12 @@ spec:
             - name: ukp-secrets
               mountPath: /etc/ukp-secrets
               readOnly: true
+            - name: host-machine-id
+              mountPath: /etc/machine-id
+              readOnly: true
+            - name: host-machine-id
+              mountPath: /va/lib/dbus/machine-id
+              readOnly: true
       volumes:
         # Persistent runtime data lives on the node's XFS-quota UserVolume,
         # which Talos mounts at /var/mnt/ukp (the default /var is not a
@@ -181,3 +193,7 @@ spec:
           secret:
             secretName: ukp-runtime-credentials
             optional: true
+        - name: host-machine-id
+          hostPath:
+            path: /etc/machine-id
+            type: File
