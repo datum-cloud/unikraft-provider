@@ -15,9 +15,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-const (
-	defaultContainerName = "instance"
-)
+const defaultContainerName = "instance"
 
 var bootIPPattern = regexp.MustCompile(`netdev\.ip=[^0-9]*([0-9][0-9.]*)`)
 

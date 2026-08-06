@@ -11,7 +11,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"go.datum.net/unikraft-provider/internal/ukpmetrics"
+	"go.datum.net/unikraft-provider/cmd/ukp-resource-metrics-exporter/internal/ukpmetrics"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
