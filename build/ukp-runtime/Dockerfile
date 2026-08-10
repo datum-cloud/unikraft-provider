@@ -49,16 +49,16 @@ COPY unikraft-cloud.sources /etc/apt/sources.list.d/unikraft-cloud.sources
 # repo's rolling "stable" cannot silently drift our builds (which previously
 # caused non-deterministic e2e failures). Bump these together when adopting a
 # new vendor release; all are trixie/stable candidates in the vendor repo.
-ARG UKP_AGENT_VERSION=5:0.2.4-9stable+deb13
-ARG UKP_CONFIG_VERSION=5:1.4.14-26cf82c-9stable+deb13
-ARG UKP_COREDNS_VERSION=5:1.14.4-13+641bea1-9stable+deb13
-ARG UKP_FIRECRACKER_VERSION=5:1.16.0-33+53b4d62-9stable+deb13
-ARG UKP_NETWORKING_VERSION=5:1.5.6-f842be3-9stable+deb13
-ARG UKP_OPENRESTY_VERSION=5:1.31.1.1-25+711fcc1-9stable+deb13
-ARG UKP_PLATFORM_VERSION=5:0.11.0-6+38f03f6-9stable+deb13
+ARG UKP_AGENT_VERSION=6:0.2.4-51-g46fc95e-9stable+deb13
+ARG UKP_CONFIG_VERSION=6:1.4.16-eb909a6-9stable+deb13
+ARG UKP_COREDNS_VERSION=6:1.14.6-14+26b0d9f-9stable+deb13
+ARG UKP_FIRECRACKER_VERSION=6:1.16.1-34+a48de2e-9stable+deb13
+ARG UKP_NETWORKING_VERSION=6:1.5.7-7a96553-9stable+deb13
+ARG UKP_OPENRESTY_VERSION=6:1.31.1.1-31+7dcf893-9stable+deb13
+ARG UKP_PLATFORM_VERSION=6:0.12.0-5+e6abf75-9stable+deb13
 
 # ukp-remote-cni: server-side CNI shim for kraftlet.
-ARG UKP_REMOTE_CNI_VERSION=6:0.1.0-19-g86d20f2-9stable+deb13
+ARG UKP_REMOTE_CNI_VERSION=6:0.1.1-17+7ea4e16-9stable+deb13
 
 # Install the ukp packages from the vendor repo. The BuildKit secret provides
 # the apt basic-auth credentials at /etc/apt/auth.conf.d/unikraft.conf for the
