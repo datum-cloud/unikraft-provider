@@ -1,0 +1,53 @@
+# Real-cluster only: activate this node against the Unikraft control plane so
+# the runtime holds a node license certificate.
+#
+# This initContainer runs activate-node.sh (mounted from the
+# ukp-activate-script ConfigMap, hash-suffixed so script changes roll the
+# DaemonSet) using the activation secret from the `ukp-runtime-credentials`
+# Secret. Ordering against the other initContainers is immaterial — it only
+# writes the PKI directory, and like every initContainer it completes before
+# ukpd and the agent start.
+#
+# The host machine-id mount is load-bearing, not incidental: the CSR's
+# machine_id comes from /etc/machine-id and ends up as the certificate's OU,
+# which ukpd compares against the host's own machine-id before accepting the
+# license. Activating against the image's baked machine-id would yield a
+# certificate ukpd rejects.
+#
+# Failure semantics (see activate-node.sh): best-effort. ukpd runs unlicensed,
+# so a node that cannot activate starts anyway rather than holding its runtime
+# down.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ukp-runtime
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: activate-node
+          image: ghcr.io/datum-cloud/ukp-runtime:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "/etc/ukp-activate/activate-node.sh"]
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: ukp-data
+              mountPath: /var/lib/ukp
+            - name: ukp-conf
+              mountPath: /etc/ukp.conf
+              subPath: ukp.conf
+              readOnly: true
+            - name: ukp-secrets
+              mountPath: /etc/ukp-secrets
+              readOnly: true
+            - name: host-machine-id
+              mountPath: /etc/machine-id
+              readOnly: true
+            - name: ukp-activate
+              mountPath: /etc/ukp-activate
+              readOnly: true
+      volumes:
+        - name: ukp-activate
+          configMap:
+            name: ukp-activate-script

@@ -4,6 +4,11 @@
 # applies the base directly (config/dependencies/ukp-runtime), which has no ESO
 # dependency. The generated token (kraftlet-ukc-token) is read in this same
 # namespace by the co-located kraftlet DaemonSet (config/overlays/kraftlet).
+#
+# It also activates the node for licensing, using the activation secret from the
+# cluster-provided `ukp-runtime-credentials` Secret (datum-cloud/infra wires
+# that from GCP Secret Manager). Real clusters only, for the same reason: the
+# kind e2e has no such secret and no route to the vendor control plane.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: unikraft-system
@@ -19,12 +24,19 @@ patches:
     target:
       kind: DaemonSet
       name: ukp-runtime
+  - path: activate-node-patch.yaml
+    target:
+      kind: DaemonSet
+      name: ukp-runtime
 # ukp-remote-cni: independent DaemonSet, see config/components/ukp-remote-cni.
 components:
   - ../../components/ukp-remote-cni
-# The seed script, injected as a ConfigMap (hash-suffixed: script changes
-# roll the DaemonSet).
+# The initContainer scripts, injected as ConfigMaps (hash-suffixed: script
+# changes roll the DaemonSet).
 configMapGenerator:
   - name: ukp-seed-script
     files:
       - seed-users.sh
+  - name: ukp-activate-script
+    files:
+      - activate-node.sh
