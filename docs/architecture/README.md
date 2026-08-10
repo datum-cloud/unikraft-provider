@@ -43,10 +43,10 @@ bundle:
   which add what only a real cluster can provide — credentials, generated secrets,
   node-specific configuration, and node activation.
 
-[`datum-cloud/infra`](https://github.com/datum-cloud/infra) deploys those
-overlays with Flux and owns the cluster-side inputs they consume, such as secrets
-synced from GCP Secret Manager. The split keeps runtime manifests deployable from
-the published bundle while cluster secrets stay with the cluster.
+Whatever deploys a cluster consumes that bundle and owns the cluster-side inputs
+the overlays expect, credentials in particular. The split keeps runtime manifests
+deployable from the published bundle into any environment, while cluster
+credentials stay with the cluster.
 
 ## Documents
 

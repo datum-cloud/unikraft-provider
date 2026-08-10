@@ -86,16 +86,22 @@ assignment in that file therefore becomes an environment variable in the
 launcher's environment, `NODE_ACTIVATION_TOKEN` included. No token is passed on a
 command line, set as a container env var, or stored in this repository.
 
-Populating that Secret is [`datum-cloud/infra`](https://github.com/datum-cloud/infra)'s
-job: it syncs the token from GCP Secret Manager with an `ExternalSecret`. This
-repository consumes the Secret and treats its absence as a fatal configuration
-error. The division of ownership is deliberate — cluster secrets live with the
-cluster, and the runtime manifests stay deployable from the published bundle.
+Populating that Secret is a **deployment-time concern**, outside these manifests.
+The runtime consumes the Secret and treats its absence as a fatal configuration
+error; how the token gets into a cluster is up to whatever deploys the runtime
+there — a secret manager sync, a sealed secret, or a manually created Secret in a
+development cluster. The only contract is the one above: a Secret named
+`ukp-runtime-credentials` whose `ukp.secrets.conf` key contains a
+`NODE_ACTIVATION_TOKEN="…"` shell assignment.
+
+Keeping it out of these manifests is deliberate. Cluster credentials belong to the
+cluster, and the runtime configuration stays deployable from the published bundle
+into any environment.
 
 > [!NOTE]
 >
 > Because activation fails closed, the Secret must exist in a cluster **before**
-> this runtime rolls to it. A cluster that receives the runtime without the
+> the runtime is deployed there. A cluster that receives the runtime without the
 > token holds every node's runtime in `Init:Error`.
 
 ## Machine ID Binding
@@ -132,9 +138,9 @@ into service, not a follow-up.
 
 | Symptom | Cause | Resolution |
 |---------|-------|------------|
-| `401 … Invalid node activation token` | The token is wrong or was rotated | Update the token in GCP Secret Manager; ESO re-syncs the Secret |
+| `401 … Invalid node activation token` | The token is wrong or was rotated | Update the token at its source so the Secret re-syncs |
 | `400 … machine_id does not match the expected value` | Unikraft has not registered this node's machine ID, typically after a repave | Ask Unikraft to register the node's current `/etc/machine-id` |
-| `activate-node` in `Init:Error`, `FATAL: no NODE_ACTIVATION_TOKEN` | The `ukp-runtime-credentials` Secret is missing or lacks the token | Confirm the `ExternalSecret` in `datum-cloud/infra` reconciled in this cluster |
+| `activate-node` in `Init:Error`, `FATAL: no NODE_ACTIVATION_TOKEN` | The `ukp-runtime-credentials` Secret is missing or lacks the token | Confirm the cluster's deployment tooling created the Secret with the expected key |
 | `ukpd` logs `License machine ID mismatch` | The certificate was issued for a different machine ID than the host's | Confirm the host machine-id mounts are present, then re-activate |
 
 ## Learn More
