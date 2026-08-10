@@ -14,9 +14,10 @@
 # license. Activating against the image's baked machine-id would yield a
 # certificate ukpd rejects.
 #
-# Failure semantics (see activate-node.sh): best-effort. ukpd runs unlicensed,
-# so a node that cannot activate starts anyway rather than holding its runtime
-# down.
+# Failure semantics (see activate-node.sh): fail closed. A node that cannot
+# obtain a license does not start its runtime — the initContainer fails and the
+# pod retries with kubelet backoff — so an unlicensed node is never quietly
+# serving guests.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:

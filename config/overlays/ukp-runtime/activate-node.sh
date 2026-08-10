@@ -16,13 +16,16 @@
 # (/etc/ukp-secrets/ukp.secrets.conf) and exports NODE_ACTIVATION_TOKEN — the
 # variable `license activate` reads.
 #
-# Best-effort by design: ukpd starts and runs guests unlicensed (it just logs
-# "No license available from host agent"), so a node that cannot activate must
-# not have its runtime held down. Every failure path logs and exits 0.
+# A node that cannot obtain a license does not start its runtime: this script
+# exits non-zero, the initContainer fails, and the DaemonSet pod retries with
+# kubelet backoff until activation succeeds. Retrying in-script first keeps a
+# transient control-plane failure from tearing the pod down.
 set -u
 
 agent=/usr/lib/ukp/agent/launcher/agent
 secrets=/etc/ukp-secrets/ukp.secrets.conf
+attempts=5
+sleep_between=10
 
 # Nothing to do while the cached certificate is valid; the agent owns renewal.
 not_after="$("$agent" license status 2>/dev/null | sed -n 's/^not_after: "\(.*\)"$/\1/p')"
@@ -35,14 +38,23 @@ if [ -n "$not_after" ]; then
   echo "activate-node: cached license expired at $not_after; re-activating"
 fi
 
+# No secret is a configuration error, not a reason to run unlicensed.
 if ! grep -q '^NODE_ACTIVATION_TOKEN=' "$secrets" 2>/dev/null; then
-  echo "activate-node: no NODE_ACTIVATION_TOKEN in $secrets; starting unlicensed"
-  exit 0
+  echo "activate-node: FATAL: no NODE_ACTIVATION_TOKEN in $secrets" >&2
+  exit 1
 fi
 
-if "$agent" license activate; then
-  "$agent" license status
-else
-  echo "activate-node: WARNING: activation failed; starting unlicensed" >&2
-fi
-exit 0
+attempt=1
+while :; do
+  if "$agent" license activate; then
+    "$agent" license status
+    exit 0
+  fi
+  if [ "$attempt" -ge "$attempts" ]; then
+    echo "activate-node: FATAL: activation failed after $attempts attempts" >&2
+    exit 1
+  fi
+  echo "activate-node: activation attempt $attempt failed; retrying in ${sleep_between}s" >&2
+  attempt=$((attempt + 1))
+  sleep "$sleep_between"
+done
