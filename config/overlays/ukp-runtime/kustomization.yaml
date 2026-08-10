@@ -5,10 +5,9 @@
 # dependency. The generated token (kraftlet-ukc-token) is read in this same
 # namespace by the co-located kraftlet DaemonSet (config/overlays/kraftlet).
 #
-# It also activates the node for licensing, using the activation secret from the
-# cluster-provided `ukp-runtime-credentials` Secret (datum-cloud/infra wires
-# that from GCP Secret Manager). Real clusters only, for the same reason: the
-# kind e2e has no such secret and no route to the vendor control plane.
+# It also activates the node for licensing (docs/architecture/node-licensing.md),
+# which is real-cluster only for the same reason: the kind e2e has no activation
+# token and no route to the vendor control plane.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: unikraft-system

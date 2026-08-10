@@ -1,25 +1,12 @@
 #!/bin/sh
-# Obtain this node's ukp license certificate before the runtime starts, as the
-# activate-node initContainer (this file is mounted from the
-# ukp-activate-script ConfigMap).
+# Obtain this node's ukp license certificate before the runtime starts; see
+# docs/architecture/node-licensing.md.
 #
-# `agent license activate` posts a CSR — whose machine_id is read from
-# /etc/machine-id, mounted from the host — to the Unikraft control plane and
-# caches the returned certificate in AGENT_PKI_PATH (/var/lib/ukp/pki, on the
-# node's persistent data volume). The running agent then serves it to ukpd over
-# the HAC socket and renews it on its own (AGENT_LICENSE_* in ukp.conf), so a
-# node needs activating once — or again only if its certificate expired while
-# the node was down past the renewal window.
+# The token is not passed here: the launcher sources /etc/ukp.conf with `set -a`,
+# which pulls in the credentials overlay and exports NODE_ACTIVATION_TOKEN.
 #
-# The activation secret is not passed here: the agent launcher sources
-# /etc/ukp.conf with `set -a`, which pulls in the credentials overlay
-# (/etc/ukp-secrets/ukp.secrets.conf) and exports NODE_ACTIVATION_TOKEN — the
-# variable `license activate` reads.
-#
-# A node that cannot obtain a license does not start its runtime: this script
-# exits non-zero, the initContainer fails, and the DaemonSet pod retries with
-# kubelet backoff until activation succeeds. Retrying in-script first keeps a
-# transient control-plane failure from tearing the pod down.
+# Fail closed — a node that cannot obtain a license must not serve guests — but
+# retry first, so a control-plane blip does not tear the runtime down.
 set -u
 
 agent=/usr/lib/ukp/agent/launcher/agent
