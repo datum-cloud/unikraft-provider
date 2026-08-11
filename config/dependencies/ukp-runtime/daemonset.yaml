@@ -106,7 +106,7 @@ spec:
               mountPath: /etc/machine-id
               readOnly: true
             - name: host-machine-id
-              mountPath: /va/lib/dbus/machine-id
+              mountPath: /var/lib/dbus/machine-id
               readOnly: true
         # Guests are configured (via ukpd boot args) with the host-side TAP
         # gateway IP as their only DNS resolver; coredns answers there for
@@ -160,7 +160,7 @@ spec:
               mountPath: /etc/machine-id
               readOnly: true
             - name: host-machine-id
-              mountPath: /va/lib/dbus/machine-id
+              mountPath: /var/lib/dbus/machine-id
               readOnly: true
       volumes:
         # Persistent runtime data lives on the node's XFS-quota UserVolume,

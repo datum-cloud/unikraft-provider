@@ -1,0 +1,43 @@
+# Real-cluster only: activate this node against the Unikraft control plane so the
+# runtime holds a node license certificate. See
+# docs/architecture/node-licensing.md; the script is activate-node.sh.
+#
+# Ordering against the other initContainers is immaterial — this only writes the
+# PKI directory, and completes before ukpd and the agent start either way.
+#
+# The host machine-id mount is load-bearing: it is the identity in the CSR, and
+# ukpd rejects a certificate whose machine ID is not the host's own.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ukp-runtime
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: activate-node
+          image: ghcr.io/datum-cloud/ukp-runtime:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "/etc/ukp-activate/activate-node.sh"]
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: ukp-data
+              mountPath: /var/lib/ukp
+            - name: ukp-conf
+              mountPath: /etc/ukp.conf
+              subPath: ukp.conf
+              readOnly: true
+            - name: ukp-secrets
+              mountPath: /etc/ukp-secrets
+              readOnly: true
+            - name: host-machine-id
+              mountPath: /etc/machine-id
+              readOnly: true
+            - name: ukp-activate
+              mountPath: /etc/ukp-activate
+              readOnly: true
+      volumes:
+        - name: ukp-activate
+          configMap:
+            name: ukp-activate-script
