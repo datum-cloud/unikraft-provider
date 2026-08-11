@@ -13,6 +13,11 @@ spec:
           env:
             - name: NET_IFACE
               value: bond0
+        # Activation builds a CSR from this interface's addresses; empty is fatal.
+        - name: activate-node
+          env:
+            - name: NET_IFACE
+              value: bond0
       containers:
         - name: ukpd
           env:

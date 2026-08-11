@@ -19,11 +19,12 @@ patches:
     target:
       kind: DaemonSet
       name: ukp-runtime
-  - path: net-iface-patch.yaml
+  # Before net-iface-patch.yaml, which pins NET_IFACE on the container this adds.
+  - path: activate-node-patch.yaml
     target:
       kind: DaemonSet
       name: ukp-runtime
-  - path: activate-node-patch.yaml
+  - path: net-iface-patch.yaml
     target:
       kind: DaemonSet
       name: ukp-runtime
