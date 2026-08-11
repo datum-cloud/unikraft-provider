@@ -8,6 +8,7 @@ onward. No custom collector build, no Vector — one agent, one config.
 | --- | --- | --- | --- |
 | Guest app logs | `vm.log` per instance | `filelog` | OTLP → edge logs collector → ClickHouse |
 | Runtime + host metrics | ukpd `:45233` (`/metrics/{controller,host,agent}`) | `prometheus` | remote-write → VictoriaMetrics |
+| Instance resource metrics | ukpd `:45232` (`/v1/instances/metrics`) | `prometheus` | remote-write → VictoriaMetrics |
 
 ## Logs — Datum-enriched
 
@@ -38,9 +39,32 @@ need to put the guest IP on the log record directly — an upstream ask.)
 
 ## Metrics
 
-The `prometheus` receiver scrapes ukpd's three metrics paths on the node
-(`${HOST_IP}:45233`) — controller counters + per-user gauges, the embedded
-node_exporter, and agent metrics — and remote-writes them to VictoriaMetrics.
+The `prometheus` receiver scrapes ukpd's metrics API on `${HOST_IP}:45233` —
+controller counters + per-user gauges, the embedded node_exporter, and agent
+metrics — and remote-writes them to VictoriaMetrics. It also scrapes ukpd's
+platform API on `127.0.0.1:45232` at `/v1/instances/metrics` for per-instance
+metrics such as `instance_cpu_time_s` and `instance_rss_bytes`. The platform API
+scrape uses a ukpd user token (`UKP_API_TOKEN`), separate from the metrics API
+token used for `:45233`.
+
+For HPA, record Pod-shaped metrics downstream by joining ukpd `instance_uuid` to
+Kraftlet's Pod `status.containerStatuses[].containerID`, exposed by
+kube-state-metrics as `kube_pod_container_info{container_id=...}`:
+
+```promql
+label_replace(
+  instance_cpu_time_s,
+  "container_id", "$1",
+  "instance_uuid", "(.*)"
+)
+* on(container_id) group_left(namespace, pod, container)
+kube_pod_container_info
+```
+
+Record the result as `datum_compute_instance_cpu_usage_seconds_total`; apply the
+same join to `instance_rss_bytes` and record it as
+`datum_compute_instance_memory_working_set_bytes`.
+
 This replaces annotation-based (`prometheus.io/scrape`) discovery, so those
 annotations are intentionally absent from the runtime DaemonSet.
 
@@ -63,6 +87,8 @@ annotations are intentionally absent from the runtime DaemonSet.
 - `UKP_METRICS_TOKEN` — bearer token for ukpd's metrics API (same value as the
   runtime's `UKP_PROMETHEUS_API_TOKEN`); provide via the optional
   `ukp-metrics-token` Secret (`token` key).
+- `UKP_API_TOKEN` — ukpd platform API user token for `/v1/instances/metrics`;
+  provide via the optional `ukp-api-token` Secret (`token` key).
 - The project comes from the Namespace label `resourcemanager.miloapis.com/project-name`,
   configured on the `k8sattributes` processor in `collector.yaml` — change the
   `key:` there if your environment uses a different label.
