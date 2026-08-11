@@ -52,6 +52,13 @@ one local command and no control-plane call. A node re-activates only when it ha
 no cached certificate, or when its certificate lapsed while the node was down
 past the renewal window.
 
+Activation needs the node's **network interface** pinned. The certificate signing
+request carries the interface's IP addresses, and the agent does not fall back to
+auto-detection — an empty `NET_IFACE` fails the request outright. The real-cluster
+overlay therefore pins `NET_IFACE` on the activation step exactly as it does on the
+runtime containers, in
+[`net-iface-patch.yaml`](../../config/overlays/ukp-runtime/net-iface-patch.yaml).
+
 The step **fails closed**. A node that cannot obtain a license does not start its
 runtime: the initContainer exits non-zero and the pod retries under kubelet
 backoff, so a node never quietly serves guests unlicensed. Because that turns a
