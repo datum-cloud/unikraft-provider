@@ -7,8 +7,8 @@ onward. No custom collector build, no Vector — one agent, one config.
 | Signal | Source | Receiver | Destination |
 | --- | --- | --- | --- |
 | Guest app logs | `vm.log` per instance | `filelog` | OTLP → edge logs collector → ClickHouse |
-| Runtime + host metrics | ukpd `:45233` (`/metrics/{controller,host,agent}`) | `prometheus` | remote-write → VictoriaMetrics |
-| Instance resource metrics | ukpd `:45232` (`/v1/instances/metrics`) | `prometheus` | remote-write → VictoriaMetrics |
+| Runtime + host metrics | ukpd `:45233` (`/metrics/{controller,host,agent}`) | `prometheus` | remote-write → edge + hub VictoriaMetrics |
+| Instance resource metrics | ukpd `:45232` (`/v1/instances/metrics`) | `prometheus` | remote-write → edge + hub VictoriaMetrics |
 
 ## Logs — Datum-enriched
 
@@ -41,11 +41,11 @@ need to put the guest IP on the log record directly — an upstream ask.)
 
 The `prometheus` receiver scrapes ukpd's metrics API on `${HOST_IP}:45233` —
 controller counters + per-user gauges, the embedded node_exporter, and agent
-metrics — and remote-writes them to VictoriaMetrics. It also scrapes ukpd's
-platform API on `127.0.0.1:45232` at `/v1/instances/metrics` for per-instance
-metrics such as `instance_cpu_time_s` and `instance_rss_bytes`. The platform API
-scrape uses a ukpd user token (`UKP_API_TOKEN`), separate from the metrics API
-token used for `:45233`.
+metrics — and remote-writes them to edge-local and hub VictoriaMetrics. It also
+scrapes ukpd's platform API on `127.0.0.1:45232` at `/v1/instances/metrics` for
+per-instance metrics such as `instance_cpu_time_s` and `instance_rss_bytes`. The
+platform API scrape uses a ukpd user token (`UKP_API_TOKEN`), separate from the
+metrics API token used for `:45233`.
 
 For HPA, record Pod-shaped metrics downstream by joining ukpd `instance_uuid` to
 Kraftlet's Pod `status.containerStatuses[].containerID`, exposed by
@@ -81,9 +81,13 @@ annotations are intentionally absent from the runtime DaemonSet.
 
 - `LOGS_OTLP_ENDPOINT` — logs destination; defaults to the `edge-logs-system`
   collector. Add TLS/auth via an overlay for cross-cluster paths.
-- `METRICS_RW_ENDPOINT` — Prometheus remote-write destination (VictoriaMetrics).
-  Set to your environment's `vminsert`/remote-write URL. (If Milo grows an OTLP
-  metrics ingest, swap the `prometheusremotewrite` exporter for `otlp`.)
+- `LOCAL_METRICS_RW_ENDPOINT` — edge-local VictoriaMetrics remote-write
+  destination. This is where edge `VMAlert` records the Pod-shaped
+  `datum_compute_instance_*` metrics consumed by the compute Prometheus Adapter.
+- `METRICS_RW_ENDPOINT` — hub Prometheus remote-write destination
+  (VictoriaMetrics). Set to your environment's `vminsert`/remote-write URL. (If
+  Milo grows an OTLP metrics ingest, swap the `prometheusremotewrite` exporter
+  for `otlp`.)
 - `UKP_METRICS_TOKEN` — bearer token for ukpd's metrics API (same value as the
   runtime's `UKP_PROMETHEUS_API_TOKEN`); provide via the optional
   `ukp-metrics-token` Secret (`token` key).

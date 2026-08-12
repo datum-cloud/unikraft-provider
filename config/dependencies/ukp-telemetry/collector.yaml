@@ -62,9 +62,12 @@ spec:
           key: token
           optional: true
     # Destinations. Logs -> OTLP (edge logs collector -> ClickHouse); metrics ->
-    # Prometheus remote-write (VictoriaMetrics). Override per environment.
+    # local edge VictoriaMetrics for HPA and hub VictoriaMetrics for observability.
+    # Override per environment.
     - name: LOGS_OTLP_ENDPOINT
       value: edge-logs-collector-collector.edge-logs-system.svc.cluster.local:4317
+    - name: LOCAL_METRICS_RW_ENDPOINT
+      value: http://vmsingle-edge-metrics.telemetry-system.svc.cluster.local:8429/api/v1/write
     - name: METRICS_RW_ENDPOINT
       value: http://vminsert.datum-cloud-telemetry-system.svc.cluster.local:8480/insert/0/prometheus/api/v1/write
   volumes:
@@ -220,6 +223,10 @@ spec:
         endpoint: ${env:METRICS_RW_ENDPOINT}
         resource_to_telemetry_conversion:
           enabled: true
+      prometheusremotewrite/local:
+        endpoint: ${env:LOCAL_METRICS_RW_ENDPOINT}
+        resource_to_telemetry_conversion:
+          enabled: true
     service:
       extensions:
         - file_storage
@@ -231,4 +238,4 @@ spec:
         metrics:
           receivers: [prometheus]
           processors: [memory_limiter, resource, batch]
-          exporters: [prometheusremotewrite]
+          exporters: [prometheusremotewrite/local, prometheusremotewrite]
