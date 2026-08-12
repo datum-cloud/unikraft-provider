@@ -23,13 +23,13 @@ jobs:
         run: |
           sudo install -D -m 644 build/ukp-runtime/unikraft-cloud.gpg /usr/share/keyrings/unikraft-cloud.gpg
           sudo install -D -m 644 build/ukp-runtime/unikraft-cloud-staging.gpg /usr/share/keyrings/unikraft-cloud-staging.gpg
-          sudo install -d -m 755 /etc/apt/unikraft-sources
-          sudo install -D -m 644 build/ukp-runtime/unikraft-cloud.sources /etc/apt/unikraft-sources/unikraft-cloud.sources
-          sudo install -D -m 644 build/ukp-runtime/unikraft-cloud-staging.sources /etc/apt/unikraft-sources/unikraft-cloud-staging.sources
+          sudo install -D -m 644 build/ukp-runtime/unikraft-cloud.sources /etc/apt/sources.list.d/unikraft-cloud.sources
+          sudo install -D -m 644 build/ukp-runtime/unikraft-cloud-staging.sources /etc/apt/sources.list.d/unikraft-cloud-staging.sources
           umask 077
           echo "$UNIKRAFT_APT_AUTH" | sudo tee /etc/apt/auth.conf.d/unikraft.conf >/dev/null
-          sudo apt-get -o Dir::Etc::sourcelist="-" \
-              -o Dir::Etc::sourceparts="/etc/apt/unikraft-sources" update
+          # Refresh everything. Later steps run apt-cache with the default
+          # config, so the vendor feeds have to live where apt normally looks.
+          sudo apt-get update
 
       - name: What does each feed carry?
         run: |
