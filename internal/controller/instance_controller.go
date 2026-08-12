@@ -50,6 +50,19 @@ const (
 	instanceFinalizer = "unikraft.datumapis.com/finalizer"
 )
 
+// instancePodLabelKeys is the Compute-owned identity label allowlist copied to
+// backing instance Pods. These labels let Kubernetes HPA select Pods for a
+// WorkloadDeployment /scale target without exposing arbitrary Instance labels.
+var instancePodLabelKeys = []string{
+	computev1alpha.WorkloadUIDLabel,
+	computev1alpha.WorkloadDeploymentUIDLabel,
+	computev1alpha.WorkloadDeploymentNameLabel,
+	computev1alpha.WorkloadNameLabel,
+	computev1alpha.PlacementNameLabel,
+	computev1alpha.CityCodeLabel,
+	computev1alpha.InstanceIndexLabel,
+}
+
 type InstanceReconciler struct {
 	client.Client
 	Scheme            *runtime.Scheme
@@ -226,6 +239,8 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 		}
 		instancePod.Labels["managed-by"] = "infra-provider-unikraft"
 		instancePod.Labels["upstream.instance"] = instance.Name
+		// Copy a subset of the Instance labels to the Pod.
+		copyInstancePodLabels(instance.Labels, instancePod.Labels)
 
 		if instancePod.Annotations == nil {
 			instancePod.Annotations = map[string]string{}
@@ -705,6 +720,17 @@ func (r *InstanceReconciler) syncInstancePowerState(
 	}
 
 	return nil
+}
+
+func copyInstancePodLabels(instanceLabels, podLabels map[string]string) {
+	for _, key := range instancePodLabelKeys {
+		value, ok := instanceLabels[key]
+		if !ok {
+			delete(podLabels, key)
+			continue
+		}
+		podLabels[key] = value
+	}
 }
 
 func copyUnikraftAnnotations(src, dst map[string]string) {
