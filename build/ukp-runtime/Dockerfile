@@ -7,9 +7,13 @@
 # never persisted into any image layer.
 # See docs/enhancements/containerized-unikraft-runtime/.
 #
+# The kernel comes from the vendor's image registry, using a second build
+# secret that holds base64 of "user:password".
+#
 # Build (requires BuildKit; the credentials file is Debian apt auth.conf format
 # with machine/login/password lines for pkg.unikraft.com):
 #   docker build --secret id=unikraft-apt-auth,src=/path/to/unikraft.conf \
+#       --secret id=unikraft-registry-auth,src=/path/to/ukc-token \
 #       -t ukp-runtime:TAG build/ukp-runtime/
 FROM debian:trixie-slim
 
@@ -26,7 +30,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         python3 python3-pyroute2 python3-tqdm \
         iptables ipset iproute2 net-tools bridge-utils nftables \
         libmnl0 erofs-utils \
-        gettext-base curl ca-certificates \
+        gettext-base curl ca-certificates jq \
     && rm -rf /var/lib/apt/lists/*
 
 # Register the vendor's authenticated apt repository. The public signing
@@ -44,21 +48,38 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 COPY unikraft-cloud.gpg /usr/share/keyrings/unikraft-cloud.gpg
 COPY unikraft-cloud.sources /etc/apt/sources.list.d/unikraft-cloud.sources
 
+# The vendor's staging feed, signed by its own key:
+#   E157 4AA0 677C 98B7 ED46 0ED0 9E9F 3104 71E5 8DAB
+#   (uid: cloud-staging@https://pkg.unikraft.com)
+# It carries the builds that support images packaged without a kernel. The
+# stable feed stays registered because the vendor's dependency closure still
+# draws a few packages from it.
+COPY unikraft-cloud-staging.gpg /usr/share/keyrings/unikraft-cloud-staging.gpg
+COPY unikraft-cloud-staging.sources /etc/apt/sources.list.d/unikraft-cloud-staging.sources
+
 # Pin the ukp package versions to the set validated on the lab box, so the
-# container image and the bare-metal runtime stay in lockstep and the vendor
-# repo's rolling "stable" cannot silently drift our builds (which previously
-# caused non-deterministic e2e failures). Bump these together when adopting a
-# new vendor release; all are trixie/stable candidates in the vendor repo.
-ARG UKP_AGENT_VERSION=6:0.2.4-52-ge6b2157-9stable+deb13
-ARG UKP_CONFIG_VERSION=6:1.4.16-eb909a6-9stable+deb13
-ARG UKP_COREDNS_VERSION=6:1.14.6-15+1e043d3-9stable+deb13
-ARG UKP_FIRECRACKER_VERSION=6:1.16.1-35+f79dc37-9stable+deb13
-ARG UKP_NETWORKING_VERSION=6:1.5.8-9f758c2-9stable+deb13
-ARG UKP_OPENRESTY_VERSION=6:1.31.1.1-32+9c8f167-9stable+deb13
-ARG UKP_PLATFORM_VERSION=6:0.12.0-5+e6abf75-9stable+deb13
+# container image and the bare-metal runtime stay in lockstep and the vendor's
+# rolling feeds cannot silently drift our builds (which previously caused
+# non-deterministic e2e failures). Bump these together when adopting a new
+# vendor release.
+#
+# The whole set comes from the staging feed, which is where support for images
+# packaged without a kernel lives. The two feeds package the same software
+# differently: on stable, ukp-platform is a small package that pulls in
+# ukp12-platform, which holds the files; on staging, ukp-platform holds them
+# itself. Taking only some packages from staging installs both, and the two
+# write the same files. Move the set back to stable once the vendor ships the
+# feature there.
+ARG UKP_AGENT_VERSION=6:0.2.5-71+d7a2b1e-2staging+deb13
+ARG UKP_CONFIG_VERSION=6:1.4.16-eb909a6-2staging+deb13
+ARG UKP_COREDNS_VERSION=6:1.14.6-16+8ee3fd0-2staging+deb13
+ARG UKP_FIRECRACKER_VERSION=6:1.16.1-49+1add014-2staging+deb13
+ARG UKP_NETWORKING_VERSION=6:1.5.9-c85b5f1-2staging+deb13
+ARG UKP_OPENRESTY_VERSION=6:1.31.1.1-32+9c8f167-2staging+deb13
+ARG UKP_PLATFORM_VERSION=6:0.12.0-61+c30d6b1-2staging+deb13
 
 # ukp-remote-cni: server-side CNI shim for kraftlet.
-ARG UKP_REMOTE_CNI_VERSION=6:0.1.1-17+7ea4e16-9stable+deb13
+ARG UKP_REMOTE_CNI_VERSION=6:0.1.1-15+77f6a95-2staging+deb13
 
 # Install the ukp packages from the vendor repo. The BuildKit secret provides
 # the apt basic-auth credentials at /etc/apt/auth.conf.d/unikraft.conf for the
@@ -91,6 +112,26 @@ RUN id ukpvol >/dev/null 2>&1 \
 
 # Runtime directories normally created by systemd/tmpfiles on a native install.
 RUN mkdir -p /var/lib/ukp /var/log/ukp /var/run/ukp
+
+# The kernel ukpd gives to images packaged without one. It ships in the image
+# rather than being downloaded on each node, so the kernel and the packages
+# above update and roll back together, and no node needs a registry credential.
+#
+# Pinned by digest, not tag: tags move, and machines built weeks apart must not
+# end up with different kernels. Update alongside UKP_PLATFORM_VERSION.
+ARG UKP_KERNEL_REGISTRY=index.unikraft.io
+ARG UKP_KERNEL_REPO=datum/base-compat
+ARG UKP_KERNEL_MANIFEST_DIGEST=sha256:1be27d37d8f5fe19f0167aad0e9eddfb401a256e6e1ee367b140d306ce83b141
+ARG UKP_KERNEL_DEST=/usr/lib/ukp/kernel
+
+COPY fetch-kernel.sh /usr/local/bin/fetch-kernel.sh
+RUN --mount=type=secret,id=unikraft-registry-auth \
+    chmod +x /usr/local/bin/fetch-kernel.sh \
+    && UKP_KERNEL_REGISTRY="${UKP_KERNEL_REGISTRY}" \
+       UKP_KERNEL_REPO="${UKP_KERNEL_REPO}" \
+       UKP_KERNEL_MANIFEST_DIGEST="${UKP_KERNEL_MANIFEST_DIGEST}" \
+       UKP_KERNEL_DEST="${UKP_KERNEL_DEST}" \
+       /usr/local/bin/fetch-kernel.sh
 
 # Datum coredns entrypoint. The stripped vendor CoreDNS has no `bind` plugin, so
 # it cannot listen on just the isolate gateway IPs; its wildcard `.:53` collides
