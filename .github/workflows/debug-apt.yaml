@@ -5,7 +5,8 @@ name: debug-apt
 # the staging pins are settled.
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [feat/kernel-less-images]
 
 permissions:
   contents: read
