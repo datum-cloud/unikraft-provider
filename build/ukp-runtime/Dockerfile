@@ -51,32 +51,35 @@ COPY unikraft-cloud.sources /etc/apt/sources.list.d/unikraft-cloud.sources
 # The vendor's staging feed, signed by its own key:
 #   E157 4AA0 677C 98B7 ED46 0ED0 9E9F 3104 71E5 8DAB
 #   (uid: cloud-staging@https://pkg.unikraft.com)
-# It carries the agent and platform builds that support images packaged without
-# a kernel. Everything else stays on stable. The preferences file stops apt from
-# ever choosing staging on its own.
+# It carries the builds that support images packaged without a kernel. The
+# stable feed stays registered because the vendor's dependency closure still
+# draws a few packages from it.
 COPY unikraft-cloud-staging.gpg /usr/share/keyrings/unikraft-cloud-staging.gpg
 COPY unikraft-cloud-staging.sources /etc/apt/sources.list.d/unikraft-cloud-staging.sources
-COPY unikraft-staging.pref /etc/apt/preferences.d/unikraft-staging.pref
 
 # Pin the ukp package versions to the set validated on the lab box, so the
-# container image and the bare-metal runtime stay in lockstep and the vendor
-# repo's rolling "stable" cannot silently drift our builds (which previously
-# caused non-deterministic e2e failures). Bump these together when adopting a
-# new vendor release. The suffix names the feed each pin comes from.
+# container image and the bare-metal runtime stay in lockstep and the vendor's
+# rolling feeds cannot silently drift our builds (which previously caused
+# non-deterministic e2e failures). Bump these together when adopting a new
+# vendor release.
 #
-# ukp-agent and ukp-platform come from the staging feed, which is where support
-# for images packaged without a kernel lives. Move them back to stable once the
-# vendor ships it there.
+# The whole set comes from the staging feed, which is where support for images
+# packaged without a kernel lives. The two feeds package the same software
+# differently: on stable, ukp-platform is a small package that pulls in
+# ukp12-platform, which holds the files; on staging, ukp-platform holds them
+# itself. Taking only some packages from staging installs both, and the two
+# write the same files. Move the set back to stable once the vendor ships the
+# feature there.
 ARG UKP_AGENT_VERSION=6:0.2.5-71+d7a2b1e-2staging+deb13
-ARG UKP_CONFIG_VERSION=6:1.4.16-eb909a6-9stable+deb13
-ARG UKP_COREDNS_VERSION=6:1.14.6-15+1e043d3-9stable+deb13
-ARG UKP_FIRECRACKER_VERSION=6:1.16.1-35+f79dc37-9stable+deb13
-ARG UKP_NETWORKING_VERSION=6:1.5.8-9f758c2-9stable+deb13
-ARG UKP_OPENRESTY_VERSION=6:1.31.1.1-32+9c8f167-9stable+deb13
+ARG UKP_CONFIG_VERSION=6:1.4.16-eb909a6-2staging+deb13
+ARG UKP_COREDNS_VERSION=6:1.14.6-16+8ee3fd0-2staging+deb13
+ARG UKP_FIRECRACKER_VERSION=6:1.16.1-49+1add014-2staging+deb13
+ARG UKP_NETWORKING_VERSION=6:1.5.9-c85b5f1-2staging+deb13
+ARG UKP_OPENRESTY_VERSION=6:1.31.1.1-32+9c8f167-2staging+deb13
 ARG UKP_PLATFORM_VERSION=6:0.12.0-61+c30d6b1-2staging+deb13
 
 # ukp-remote-cni: server-side CNI shim for kraftlet.
-ARG UKP_REMOTE_CNI_VERSION=6:0.1.1-17+7ea4e16-9stable+deb13
+ARG UKP_REMOTE_CNI_VERSION=6:0.1.1-15+77f6a95-2staging+deb13
 
 # Install the ukp packages from the vendor repo. The BuildKit secret provides
 # the apt basic-auth credentials at /etc/apt/auth.conf.d/unikraft.conf for the
