@@ -25,9 +25,8 @@ jobs:
       platforms: linux/amd64,linux/arm64
     secrets: inherit
 
-  # Runtime image installs vendor ukp packages from an authenticated apt repo and pulls the
-  # platform kernel from the vendor registry, so both credentials go in as BuildKit secrets
-  # (quoted so the multi-line auth.conf isn't split on newlines).
+  # The runtime image installs vendor packages and downloads the kernel, so both
+  # credentials go in as build secrets. Quoting keeps the multi-line auth file intact.
   publish-runtime-image:
     needs:
       - validate-kustomize

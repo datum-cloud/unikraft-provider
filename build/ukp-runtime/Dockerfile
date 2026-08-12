@@ -7,9 +7,8 @@
 # never persisted into any image layer.
 # See docs/enhancements/containerized-unikraft-runtime/.
 #
-# The platform kernel is fetched from the vendor's OCI registry in the same way,
-# via a second BuildKit secret holding base64("user:password") — the same value
-# as a workstation's UKC_TOKEN.
+# The kernel comes from the vendor's image registry, using a second build
+# secret that holds base64 of "user:password".
 #
 # Build (requires BuildKit; the credentials file is Debian apt auth.conf format
 # with machine/login/password lines for pkg.unikraft.com):
@@ -49,11 +48,12 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 COPY unikraft-cloud.gpg /usr/share/keyrings/unikraft-cloud.gpg
 COPY unikraft-cloud.sources /etc/apt/sources.list.d/unikraft-cloud.sources
 
-# The vendor's staging feed, signed by its own key
-# (E157 4AA0 677C 98B7 ED46 0ED0 9E9F 3104 71E5 8DAB, uid
-# cloud-staging@https://pkg.unikraft.com). It carries the agent and platform
-# builds that understand kernel-less images; everything else stays on stable.
-# The preferences file keeps staging from ever becoming apt's candidate.
+# The vendor's staging feed, signed by its own key:
+#   E157 4AA0 677C 98B7 ED46 0ED0 9E9F 3104 71E5 8DAB
+#   (uid: cloud-staging@https://pkg.unikraft.com)
+# It carries the agent and platform builds that support images packaged without
+# a kernel. Everything else stays on stable. The preferences file stops apt from
+# ever choosing staging on its own.
 COPY unikraft-cloud-staging.gpg /usr/share/keyrings/unikraft-cloud-staging.gpg
 COPY unikraft-cloud-staging.sources /etc/apt/sources.list.d/unikraft-cloud-staging.sources
 COPY unikraft-staging.pref /etc/apt/preferences.d/unikraft-staging.pref
@@ -64,9 +64,9 @@ COPY unikraft-staging.pref /etc/apt/preferences.d/unikraft-staging.pref
 # caused non-deterministic e2e failures). Bump these together when adopting a
 # new vendor release. The suffix names the feed each pin comes from.
 #
-# ukp-agent and ukp-platform come from the STAGING feed: they are the builds
-# that support kernel-less images (--images-kernel-path). The stable platform
-# has no such flag. Move them back to stable once the feature ships there.
+# ukp-agent and ukp-platform come from the staging feed, which is where support
+# for images packaged without a kernel lives. Move them back to stable once the
+# vendor ships it there.
 ARG UKP_AGENT_VERSION=6:0.2.5-71+d7a2b1e-2staging+deb13
 ARG UKP_CONFIG_VERSION=6:1.4.16-eb909a6-9stable+deb13
 ARG UKP_COREDNS_VERSION=6:1.14.6-15+1e043d3-9stable+deb13
@@ -110,14 +110,12 @@ RUN id ukpvol >/dev/null 2>&1 \
 # Runtime directories normally created by systemd/tmpfiles on a native install.
 RUN mkdir -p /var/lib/ukp /var/log/ukp /var/run/ukp
 
-# Platform kernel for kernel-less images: ukpd injects this kernel at instance
-# creation for images packaged without one (--images-kernel-path). It ships in
-# the image rather than being fetched on the node, so the kernel and the ukp
-# package pins above are one artifact that is bumped and rolled back together,
-# and no vendor registry credential ever reaches a node.
+# The kernel ukpd gives to images packaged without one. It ships in the image
+# rather than being downloaded on each node, so the kernel and the packages
+# above update and roll back together, and no node needs a registry credential.
 #
-# Pinned by manifest digest, not tag: :latest-amd64 moves, and nodes built a
-# week apart must not get different kernels. Bump alongside UKP_PLATFORM_VERSION.
+# Pinned by digest, not tag: tags move, and machines built weeks apart must not
+# end up with different kernels. Update alongside UKP_PLATFORM_VERSION.
 ARG UKP_KERNEL_REGISTRY=index.unikraft.io
 ARG UKP_KERNEL_REPO=datum/base-compat
 ARG UKP_KERNEL_MANIFEST_DIGEST=sha256:1be27d37d8f5fe19f0167aad0e9eddfb401a256e6e1ee367b140d306ce83b141

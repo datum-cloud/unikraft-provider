@@ -53,7 +53,7 @@ jobs:
           auth="$(mktemp)"
           reg="$(mktemp)"
           printf '%s\n' "$UNIKRAFT_APT_AUTH" > "$auth"
-          # No trailing newline: the value is base64 and is decoded verbatim.
+          # No trailing newline. The value is base64 and is decoded as-is.
           printf '%s' "$UNIKRAFT_REGISTRY_AUTH" > "$reg"
           docker build --secret id=unikraft-apt-auth,src="$auth" \
             --secret id=unikraft-registry-auth,src="$reg" \

@@ -35,8 +35,8 @@ jobs:
         run: |
           sudo install -D -m 644 build/ukp-runtime/unikraft-cloud.gpg /usr/share/keyrings/unikraft-cloud.gpg
           sudo install -D -m 644 build/ukp-runtime/unikraft-cloud-staging.gpg /usr/share/keyrings/unikraft-cloud-staging.gpg
-          # Both feeds in a dedicated sourceparts dir so the refresh below sees
-          # the vendor repos and nothing else.
+          # Keep both feeds in their own directory so the refresh below sees
+          # only these.
           sudo install -d -m 755 /etc/apt/unikraft-sources
           sudo install -D -m 644 build/ukp-runtime/unikraft-cloud.sources /etc/apt/unikraft-sources/unikraft-cloud.sources
           sudo install -D -m 644 build/ukp-runtime/unikraft-cloud-staging.sources /etc/apt/unikraft-sources/unikraft-cloud-staging.sources
@@ -54,9 +54,9 @@ jobs:
             name="${arg_name%_VERSION}"
             name="${name#UKP_}"
             pkg="ukp-$(echo "$name" | tr '[:upper:]_' '[:lower:]-')"
-            # Each package stays on the feed its current pin came from: the
-            # staging feed's versions sort above stable, so an unfiltered
-            # madison would silently migrate every package to staging.
+            # Keep each package on the feed its current version came from.
+            # Staging version numbers sort above stable, so an unfiltered
+            # search would move every package to staging.
             case "$current" in
               *staging+deb*) channel=staging ;;
               *)             channel=stable ;;
