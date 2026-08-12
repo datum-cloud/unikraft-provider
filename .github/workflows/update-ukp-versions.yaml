@@ -29,16 +29,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Register the vendor apt repository
+      - name: Register the vendor apt repositories
         env:
           UNIKRAFT_APT_AUTH: ${{ secrets.UNIKRAFT_APT_AUTH }}
         run: |
           sudo install -D -m 644 build/ukp-runtime/unikraft-cloud.gpg /usr/share/keyrings/unikraft-cloud.gpg
-          sudo install -D -m 644 build/ukp-runtime/unikraft-cloud.sources /etc/apt/sources.list.d/unikraft-cloud.sources
+          sudo install -D -m 644 build/ukp-runtime/unikraft-cloud-staging.gpg /usr/share/keyrings/unikraft-cloud-staging.gpg
+          # Both feeds in a dedicated sourceparts dir so the refresh below sees
+          # the vendor repos and nothing else.
+          sudo install -d -m 755 /etc/apt/unikraft-sources
+          sudo install -D -m 644 build/ukp-runtime/unikraft-cloud.sources /etc/apt/unikraft-sources/unikraft-cloud.sources
+          sudo install -D -m 644 build/ukp-runtime/unikraft-cloud-staging.sources /etc/apt/unikraft-sources/unikraft-cloud-staging.sources
           umask 077
           echo "$UNIKRAFT_APT_AUTH" | sudo tee /etc/apt/auth.conf.d/unikraft.conf >/dev/null
-          sudo apt-get -o Dir::Etc::sourcelist="/etc/apt/sources.list.d/unikraft-cloud.sources" \
-              -o Dir::Etc::sourceparts="-" update
+          sudo apt-get -o Dir::Etc::sourcelist="-" \
+              -o Dir::Etc::sourceparts="/etc/apt/unikraft-sources" update
 
       - name: Check for newer ukp-* package versions
         run: |
@@ -49,15 +54,23 @@ jobs:
             name="${arg_name%_VERSION}"
             name="${name#UKP_}"
             pkg="ukp-$(echo "$name" | tr '[:upper:]_' '[:lower:]-')"
-            latest="$(apt-cache madison "$pkg" 2>/dev/null | awk '{print $3; exit}')"
+            # Each package stays on the feed its current pin came from: the
+            # staging feed's versions sort above stable, so an unfiltered
+            # madison would silently migrate every package to staging.
+            case "$current" in
+              *staging+deb*) channel=staging ;;
+              *)             channel=stable ;;
+            esac
+            latest="$(apt-cache madison "$pkg" 2>/dev/null |
+              awk -v c="trixie/$channel" 'index($0, c) {print $3; exit}')"
             if [ -z "$latest" ]; then
-              echo "::warning::no vendor version found for $pkg (ARG $arg_name), skipping"
+              echo "::warning::no $channel version found for $pkg (ARG $arg_name), skipping"
               continue
             fi
             if [ "$latest" != "$current" ]; then
-              echo "$pkg: $current -> $latest"
+              echo "$pkg [$channel]: $current -> $latest"
               sed -i "s|^ARG ${arg_name}=.*|ARG ${arg_name}=${latest}|" "$dockerfile"
-              bumps+=("- \`$pkg\`: \`$current\` → \`$latest\`")
+              bumps+=("- \`$pkg\` (\`$channel\`): \`$current\` → \`$latest\`")
             fi
           done < <(grep -oP '^ARG \KUKP_\w+_VERSION=.*' "$dockerfile")
 

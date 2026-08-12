@@ -1,0 +1,5 @@
+Types: deb
+URIs: https://pkg.unikraft.com/debian/cloud-staging/
+Suites: trixie
+Components: staging
+Signed-By: /usr/share/keyrings/unikraft-cloud-staging.gpg

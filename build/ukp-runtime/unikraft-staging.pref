@@ -1,0 +1,8 @@
+# Staging is available but never preferred. Its versions sort ABOVE stable
+# (0.12.0-61 beats 0.12.0-5 before the -Nstaging/-Nstable suffix is even
+# reached), so without this every package the staging feed carries would
+# become apt's candidate. Priority 100 keeps stable the default while explicit
+# pkg=version pins in the Dockerfile can still install from staging.
+Package: *
+Pin: release c=staging
+Pin-Priority: 100

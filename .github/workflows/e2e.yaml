@@ -8,6 +8,8 @@ name: e2e
 #
 # Secrets:
 #   UNIKRAFT_APT_AUTH       apt auth.conf for pkg.unikraft.com (runtime image build)
+#   UNIKRAFT_REGISTRY_AUTH  base64("user:password") for index.unikraft.io; the runtime
+#                           image build pulls the platform kernel with it
 #   UKP_AGENT_CREDENTIALS   ukp.secrets.conf; its vendor pull credentials let the
 #                           runtime pull the test workload image
 
@@ -45,13 +47,18 @@ jobs:
       - name: Build runtime image (from the vendor apt repository)
         env:
           UNIKRAFT_APT_AUTH: ${{ secrets.UNIKRAFT_APT_AUTH }}
+          UNIKRAFT_REGISTRY_AUTH: ${{ secrets.UNIKRAFT_REGISTRY_AUTH }}
         run: |
           umask 077
           auth="$(mktemp)"
+          reg="$(mktemp)"
           printf '%s\n' "$UNIKRAFT_APT_AUTH" > "$auth"
+          # No trailing newline: the value is base64 and is decoded verbatim.
+          printf '%s' "$UNIKRAFT_REGISTRY_AUTH" > "$reg"
           docker build --secret id=unikraft-apt-auth,src="$auth" \
+            --secret id=unikraft-registry-auth,src="$reg" \
             -t ukp-runtime:e2e build/ukp-runtime/
-          rm -f "$auth"
+          rm -f "$auth" "$reg"
 
       - name: Build provider image
         run: docker build -t ghcr.io/datum-cloud/unikraft-provider:dev .
