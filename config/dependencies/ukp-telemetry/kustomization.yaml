@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ukp-system
+resources:
+  - rbac.yaml
+  - collector.yaml
+# The IP surfacer runs from a ConfigMap-mounted script. A stable name (no hash)
+# keeps the collector CR's volume reference valid; the OpenTelemetry Operator
+# does not know to rewrite a hashed name inside its CRD.
+configMapGenerator:
+  - name: ukp-telemetry-surfacer
+    files:
+      - ip-surfacer.sh
+    options:
+      disableNameSuffixHash: true

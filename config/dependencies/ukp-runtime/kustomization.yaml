@@ -14,3 +14,4 @@ configMapGenerator:
   - name: ukp-runtime-config
     files:
       - ukp.conf
+      - log-sinks.json

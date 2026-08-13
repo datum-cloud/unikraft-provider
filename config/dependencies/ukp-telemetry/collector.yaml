@@ -1,0 +1,216 @@
+# Unified node telemetry agent. A single stock OpenTelemetry Collector (via the
+# OpenTelemetry Operator) collects ALL runtime + guest telemetry on each compute
+# node — no custom collector, no Vector:
+#   logs    — guest app logs (vm.log). The stock k8sattributes processor stamps
+#             the Datum identity of the owning compute Instance, keyed on the
+#             guest IP; a tiny busybox sidecar just surfaces that IP onto the
+#             log path (it holds no Kubernetes logic).
+#   metrics — ukpd's Prometheus endpoints (/metrics/controller, /metrics/host,
+#             /metrics/agent), scraped directly.
+#
+# Requires the OpenTelemetry Operator (OpenTelemetryCollector CRD). Deployed to
+# compute nodes only. See README.md.
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: ukp-telemetry
+  labels:
+    app.kubernetes.io/name: ukp-telemetry
+    app.kubernetes.io/component: telemetry-agent
+    app.kubernetes.io/part-of: unikraft-provider
+spec:
+  mode: daemonset
+  serviceAccount: ukp-telemetry
+  image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.144.0
+  # vm.log is root:root 0640; a node log agent runs as root to read it.
+  securityContext:
+    runAsUser: 0
+    runAsGroup: 0
+  # Runs only where the runtime runs (matches the ukp-runtime DaemonSet), and
+  # never on Kraftlet virtual-kubelet nodes.
+  nodeSelector:
+    compute.datumapis.com/runtime: unikraft
+  tolerations:
+    - operator: Exists
+  env:
+    - name: K8S_NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    # ukpd binds its metrics API on all interfaces; scrape the node directly.
+    - name: HOST_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.hostIP
+    # Bearer token for ukpd's metrics API (same value as the runtime's
+    # UKP_PROMETHEUS_API_TOKEN). Provide it as key `token` in the optional
+    # ukp-metrics-token Secret; without it, metrics scraping returns 401.
+    - name: UKP_METRICS_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: ukp-metrics-token
+          key: token
+          optional: true
+    # Destinations. Logs -> OTLP (edge logs collector -> ClickHouse); metrics ->
+    # Prometheus remote-write (VictoriaMetrics). Override per environment.
+    - name: LOGS_OTLP_ENDPOINT
+      value: edge-logs-collector-collector.edge-logs-system.svc.cluster.local:4317
+    - name: METRICS_RW_ENDPOINT
+      value: http://vminsert.datum-cloud-telemetry-system.svc.cluster.local:8480/insert/0/prometheus/api/v1/write
+  volumes:
+    - name: ukp-data
+      hostPath:
+        path: /var/lib/ukp
+        type: Directory
+    - name: ukp-logs-tree
+      emptyDir: {}
+    - name: ukp-logs-storage
+      hostPath:
+        path: /var/lib/ukp-logs-otel
+        type: DirectoryOrCreate
+    - name: surfacer-script
+      configMap:
+        name: ukp-telemetry-surfacer
+        defaultMode: 0755
+  volumeMounts:
+    - name: ukp-data
+      mountPath: /var/lib/ukp
+      readOnly: true
+    - name: ukp-logs-tree
+      mountPath: /var/log/ukp-logs
+      readOnly: true
+    - name: ukp-logs-storage
+      mountPath: /var/lib/otelcol/storage
+  additionalContainers:
+    # Surfaces each instance's guest IP onto its vm.log path so k8sattributes
+    # can enrich by pod IP. Filesystem only — no Kubernetes client.
+    - name: ip-surfacer
+      image: busybox:1.36
+      command: ["sh", "/scripts/ip-surfacer.sh"]
+      securityContext:
+        runAsUser: 0
+      env:
+        - name: UKP_PLATFORM_DIR
+          value: /var/lib/ukp/data/platform
+        - name: UKP_LOG_TREE
+          value: /var/log/ukp-logs
+      volumeMounts:
+        - name: ukp-data
+          mountPath: /var/lib/ukp
+          readOnly: true
+        - name: ukp-logs-tree
+          mountPath: /var/log/ukp-logs
+        - name: surfacer-script
+          mountPath: /scripts
+          readOnly: true
+  config:
+    extensions:
+      file_storage:
+        directory: /var/lib/otelcol/storage
+    receivers:
+      # Guest application logs — one file per instance. The surfacer encodes the
+      # guest IP + ukpd uuid in the path; k8sattributes does the rest.
+      filelog:
+        include:
+          - /var/log/ukp-logs/**/vm.log
+        include_file_path: true
+        start_at: beginning
+        storage: file_storage
+        operators:
+          - type: regex_parser
+            parse_from: 'attributes["log.file.path"]'
+            regex: '/ip=(?P<ip>[^/]+)/uuid=(?P<uuid>[^/]+)/vm\.log$'
+          - type: move
+            from: attributes.ip
+            to: 'resource["k8s.pod.ip"]'
+          - type: move
+            from: attributes.uuid
+            to: 'resource["ukp.instance.uuid"]'
+      # Runtime + host metrics — one scrape job per ukpd metrics path.
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: ukpd-controller
+              scrape_interval: 30s
+              metrics_path: /metrics/controller
+              authorization:
+                type: Bearer
+                credentials: ${env:UKP_METRICS_TOKEN}
+              static_configs:
+                - targets: ['${env:HOST_IP}:45233']
+            - job_name: ukpd-host
+              scrape_interval: 30s
+              metrics_path: /metrics/host
+              authorization:
+                type: Bearer
+                credentials: ${env:UKP_METRICS_TOKEN}
+              static_configs:
+                - targets: ['${env:HOST_IP}:45233']
+            - job_name: ukpd-agent
+              scrape_interval: 30s
+              metrics_path: /metrics/agent
+              authorization:
+                type: Bearer
+                credentials: ${env:UKP_METRICS_TOKEN}
+              static_configs:
+                - targets: ['${env:HOST_IP}:45233']
+    processors:
+      # Enriches guest logs with the Datum identity of the owning compute
+      # Instance, keyed on the guest IP (== the provider Pod's podIP). Pod
+      # annotations give the instance name/namespace; the namespace label gives
+      # the project. Watches pods cluster-wide (the provider Pods live on the
+      # Kraftlet virtual node, so node-scoping cannot apply).
+      k8sattributes:
+        auth_type: serviceAccount
+        pod_association:
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.ip
+        extract:
+          metadata:
+            - k8s.namespace.name
+            - k8s.pod.name
+          annotations:
+            - tag_name: datum.instance.name
+              key: meta.datumapis.com/upstream-name
+              from: pod
+            - tag_name: datum.instance.namespace
+              key: meta.datumapis.com/upstream-namespace
+              from: pod
+          labels:
+            - tag_name: datum.project.name
+              key: resourcemanager.miloapis.com/project-name
+              from: namespace
+      resource:
+        attributes:
+          - key: k8s.node.name
+            value: ${env:K8S_NODE_NAME}
+            action: upsert
+      batch: {}
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 75
+        spike_limit_percentage: 20
+    exporters:
+      otlp:
+        endpoint: ${env:LOGS_OTLP_ENDPOINT}
+        # In-cluster hop to the edge collector; add real TLS/auth via an
+        # overlay for cross-cluster or untrusted paths.
+        tls:
+          insecure: true
+      prometheusremotewrite:
+        endpoint: ${env:METRICS_RW_ENDPOINT}
+        resource_to_telemetry_conversion:
+          enabled: true
+    service:
+      extensions:
+        - file_storage
+      pipelines:
+        logs:
+          receivers: [filelog]
+          processors: [memory_limiter, k8sattributes, resource, batch]
+          exporters: [otlp]
+        metrics:
+          receivers: [prometheus]
+          processors: [memory_limiter, resource, batch]
+          exporters: [prometheusremotewrite]

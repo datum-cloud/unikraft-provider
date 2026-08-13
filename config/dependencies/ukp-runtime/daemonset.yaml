@@ -22,6 +22,9 @@ spec:
         app.kubernetes.io/name: ukp-runtime
         app.kubernetes.io/component: runtime
         app.kubernetes.io/part-of: unikraft-provider
+      # Metrics are scraped by the ukp-telemetry OpenTelemetry Collector (it
+      # pulls ukpd's :45233 endpoints directly), not by annotation-based
+      # discovery — so no prometheus.io/scrape annotations here.
     spec:
       hostNetwork: true
       hostIPC: true
@@ -98,6 +101,11 @@ spec:
             - name: ukp-conf
               mountPath: /etc/ukp.conf
               subPath: ukp.conf
+              readOnly: true
+            # Structured log-sink config (--log-sink-config in ukp.conf).
+            - name: ukp-conf
+              mountPath: /etc/ukp/log-sinks.json
+              subPath: log-sinks.json
               readOnly: true
             - name: ukp-secrets
               mountPath: /etc/ukp-secrets

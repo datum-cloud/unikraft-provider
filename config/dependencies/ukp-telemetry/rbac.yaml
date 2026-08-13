@@ -1,0 +1,33 @@
+# ServiceAccount for the collector pod. The reconciler sidecar uses it to read
+# the provider Pods (podIP + upstream identity) and their Namespaces (project
+# label). Read-only, cluster-wide (instances land in per-project namespaces).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ukp-telemetry
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ukp-telemetry
+  labels:
+    app.kubernetes.io/part-of: unikraft-provider
+rules:
+  - apiGroups: [""]
+    resources: [pods, namespaces]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ukp-telemetry
+  labels:
+    app.kubernetes.io/part-of: unikraft-provider
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ukp-telemetry
+subjects:
+  - kind: ServiceAccount
+    name: ukp-telemetry
+    namespace: ukp-system
