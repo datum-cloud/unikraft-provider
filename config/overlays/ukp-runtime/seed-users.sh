@@ -31,10 +31,18 @@ fi
 
 # Load the UKP_QUOTA_* knobs. ukp.conf is bash-syntax (arrays), so /bin/sh
 # cannot source it wholesale: extract only the simple UKP_QUOTA_*
-# assignments and export them for the merge below.
-set -a
-eval "$(grep -E '^UKP_QUOTA_[A-Z0-9_]+=' /etc/ukp.conf 2>/dev/null || true)"
-set +a
+# assignments. Each is a DEFAULT the node inherits unless the same variable is
+# already set in the environment (e.g. a per-node DaemonSet env override) — an
+# explicit env value wins, so a small node can lower a reserve without editing
+# the conf that prod bare-metal shares.
+while IFS= read -r assignment; do
+  [ -n "$assignment" ] || continue
+  name=${assignment%%=*}
+  eval "current=\${$name:-}"
+  [ -n "$current" ] || eval "export $assignment"
+done <<EOF
+$(grep -E '^UKP_QUOTA_[A-Z0-9_]+=' /etc/ukp.conf 2>/dev/null || true)
+EOF
 
 # Merge per-node quotas into the generated identity. These quotas double as
 # the platform's capacity enforcement: the node's full resources minus a
