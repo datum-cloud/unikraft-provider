@@ -59,7 +59,7 @@ jobs:
     uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.20.0
     with:
       image-name: ukp-state-projector
-      context: build/state-projector
+      context: .
       dockerfile-path: build/state-projector/Dockerfile
       platforms: linux/amd64
     secrets: inherit
