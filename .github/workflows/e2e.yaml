@@ -63,10 +63,19 @@ jobs:
       - name: Build provider image
         run: docker build -t ghcr.io/datum-cloud/unikraft-provider:dev .
 
+      # The state-projector image COPYs go.mod/go.sum, cmd/ and internal/ from
+      # the repo root, so it must be built with the repo root as context (not
+      # build/state-projector, which holds only the Dockerfile). Build it here
+      # and pass STATE_PROJECTOR_IMAGE so setup.sh skips its own build — which
+      # uses the wrong context and fails with "/internal: not found".
+      - name: Build state-projector image
+        run: docker build -f build/state-projector/Dockerfile -t ghcr.io/datum-cloud/ukp-state-projector:e2e .
+
       - name: Bring up the single-cluster environment
         env:
           PROVIDER_IMAGE: ghcr.io/datum-cloud/unikraft-provider:dev
           RUNTIME_IMAGE: ukp-runtime:e2e
+          STATE_PROJECTOR_IMAGE: ghcr.io/datum-cloud/ukp-state-projector:e2e
           UKP_AGENT_CREDENTIALS: ${{ secrets.UKP_AGENT_CREDENTIALS }}
         run: task e2e:up
 

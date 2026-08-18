@@ -46,11 +46,30 @@ jobs:
         "unikraft-apt-auth=${{ secrets.UNIKRAFT_APT_AUTH }}"
         "unikraft-registry-auth=${{ secrets.UNIKRAFT_REGISTRY_AUTH }}"
 
+  # The per-second billing state-projector: a small node sidecar in the
+  # ukp-runtime DaemonSet that enriches the runtime lifecycle stream with project
+  # attribution for the edge Vector agent.
+  publish-state-projector-image:
+    needs:
+      - validate-kustomize
+    permissions:
+      id-token: write
+      contents: read
+      packages: write
+    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.20.0
+    with:
+      image-name: ukp-state-projector
+      context: build/state-projector
+      dockerfile-path: build/state-projector/Dockerfile
+      platforms: linux/amd64
+    secrets: inherit
+
   # Pin every image to the tag its job published, then push the config tree as the bundle.
   publish-kustomize-bundle:
     needs:
       - publish-container-image
       - publish-runtime-image
+      - publish-state-projector-image
     uses: datum-cloud/actions/.github/workflows/publish-kustomize-bundle.yaml@v1.20.0
     with:
       bundle-name: ghcr.io/datum-cloud/unikraft-provider-kustomize
@@ -63,4 +82,5 @@ jobs:
         - { path: config/default, name: ghcr.io/datum-cloud/unikraft-provider, tag: "${{ needs.publish-container-image.outputs.tag }}" }
         - { path: config/dependencies/ukp-runtime, name: ghcr.io/datum-cloud/ukp-runtime, tag: "${{ needs.publish-runtime-image.outputs.tag }}" }
         - { path: config/overlays/ukp-runtime, name: ghcr.io/datum-cloud/ukp-runtime, tag: "${{ needs.publish-runtime-image.outputs.tag }}" }
+        - { path: config/dependencies/ukp-runtime, name: ghcr.io/datum-cloud/ukp-state-projector, tag: "${{ needs.publish-state-projector-image.outputs.tag }}" }
     secrets: inherit

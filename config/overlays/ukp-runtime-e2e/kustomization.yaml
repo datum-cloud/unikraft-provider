@@ -18,6 +18,8 @@ resources:
 images:
   - name: ghcr.io/datum-cloud/ukp-runtime
     newTag: e2e
+  - name: ghcr.io/datum-cloud/ukp-state-projector
+    newTag: e2e
 patches:
   - path: data-volume-patch.yaml
     target:
