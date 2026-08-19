@@ -6,6 +6,8 @@
 #     ghcr.io/datum-cloud/ukp-runtime:e2e (see test/e2e/kind/setup.sh).
 #   - data volume: the base uses the Talos path /var/mnt/ukp; kind bind-mounts
 #     the XFS-quota filesystem to /var/lib/ukp (data-volume-patch.yaml).
+#   - state-projector flush interval: shortened so chainsaw can assert a usage
+#     record within its own timeouts (state-projector-flush-interval-patch.yaml).
 #
 # The `ci` ukpd user (users.json) is seeded onto the XFS by setup.sh, which owns
 # the host-side quota-filesystem provisioning; the real-cluster ESO seed lives
@@ -22,6 +24,10 @@ images:
     newTag: e2e
 patches:
   - path: data-volume-patch.yaml
+    target:
+      kind: DaemonSet
+      name: ukp-runtime
+  - path: state-projector-flush-interval-patch.yaml
     target:
       kind: DaemonSet
       name: ukp-runtime

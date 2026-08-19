@@ -43,3 +43,34 @@ spec:
                   upstream.instance: e2e-run-instance
               status:
                 phase: Running
+    # state-projector is the runtime-side half of per-second usage billing
+    # (cmd/state-projector/README.md): it watches this same instance's
+    # vm.state_change stream and should have attributed a windowed usage
+    # record to this test's namespace by now. Nothing above exercises that
+    # path — the Instance/Pod asserts only prove the VM booted. The e2e
+    # overlay shortens state-projector's flush interval to 10s (production
+    # stays at 5m) specifically so this can assert within a normal timeout
+    # instead of needing to wait for a flush or stop the instance.
+    - name: assert state-projector attributed a usage record to this instance
+      try:
+        - script:
+            timeout: 90s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              for i in $(seq 1 40); do
+                POD=$(kubectl -n unikraft-system get pod -l app=ukp-runtime -o jsonpath='{.items[0].metadata.name}')
+                if kubectl -n unikraft-system exec "$POD" -c state-projector -- \
+                     grep -q "\"project\":\"$NAMESPACE\".*\"instance\":\"e2e-run-instance\"" \
+                     /var/run/ukp/vm-state.usage 2>/dev/null; then
+                  echo "found a usage record for $NAMESPACE/e2e-run-instance"
+                  exit 0
+                fi
+                sleep 2
+              done
+              echo "no usage record for $NAMESPACE/e2e-run-instance after ~80s" >&2
+              kubectl -n unikraft-system exec "$POD" -c state-projector -- \
+                cat /var/run/ukp/vm-state.usage >&2 2>&1 || true
+              exit 1

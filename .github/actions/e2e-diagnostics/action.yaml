@@ -33,6 +33,14 @@ runs:
         for ns in unikraft-system infra-provider-unikraft-system; do
           kubectl -n "$ns" logs -l control-plane=controller-manager --tail=50 2>/dev/null
         done
+        # state-projector logs every stage (boot, podwatch, event, window,
+        # resolve, record) plus a "stats" heartbeat — this is the only place
+        # that shows whether billing data was actually produced, since chainsaw
+        # never asserts on it.
+        echo "=== state-projector container logs ==="
+        kubectl -n unikraft-system logs -l app=ukp-runtime -c state-projector --tail=200
+        echo "=== vm-state.usage (windowed billing records state-projector wrote) ==="
+        [ -n "$POD" ] && kubectl -n unikraft-system exec "$POD" -c state-projector -- cat /var/run/ukp/vm-state.usage 2>&1
         echo "=== compute Instances ==="
         kubectl get instances.compute.datumapis.com -A -o wide
         echo "=== microVM pods (managed-by infra-provider-unikraft) + events ==="

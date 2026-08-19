@@ -84,6 +84,12 @@ jobs:
           KUBECONFIG: /tmp/ukp-e2e.kubeconfig
         run: task e2e
 
+      # always(), not just failure(): chainsaw only asserts the Instance boots
+      # — it never checks that state-projector actually produced a usage
+      # record. While that pipeline is still a validation spike (see
+      # cmd/state-projector/README.md), a green run needs this too, or a
+      # silently-broken billing pipeline looks identical to a working one.
+      # Revert to if: failure() once state-projector's output is trusted.
       - name: Diagnostics
-        if: failure()
+        if: always()
         uses: ./.github/actions/e2e-diagnostics
