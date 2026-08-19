@@ -19,7 +19,11 @@ func makeProjector(t *testing.T, uuid, ip string, vcpuMilli, memBytes int64) (*p
 	if err := os.MkdirAll(vmPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(vmPath, "vmm.json"), []byte(`{"raw_kernel":{"boot_args":"netdev.ip=`+ip+`"}}`), 0o644); err != nil {
+	// The real format (captured from a running ukpd): boot_args wraps
+	// netdev.ip in escaped quotes as a compound "<ip>/<prefix>:<gw>:<gw>::<host>:internal"
+	// field, not a bare IP — see the netdevIPRe comment in main.go.
+	vmmJSON := `{"boot-source":{"boot_args":"unikraft netdev.ip=\"` + ip + `/30:172.16.0.6:172.16.0.6::somehost:internal\" -- /server"}}`
+	if err := os.WriteFile(filepath.Join(vmPath, "vmm.json"), []byte(vmmJSON), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	out := filepath.Join(t.TempDir(), "vm-state.usage")
@@ -34,6 +38,34 @@ func makeProjector(t *testing.T, uuid, ip string, vcpuMilli, memBytes int64) (*p
 		winMu:   sync.Mutex{},
 	}
 	return p, out
+}
+
+// TestGuestIPRealVmmJSON is a golden regression test using the exact bytes
+// captured from a real ukpd's vmm.json (chainsaw e2e run, 2026-08-19). The
+// original regex required digits immediately after "netdev.ip=" and never
+// matched in production — vmm.json is itself JSON, and boot_args's string
+// value wraps the netdev arg in escaped quotes, so the real bytes read
+// `netdev.ip=\"172.16.0.5/30:...`, not `netdev.ip=172.16.0.5`.
+func TestGuestIPRealVmmJSON(t *testing.T) {
+	const raw = `{"boot-source":{"kernel_image_path":"/var/lib/ukp/images/x","initrd_path":"/var/lib/ukp/images/y","boot_args":"unikraft netdev.ip=\"172.16.0.5/30:172.16.0.6:172.16.0.6::yu1uwkqertaqmlxdkoncxki7bdyzbvdrsdhif7qfabo:internal\" env.vars=PATH=/usr/local/sbin -- /server"},"machine-config":{"vcpu_count":1,"mem_size_mib":256,"track_dirty_pages":true},"vsock":{"guest_cid":3,"uds_path":"v.sock"},"drives":[],"fs":[],"network-interfaces":[{"iface_id":"eth0","guest_mac":"12:b0:ac:10:00:05","host_dev_name":"ukp1.vif1"}],"consoles":[{"id":"console0","ports":[{"console":true,"name":"default","tx":{"type":"stdout"}}]}]}`
+
+	dir := t.TempDir()
+	const uuid = "cc20e657-7db8-49bb-b34c-5882c18676f1"
+	vmPath := filepath.Join(dir, uuid)
+	if err := os.MkdirAll(vmPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(vmPath, "vmm.json"), []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ip, err := guestIP(dir, uuid)
+	if err != nil {
+		t.Fatalf("guestIP() error = %v", err)
+	}
+	if ip != "172.16.0.5" {
+		t.Errorf("guestIP() = %q, want 172.16.0.5", ip)
+	}
 }
 
 func TestExtractTransitionKeys(t *testing.T) {
