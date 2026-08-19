@@ -191,6 +191,15 @@ spec:
             - -platform-dir=/var/lib/ukp/data/platform
             - -stats-interval=1m
             - -debug=true
+            # The output file lives on ukp-run, a hostPath ukpd also depends
+            # on — left unbounded it can fill that volume. state-projector
+            # rotates by rename (safe for anything already tailing the file,
+            # see README "Rotation") once it hits 64MB; -rotate-max-age is a
+            # disk-safety backstop, not the primary cleanup path — that's
+            # Vector's job, once it exists, since only it knows a file was
+            # fully shipped.
+            - -rotate-size-mb=64
+            - -rotate-max-age=48h
           resources:
             requests:
               cpu: 10m

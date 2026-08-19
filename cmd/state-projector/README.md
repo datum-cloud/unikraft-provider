@@ -154,7 +154,7 @@ envelope worth knowing.
 Every failure here is silent by nature: an event whose fields we cannot read
 produces no record, which looks exactly like an idle node. So each stage logs a
 greppable `tag key=value` line. Tags: `boot`, `podwatch`, `podindex`, `conn`,
-`event`, `window`, `resolve`, `record`, `stats`. `-debug` adds per-event,
+`event`, `window`, `resolve`, `record`, `rotate`, `stats`. `-debug` adds per-event,
 per-pod and per-resolution detail; everything below is on by default.
 
 **Start with the `stats` heartbeat** (every `-stats-interval`, default 1m) — one
@@ -165,7 +165,7 @@ stats uptime=5m0s conns=1 events_received=42 events_wrong_type=0 \
   dropped_no_uuid=0 dropped_no_state=0 decode_errors=0 \
   windows_open=3 windows_opened=7 windows_closed=4 \
   records_written=19 write_errors=0 unresolved=0 indexed_pod_ips=12 \
-  watch_errors=0 stale_events=0 overbilled=0
+  watch_errors=0 stale_events=0 overbilled=0 rotations=0 rotation_deletes=0
 ```
 
 Reading it:
@@ -200,6 +200,31 @@ window closed uuid=dda7fe99-… prev="running" new="stopping" total_s=612.4 reco
 
 `record written` logs the emitted record in full — it is the line to diff
 against what Vector actually shipped.
+
+### Rotation
+
+`vm-state.usage` lives on `ukp-run`, a hostPath `ukpd` also depends on — left
+to grow forever, it can fill that volume and take the real runtime down with
+it, not just billing. `-rotate-size-mb` (default `64`) renames the file once
+it reaches that size; the next write recreates it fresh. Renaming, not
+truncating, is what makes this safe for a consumer that already has the file
+open: a rename only changes a directory entry, so an existing open handle
+(Vector's, once it exists) keeps reading the same underlying data to
+whatever became its final content, then separately picks up the new file by
+re-globbing the directory.
+
+Deleting a rotated file is properly **Vector's job**, once it exists — only
+it knows a file was fully shipped downstream. `-rotate-max-age` (default
+`48h`) is a disk-safety backstop for the gap before that's wired up, or if
+Vector is ever down longer than the window — not the primary cleanup path.
+It should rarely if ever fire in a healthy system; if `rotation_deletes` in
+the `stats` heartbeat is climbing, something upstream (Vector, or the
+`billing-usage-collector-unikraft` pipeline) is stuck or missing.
+
+```
+rotate done from=/var/run/ukp/vm-state.usage to=/var/run/ukp/vm-state.usage.1755600000 size_bytes=67108992 threshold_bytes=67108864
+rotate deleted reason=age_backstop path=/var/run/ukp/vm-state.usage.1755400000 age=48h2m1s max_age=48h0m0s
+```
 
 ## Verify it works
 

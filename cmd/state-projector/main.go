@@ -51,6 +51,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -173,29 +174,33 @@ type windowState struct {
 // single log line can answer "is anything arriving, and is anything coming out"
 // without correlating a whole log stream.
 type stats struct {
-	connections    atomic.Int64
-	decodeErrors   atomic.Int64
-	eventsReceived atomic.Int64
-	eventsWrongTyp atomic.Int64
-	noUUID         atomic.Int64
-	noState        atomic.Int64
-	windowsOpened  atomic.Int64
-	windowsClosed  atomic.Int64
-	recordsWritten atomic.Int64
-	writeErrors    atomic.Int64
-	unresolved     atomic.Int64
-	podIndexed     atomic.Int64
-	watchErrors    atomic.Int64
-	staleEvents    atomic.Int64
-	overbilled     atomic.Int64
+	connections     atomic.Int64
+	decodeErrors    atomic.Int64
+	eventsReceived  atomic.Int64
+	eventsWrongTyp  atomic.Int64
+	noUUID          atomic.Int64
+	noState         atomic.Int64
+	windowsOpened   atomic.Int64
+	windowsClosed   atomic.Int64
+	recordsWritten  atomic.Int64
+	writeErrors     atomic.Int64
+	unresolved      atomic.Int64
+	podIndexed      atomic.Int64
+	watchErrors     atomic.Int64
+	staleEvents     atomic.Int64
+	overbilled      atomic.Int64
+	rotations       atomic.Int64
+	rotationDeletes atomic.Int64
 }
 
 type projector struct {
-	platformDir   string
-	socketPath    string
-	outputPath    string
-	flushInterval time.Duration
-	debug         bool
+	platformDir     string
+	socketPath      string
+	outputPath      string
+	flushInterval   time.Duration
+	debug           bool
+	rotateSizeBytes int64
+	rotateMaxAge    time.Duration
 
 	stats stats
 
@@ -233,6 +238,15 @@ func main() {
 		statsInterval = flag.Duration("stats-interval", time.Minute, "how often the stats heartbeat line is logged")
 		kubeconfig    = flag.String("kubeconfig", "", "optional path to a kubeconfig; defaults to in-cluster config")
 		debug         = flag.Bool("debug", false, "log every event, attribution and pod-index change")
+		// Rotation: state-projector owns rotating the output file (rename, never
+		// truncate in place — a reader with the file already open keeps reading
+		// the renamed file to its final EOF undisturbed). Deletion of rotated
+		// files is properly Vector's job once it exists (only it knows a file
+		// was fully shipped); -rotate-max-age is a backstop for the gap before
+		// that exists, or if Vector is ever down longer than the window — not
+		// the primary cleanup path. See cmd/state-projector/README.md.
+		rotateSizeMB = flag.Int64("rotate-size-mb", 64, "rotate the output file once it reaches this size (megabytes)")
+		rotateMaxAge = flag.Duration("rotate-max-age", 48*time.Hour, "delete a rotated file once it is this old; a disk-safety backstop, not the primary cleanup path (that's Vector's)")
 	)
 	flag.Parse()
 
@@ -244,8 +258,8 @@ func main() {
 	if *kubeconfig != "" {
 		authMode = "kubeconfig=" + *kubeconfig
 	}
-	log.Printf("boot node=%s socket=%s output=%s platform_dir=%s flush_interval=%s stats_interval=%s auth=%s debug=%t on_state=%q",
-		hostname, *socketPath, *outputPath, *platformDir, *flushInterval, *statsInterval, authMode, *debug, onState)
+	log.Printf("boot node=%s socket=%s output=%s platform_dir=%s flush_interval=%s stats_interval=%s auth=%s debug=%t on_state=%q rotate_size_mb=%d rotate_max_age=%s",
+		hostname, *socketPath, *outputPath, *platformDir, *flushInterval, *statsInterval, authMode, *debug, onState, *rotateSizeMB, *rotateMaxAge)
 
 	cfg, err := k8sClientConfig(*kubeconfig)
 	if err != nil {
@@ -257,13 +271,15 @@ func main() {
 	}
 
 	p := &projector{
-		platformDir:   *platformDir,
-		socketPath:    *socketPath,
-		outputPath:    *outputPath,
-		flushInterval: *flushInterval,
-		debug:         *debug,
-		pods:          make(map[string]*podInfo),
-		windows:       make(map[string]*windowState),
+		platformDir:     *platformDir,
+		socketPath:      *socketPath,
+		outputPath:      *outputPath,
+		flushInterval:   *flushInterval,
+		debug:           *debug,
+		rotateSizeBytes: *rotateSizeMB * 1024 * 1024,
+		rotateMaxAge:    *rotateMaxAge,
+		pods:            make(map[string]*podInfo),
+		windows:         make(map[string]*windowState),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -603,6 +619,7 @@ func (p *projector) periodicFlush(ctx context.Context) {
 			if open > 0 {
 				p.debugf("window flush_cycle open=%d flushed=%d skipped=%d", open, flushed, skipped)
 			}
+			p.cleanupOldRotations()
 		}
 	}
 }
@@ -644,6 +661,79 @@ func (p *projector) emitWindow(w *windowState, end time.Time, cause string) {
 	// the line to compare against what Vector shipped.
 	log.Printf("record written cause=%s id=%s uuid=%s project=%s instance=%s vcpu=%d memory_bytes=%d start=%s end=%s duration_s=%.1f",
 		cause, rec.ID, rec.UUID, rec.Project, rec.Instance, rec.VCPU, rec.MemoryBytes, rec.Start, rec.End, rec.DurationS)
+	p.rotateIfNeeded()
+}
+
+// rotateIfNeeded renames the output file once it reaches rotateSizeBytes, so
+// the live file a reader has open keeps growing under its original name while
+// a rotated-away one stops changing and gets a final EOF. The next
+// appendRecord recreates outputPath fresh (O_CREATE). Renaming — never
+// truncating in place — is what makes this safe for something already
+// reading the file: a rename only changes a directory entry, so an existing
+// open handle keeps reading the same underlying data, undisturbed, to
+// whatever became its final content.
+func (p *projector) rotateIfNeeded() {
+	if p.rotateSizeBytes <= 0 {
+		return
+	}
+	info, err := os.Stat(p.outputPath)
+	if err != nil {
+		return // nothing to rotate yet
+	}
+	if info.Size() < p.rotateSizeBytes {
+		return
+	}
+	rotated := fmt.Sprintf("%s.%d", p.outputPath, time.Now().Unix())
+	if err := os.Rename(p.outputPath, rotated); err != nil {
+		log.Printf("rotate error=%v path=%s size_bytes=%d", err, p.outputPath, info.Size())
+		return
+	}
+	p.stats.rotations.Add(1)
+	log.Printf("rotate done from=%s to=%s size_bytes=%d threshold_bytes=%d",
+		p.outputPath, rotated, info.Size(), p.rotateSizeBytes)
+}
+
+// cleanupOldRotations deletes rotated files older than rotateMaxAge. This is
+// a disk-safety backstop, not the primary cleanup path — the correct owner of
+// deletion is Vector, which alone knows a file was fully shipped downstream;
+// this only exists for the gap before Vector is wired up, or if it is ever
+// down longer than rotateMaxAge. Age is read from the rotation timestamp
+// embedded in the filename by rotateIfNeeded, not the file's mtime, so it
+// reflects "time since rotated" exactly rather than "time since last write"
+// (which rename does not update anyway).
+func (p *projector) cleanupOldRotations() {
+	if p.rotateMaxAge <= 0 {
+		return
+	}
+	matches, err := filepath.Glob(p.outputPath + ".*")
+	if err != nil {
+		log.Printf("rotate cleanup_error err=%v", err)
+		return
+	}
+	now := time.Now()
+	for _, f := range matches {
+		idx := strings.LastIndex(f, ".")
+		if idx < 0 {
+			continue
+		}
+		ts, err := strconv.ParseInt(f[idx+1:], 10, 64)
+		if err != nil {
+			// Not one of ours (or malformed) — skip rather than guess at
+			// deleting a file we didn't create.
+			continue
+		}
+		age := now.Sub(time.Unix(ts, 0))
+		if age < p.rotateMaxAge {
+			continue
+		}
+		if err := os.Remove(f); err != nil {
+			log.Printf("rotate delete_error path=%s age=%s err=%v", f, age.Round(time.Second), err)
+			continue
+		}
+		p.stats.rotationDeletes.Add(1)
+		log.Printf("rotate deleted reason=age_backstop path=%s age=%s max_age=%s",
+			f, age.Round(time.Second), p.rotateMaxAge)
+	}
 }
 
 // recordFor resolves the instance's identity/resources and builds the record.
@@ -739,14 +829,15 @@ func (p *projector) logStats(ctx context.Context, interval time.Duration) {
 				"dropped_no_uuid=%d dropped_no_state=%d decode_errors=%d "+
 				"windows_open=%d windows_opened=%d windows_closed=%d "+
 				"records_written=%d write_errors=%d unresolved=%d indexed_pod_ips=%d watch_errors=%d "+
-				"stale_events=%d overbilled=%d",
+				"stale_events=%d overbilled=%d rotations=%d rotation_deletes=%d",
 				time.Since(start).Round(time.Second),
 				p.stats.connections.Load(), p.stats.eventsReceived.Load(), p.stats.eventsWrongTyp.Load(),
 				p.stats.noUUID.Load(), p.stats.noState.Load(), p.stats.decodeErrors.Load(),
 				open, p.stats.windowsOpened.Load(), p.stats.windowsClosed.Load(),
 				p.stats.recordsWritten.Load(), p.stats.writeErrors.Load(),
 				p.stats.unresolved.Load(), indexed, p.stats.watchErrors.Load(),
-				p.stats.staleEvents.Load(), p.stats.overbilled.Load())
+				p.stats.staleEvents.Load(), p.stats.overbilled.Load(),
+				p.stats.rotations.Load(), p.stats.rotationDeletes.Load())
 		}
 	}
 }
