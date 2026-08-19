@@ -26,6 +26,9 @@ spec:
       # pulls ukpd's :45233 endpoints directly), not by annotation-based
       # discovery — so no prometheus.io/scrape annotations here.
     spec:
+      # Service account for the state-projector sidecar's pod-read RBAC (it
+      # correlates guest IPs -> provider Pods to attribute usage to a project).
+      serviceAccountName: ukp-runtime
       hostNetwork: true
       hostIPC: true
       dnsPolicy: Default
@@ -170,6 +173,51 @@ spec:
             - name: host-machine-id
               mountPath: /var/lib/dbus/machine-id
               readOnly: true
+        # Per-second usage billing: listens on the vm.state_change socket sink,
+        # attributes each instance to its project (guest IP -> provider Pod),
+        # and appends windowed usage JSONL to /var/run/ukp/vm-state.usage for the
+        # edge billing-usage-collector Vector agent to tail. See
+        # docs/enhancements/per-second-usage-billing/.
+        - name: state-projector
+          image: ghcr.io/datum-cloud/ukp-state-projector:latest
+          imagePullPolicy: IfNotPresent
+          # Verbose while per-second billing is being validated: -debug adds a
+          # line per event, per attribution and per pod-index change, on top of
+          # the always-on window/record lines and the stats heartbeat. Drop that
+          # arg once the pipeline is trusted — on a busy node it is chatty.
+          args:
+            - -socket=/var/run/ukp/vm-state.sock
+            - -output=/var/run/ukp/vm-state.usage
+            - -platform-dir=/var/lib/ukp/data/platform
+            - -stats-interval=1m
+            - -debug=true
+            # The output file lives on ukp-run, a hostPath ukpd also depends
+            # on — left unbounded it can fill that volume. state-projector
+            # rotates by rename (safe for anything already tailing the file,
+            # see README "Rotation") once it hits 64MB; -rotate-max-age is a
+            # disk-safety backstop, not the primary cleanup path — that's
+            # Vector's job, once it exists, since only it knows a file was
+            # fully shipped.
+            - -rotate-size-mb=64
+            - -rotate-max-age=48h
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          securityContext:
+            privileged: true
+          volumeMounts:
+            # Reads ukpd's per-instance vmm.json to resolve uuid -> guest IP.
+            - name: ukp-data
+              mountPath: /var/lib/ukp
+              readOnly: true
+            # Listens on /run/ukp/vm-state.sock and appends enriched usage to
+            # /run/ukp/vm-state.usage (== /var/run/ukp in-container).
+            - name: ukp-run
+              mountPath: /var/run/ukp
       volumes:
         # Persistent runtime data lives on the node's XFS-quota UserVolume,
         # which Talos mounts at /var/mnt/ukp (the default /var is not a

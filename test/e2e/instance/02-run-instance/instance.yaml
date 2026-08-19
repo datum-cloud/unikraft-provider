@@ -2,6 +2,20 @@ apiVersion: compute.datumapis.com/v1alpha
 kind: Instance
 metadata:
   name: e2e-run-instance
+  # Keep the guest awake for the whole test. kraftlet (vendored) creates the
+  # microVM with a scale-to-zero idle policy and a default ~3s cooldown, so an
+  # idle guest is parked to standby shortly after boot — which drops Available
+  # back to Unknown and makes the assert below flaky. Pinning the idle cooldown
+  # well past the test's timeouts (assert 120s + the ~80s attribution poll)
+  # keeps scale-to-zero enabled/stateful but never parks the guest during the
+  # run. No guest network is needed (the e2e TAP is ENODEV), so there is no
+  # reachable endpoint to keep alive with traffic. The provider mirrors these
+  # cloud.unikraft.v1.* annotations verbatim onto the Pod, where kraftlet reads
+  # them (see examples/instance.yaml).
+  annotations:
+    cloud.unikraft.v1.instances/scale_to_zero.policy: "on"
+    cloud.unikraft.v1.instances/scale_to_zero.stateful: "true"
+    cloud.unikraft.v1.instances/scale_to_zero.cooldown_time_ms: "600000" # 10 min — never park during the test
 spec:
   runtime:
     resources:

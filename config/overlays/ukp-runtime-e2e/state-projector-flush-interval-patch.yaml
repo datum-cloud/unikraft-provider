@@ -1,0 +1,29 @@
+# The base's 5-minute flush-interval is right for production (no reason to
+# write incomplete windows more often) but far longer than chainsaw's timeouts
+# (test/e2e/.chainsaw.yaml caps assert/exec at 120s/60s). Without a stop event,
+# the e2e instance never leaves "running", so nothing gets flushed to
+# vm-state.usage within the test's window unless this is shortened here.
+#
+# NOTE: a strategic-merge patch on a plain list (no merge key) replaces the
+# whole list, not just the one entry being changed — this must be kept in
+# sync with the base's full args list (daemonset.yaml), or new flags added
+# there silently vanish here and the binary falls back to its own defaults
+# instead of the explicit config every other flag gets.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ukp-runtime
+spec:
+  template:
+    spec:
+      containers:
+        - name: state-projector
+          args:
+            - -socket=/var/run/ukp/vm-state.sock
+            - -output=/var/run/ukp/vm-state.usage
+            - -platform-dir=/var/lib/ukp/data/platform
+            - -stats-interval=1m
+            - -debug=true
+            - -rotate-size-mb=64
+            - -rotate-max-age=48h
+            - -flush-interval=10s

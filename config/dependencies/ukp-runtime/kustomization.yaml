@@ -3,10 +3,14 @@ kind: Kustomization
 namespace: unikraft-system
 resources:
   - daemonset.yaml
+  - serviceaccount.yaml
+  - state-projector-rbac.yaml
 # CI stamps the commit-pinned tag here at bundle-publish time; the :latest default
 # keeps `kustomize build` and local e2e working (e2e overrides with ukp-runtime:e2e).
 images:
   - name: ghcr.io/datum-cloud/ukp-runtime
+    newTag: latest
+  - name: ghcr.io/datum-cloud/ukp-state-projector
     newTag: latest
 # The runtime configuration is injected as a ConfigMap. The generated
 # name carries a content hash, so config changes roll the DaemonSet.

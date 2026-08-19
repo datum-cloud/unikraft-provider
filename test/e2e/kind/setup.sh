@@ -49,6 +49,17 @@ log "load images into kind"
 docker tag "$RUNTIME_IMAGE" ghcr.io/datum-cloud/ukp-runtime:e2e
 kind load docker-image ghcr.io/datum-cloud/ukp-runtime:e2e --name $CLUSTER >/dev/null
 kind load docker-image "$PROVIDER_IMAGE" --name $CLUSTER >/dev/null
+# The state-projector sidecar runs a separate image. It builds from this repo
+# with no vendor secrets (unlike ukp-runtime), so default to building it here so
+# the ukp-runtime-e2e overlay's :e2e pin resolves; allow a prebuilt
+# STATE_PROJECTOR_IMAGE to override.
+log "build the state-projector image"
+if [ -z "${STATE_PROJECTOR_IMAGE:-}" ]; then
+  STATE_PROJECTOR_IMAGE=ghcr.io/datum-cloud/ukp-state-projector:e2e
+  docker build -t "$STATE_PROJECTOR_IMAGE" "$repo/build/state-projector"
+fi
+docker tag "$STATE_PROJECTOR_IMAGE" ghcr.io/datum-cloud/ukp-state-projector:e2e
+kind load docker-image ghcr.io/datum-cloud/ukp-state-projector:e2e --name $CLUSTER >/dev/null
 
 log "cert-manager + Flux (control-plane dependencies)"
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml >/dev/null

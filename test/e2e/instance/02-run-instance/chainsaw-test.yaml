@@ -43,3 +43,48 @@ spec:
                   upstream.instance: e2e-run-instance
               status:
                 phase: Running
+    # state-projector is the runtime-side half of per-second usage billing
+    # (cmd/state-projector/README.md): it watches this same instance's
+    # vm.state_change stream and should have attributed a windowed usage
+    # record to this test's namespace by now. Nothing above exercises that
+    # path — the Instance/Pod asserts only prove the VM booted. The e2e
+    # overlay shortens state-projector's flush interval to 10s (production
+    # stays at 5m) specifically so this can assert within a normal timeout
+    # instead of needing to wait for a flush or stop the instance.
+    - name: assert state-projector attributed a usage record to this instance
+      try:
+        - script:
+            timeout: 90s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              POD=$(kubectl -n unikraft-system get pod -l app=ukp-runtime -o jsonpath='{.items[0].metadata.name}')
+              # state-projector's uuid -> guest IP resolution has so far always
+              # failed against the real runtime (reason=netdev_ip_missing) — its
+              # regex was copied from ukp-telemetry's ip-surfacer.sh (not in this
+              # repo), with no vendor doc mentioning vmm.json at all. Dump the
+              # real file every run, unconditionally, until that's fixed and
+              # confirmed working — this is ground truth to fix it against
+              # rather than another guess.
+              echo "--- vmm.json for this instance's workspace dir(s) ---"
+              kubectl -n unikraft-system exec "$POD" -c ukpd -- \
+                sh -c 'for f in /var/lib/ukp/data/platform/*/vmm.json; do echo "-- $f --"; cat "$f"; echo; done' 2>&1
+              for i in $(seq 1 40); do
+                POD=$(kubectl -n unikraft-system get pod -l app=ukp-runtime -o jsonpath='{.items[0].metadata.name}')
+                # -c ukpd, not state-projector: state-projector runs on
+                # distroless/static (no shell, no grep/cat at all) — ukpd
+                # shares the same ukp-run volume and has a real userland.
+                if kubectl -n unikraft-system exec "$POD" -c ukpd -- \
+                     grep -q "\"project\":\"$NAMESPACE\".*\"instance\":\"e2e-run-instance\"" \
+                     /var/run/ukp/vm-state.usage; then
+                  echo "found a usage record for $NAMESPACE/e2e-run-instance"
+                  exit 0
+                fi
+                sleep 2
+              done
+              echo "no usage record for $NAMESPACE/e2e-run-instance after ~80s" >&2
+              kubectl -n unikraft-system exec "$POD" -c ukpd -- \
+                cat /var/run/ukp/vm-state.usage >&2 2>&1 || true
+              exit 1

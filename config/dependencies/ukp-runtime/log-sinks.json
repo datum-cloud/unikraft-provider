@@ -8,5 +8,15 @@
     "reliable": false,
     "buffer_size_kb": 64,
     "backoff_time_s": 2
+  },
+  {
+    "name": "vm-state-sink",
+    "type": "socket",
+    "encoding": "json",
+    "path": "/run/ukp/vm-state.sock",
+    "events": ["vm.state_change"],
+    "reliable": false,
+    "buffer_size_kb": 64,
+    "backoff_time_s": 2
   }
 ]

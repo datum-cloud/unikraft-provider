@@ -33,6 +33,24 @@ runs:
         for ns in unikraft-system infra-provider-unikraft-system; do
           kubectl -n "$ns" logs -l control-plane=controller-manager --tail=50 2>/dev/null
         done
+        # state-projector logs every stage (boot, podwatch, event, window,
+        # resolve, record) plus a "stats" heartbeat — this is the only place
+        # that shows whether billing data was actually produced, since chainsaw
+        # never asserts on it.
+        echo "=== state-projector container logs ==="
+        kubectl -n unikraft-system logs -l app=ukp-runtime -c state-projector --tail=200
+        # Read via -c ukpd, not state-projector: state-projector runs on
+        # distroless/static (no shell, no cat/grep at all) — ukpd shares the
+        # same ukp-run volume and has a real userland to exec into.
+        echo "=== vm-state.usage (windowed billing records state-projector wrote) ==="
+        [ -n "$POD" ] && kubectl -n unikraft-system exec "$POD" -c ukpd -- cat /var/run/ukp/vm-state.usage 2>&1
+        # NOTE: state-projector's uuid -> guest IP resolution (guestIP() in
+        # cmd/state-projector/main.go) has so far always failed against the real
+        # runtime ("resolve failed ... netdev_ip_missing" above) — see the
+        # chainsaw test itself for a live vmm.json dump, captured while the
+        # instance still exists. By the time this diagnostics step runs, the
+        # instance is deleted and ukpd has already removed its per-instance
+        # workspace directory, so vmm.json is very likely already gone here.
         echo "=== compute Instances ==="
         kubectl get instances.compute.datumapis.com -A -o wide
         echo "=== microVM pods (managed-by infra-provider-unikraft) + events ==="
