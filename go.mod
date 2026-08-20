@@ -7,8 +7,8 @@ require (
 	// compute#125 (SandboxContainer.Command/Args) and the Instance "Running" ->
 	// "Available" condition rename that this provider owns.
 	// Repin to a stable go.datum.net/compute tag once the #107 chain reaches compute main.
-	go.datum.net/compute v0.8.0-dev.7.0.20260820210555-3cbe6ce2e2de
-	go.datum.net/network-services-operator v0.25.6-0.20260814125050-f3a972d9da33
+	go.datum.net/compute v0.8.0-dev.7.0.20260820234500-4fc9371c0316
+	go.datum.net/network-services-operator v0.26.1-0.20260820234206-5bb5caf46998
 	golang.org/x/sync v0.22.0 // indirect
 	k8s.io/api v0.36.2
 	k8s.io/apimachinery v0.36.2
