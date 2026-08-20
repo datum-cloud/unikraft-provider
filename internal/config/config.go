@@ -140,4 +140,27 @@ type DownstreamResourceManagementConfig struct {
 	// +optional
 	// +default=true
 	EnableCNI bool `json:"enableCNI,omitempty"`
+
+	// EnableVPCNetworking attaches every Instance to the tenant VPC its network
+	// interfaces belong to: the provider declares a VPCAttachment per interface
+	// carrying the addresses NSO allocated, waits for the matching
+	// NetworkAttachmentDefinition, and points the Pod at it. Like EnableCNI this
+	// is a platform-wide setting rather than a per-Instance one.
+	// Defaults to disabled; set to true only in cells that run galactic and the
+	// VPC controller.
+	//
+	// +optional
+	// +default=false
+	EnableVPCNetworking bool `json:"enableVPCNetworking,omitempty"`
+
+	// MultusNetworkAnnotation selects the annotation used to attach an Instance
+	// Pod to its NetworkAttachmentDefinitions. The default adds the VPC interface
+	// as a secondary network, keeping Cilium as the Pod's default network so the
+	// Pod keeps its cluster IP and the Service created alongside every Instance.
+	// Set it to "v1.multus-cni.io/default-network" to replace the Pod's default
+	// network instead.
+	//
+	// +optional
+	// +default="k8s.v1.cni.cncf.io/networks"
+	MultusNetworkAnnotation string `json:"multusNetworkAnnotation,omitempty"`
 }

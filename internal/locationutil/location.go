@@ -11,15 +11,18 @@ import (
 
 // GetLocation returns the location for the provided location reference, and
 // whether or not the resource associated with the location should be processed.
+// A LocationReference carries only a name, so the namespace of the referring
+// resource is passed in.
 func GetLocation(
 	ctx context.Context,
 	c client.Client,
+	namespace string,
 	locationRef networkingv1alpha.LocationReference,
 	locationClassName string,
 ) (*networkingv1alpha.Location, bool, error) {
 	var location networkingv1alpha.Location
 	locationObjectKey := client.ObjectKey{
-		Namespace: locationRef.Namespace,
+		Namespace: namespace,
 		Name:      locationRef.Name,
 	}
 	if err := c.Get(ctx, locationObjectKey, &location); err != nil {
