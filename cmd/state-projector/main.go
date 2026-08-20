@@ -70,6 +70,36 @@ import (
 // Instance controller; it names the compute Instance the pod backs.
 const upstreamInstanceLabel = "upstream.instance"
 
+// upstreamClusterNameLabel is stamped on the edge Namespace — never the Pod;
+// this repo's own instance_controller_singleclient_test.go asserts the Pod
+// must NOT carry it, calling that "the old multi-cluster routing mechanism
+// that caused BUG-1" — by Karmada federation (go.datum.net/compute's NSO
+// MappedNamespaceResourceStrategy) before any Instance can exist in that
+// namespace. Its value decodes to the real Milo project id.
+//
+// The namespace's own name (ns-<uuid>) is a synthetic, edge-local identifier
+// only — go.datum.net/compute's own controller comments say so explicitly
+// ("does not exist in the project control plane") — NOT the project. Using
+// pod.Namespace directly as the billing "project" was a real bug: verified
+// against a live deployment, label value "cluster-project-htxrg" on namespace
+// "ns-7c30e6d4-..." decodes to project "project-htxrg", the actual project
+// name — nothing like the namespace's own name.
+//
+// Mirrored here (key + decode logic) rather than importing
+// go.miloapis.com/milo/pkg/downstreamclient and go.datum.net/compute's
+// internal/controller/clustername.go, to avoid pulling their much heavier
+// transitive dependency trees (multicluster-runtime, Karmada client, etc.)
+// into this otherwise-minimal static binary for two string constants and a
+// one-line decode.
+const upstreamClusterNameLabel = "meta.datumapis.com/upstream-cluster-name"
+
+// decodeProjectID reverses go.datum.net/compute's EncodeClusterName
+// ("cluster-" + strings.ReplaceAll(name, "/", "_")), returning the real Milo
+// project id from an upstreamClusterNameLabel value.
+func decodeProjectID(encoded string) string {
+	return strings.ReplaceAll(strings.TrimPrefix(encoded, "cluster-"), "_", "/")
+}
+
 // onState is the single runtime state that counts as "running/consuming". Every
 // other state (standby, stopped, stopping, draining, terminated) is "off" and
 // bills nothing.
@@ -174,23 +204,24 @@ type windowState struct {
 // single log line can answer "is anything arriving, and is anything coming out"
 // without correlating a whole log stream.
 type stats struct {
-	connections     atomic.Int64
-	decodeErrors    atomic.Int64
-	eventsReceived  atomic.Int64
-	eventsWrongTyp  atomic.Int64
-	noUUID          atomic.Int64
-	noState         atomic.Int64
-	windowsOpened   atomic.Int64
-	windowsClosed   atomic.Int64
-	recordsWritten  atomic.Int64
-	writeErrors     atomic.Int64
-	unresolved      atomic.Int64
-	podIndexed      atomic.Int64
-	watchErrors     atomic.Int64
-	staleEvents     atomic.Int64
-	overbilled      atomic.Int64
-	rotations       atomic.Int64
-	rotationDeletes atomic.Int64
+	connections         atomic.Int64
+	decodeErrors        atomic.Int64
+	eventsReceived      atomic.Int64
+	eventsWrongTyp      atomic.Int64
+	noUUID              atomic.Int64
+	noState             atomic.Int64
+	windowsOpened       atomic.Int64
+	windowsClosed       atomic.Int64
+	recordsWritten      atomic.Int64
+	writeErrors         atomic.Int64
+	unresolved          atomic.Int64
+	podIndexed          atomic.Int64
+	watchErrors         atomic.Int64
+	staleEvents         atomic.Int64
+	overbilled          atomic.Int64
+	rotations           atomic.Int64
+	rotationDeletes     atomic.Int64
+	projectLabelMissing atomic.Int64
 }
 
 type projector struct {
@@ -207,6 +238,10 @@ type projector struct {
 	// resolved pods: guest IP (podIP) -> info. Guarded by podMu.
 	mu   sync.RWMutex
 	pods map[string]*podInfo
+
+	// namespace name -> decoded Milo project id. See upstreamClusterNameLabel.
+	nsMu     sync.RWMutex
+	projects map[string]string
 
 	// per-instance running windows.
 	winMu   sync.Mutex
@@ -279,6 +314,7 @@ func main() {
 		rotateSizeBytes: *rotateSizeMB * 1024 * 1024,
 		rotateMaxAge:    *rotateMaxAge,
 		pods:            make(map[string]*podInfo),
+		projects:        make(map[string]string),
 		windows:         make(map[string]*windowState),
 	}
 
@@ -313,26 +349,43 @@ func k8sClientConfig(kubeconfig string) (*rest.Config, error) {
 	return rest.InClusterConfig()
 }
 
-// watchPods maintains the guest-IP -> (project, instance, resources) index by
-// watching provider Pods cluster-wide (they live on the Kraftlet virtual node, so
-// node-scoping cannot apply — same constraint ukp-telemetry's k8sattributes has).
+// watchPods maintains two indexes off a single shared informer factory:
+// guest-IP -> (project, instance, resources), from a cluster-wide watch of
+// provider Pods (they live on the Kraftlet virtual node, so node-scoping
+// cannot apply — same constraint ukp-telemetry's k8sattributes has); and
+// namespace -> decoded Milo project id, from a cluster-wide watch of
+// Namespaces (see upstreamClusterNameLabel) — the project a Pod belongs to is
+// not derivable from the Pod alone.
 func (p *projector) watchPods(ctx context.Context, clientset *kubernetes.Clientset) {
 	factory := informers.NewSharedInformerFactory(clientset, 30*time.Second)
-	informer := factory.Core().V1().Pods().Informer()
+	podInformer := factory.Core().V1().Pods().Informer()
+	nsInformer := factory.Core().V1().Namespaces().Informer()
 
-	// A denied pod watch (missing RBAC) would otherwise show up only as every
+	// A denied watch (missing RBAC) would otherwise show up only as every
 	// instance being unattributable, so name it at the source.
-	if err := informer.SetWatchErrorHandlerWithContext(func(_ context.Context, _ *cache.Reflector, err error) {
+	watchErrHandler := func(_ context.Context, _ *cache.Reflector, err error) {
 		p.stats.watchErrors.Add(1)
 		log.Printf("podwatch error=%v (check the ukp-state-projector-pod-reader ClusterRole/Binding)", err)
-	}); err != nil {
+	}
+	if err := podInformer.SetWatchErrorHandlerWithContext(watchErrHandler); err != nil {
+		log.Printf("podwatch warn=set_error_handler err=%v", err)
+	}
+	if err := nsInformer.SetWatchErrorHandlerWithContext(watchErrHandler); err != nil {
 		log.Printf("podwatch warn=set_error_handler err=%v", err)
 	}
 
-	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    func(obj interface{}) { p.upsertPod(toPod(obj)) },
 		UpdateFunc: func(_, newObj interface{}) { p.upsertPod(toPod(newObj)) },
 		DeleteFunc: func(obj interface{}) { p.deletePod(toPod(obj)) },
+	})
+	if err != nil {
+		log.Fatalf("podwatch fatal=add_event_handler err=%v", err)
+	}
+	_, err = nsInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    func(obj interface{}) { p.upsertNamespace(toNamespace(obj)) },
+		UpdateFunc: func(_, newObj interface{}) { p.upsertNamespace(toNamespace(newObj)) },
+		DeleteFunc: func(obj interface{}) { p.deleteNamespace(toNamespace(obj)) },
 	})
 	if err != nil {
 		log.Fatalf("podwatch fatal=add_event_handler err=%v", err)
@@ -341,18 +394,22 @@ func (p *projector) watchPods(ctx context.Context, clientset *kubernetes.Clients
 	// Report when the index is actually usable. Until this line appears,
 	// attribution failures are expected rather than a misconfiguration.
 	go func() {
-		if !cache.WaitForCacheSync(ctx.Done(), informer.HasSynced) {
+		if !cache.WaitForCacheSync(ctx.Done(), podInformer.HasSynced, nsInformer.HasSynced) {
 			log.Printf("podwatch warn=cache_sync_aborted")
 			return
 		}
 		p.mu.RLock()
 		indexed := len(p.pods)
 		p.mu.RUnlock()
-		log.Printf("podwatch synced indexed_pod_ips=%d", indexed)
+		p.nsMu.RLock()
+		nsIndexed := len(p.projects)
+		p.nsMu.RUnlock()
+		log.Printf("podwatch synced indexed_pod_ips=%d indexed_projects=%d", indexed, nsIndexed)
 	}()
 
 	log.Printf("podwatch starting scope=cluster-wide resync=30s")
-	informer.Run(ctx.Done())
+	factory.Start(ctx.Done())
+	<-ctx.Done()
 	log.Printf("podwatch stopped")
 }
 
@@ -368,13 +425,69 @@ func toPod(obj interface{}) *corev1.Pod {
 	return nil
 }
 
+func toNamespace(obj interface{}) *corev1.Namespace {
+	switch t := obj.(type) {
+	case *corev1.Namespace:
+		return t
+	case cache.DeletedFinalStateUnknown:
+		if ns, ok := t.Obj.(*corev1.Namespace); ok {
+			return ns
+		}
+	}
+	return nil
+}
+
+// upsertNamespace caches the decoded Milo project id for a namespace, read
+// from upstreamClusterNameLabel. A namespace with no such label (most of the
+// cluster — this is stamped only on edge namespaces federated for a project,
+// not e.g. kube-system) simply has no entry; projectForNamespace's ok=false
+// return distinguishes "not a project namespace" from "resolved".
+func (p *projector) upsertNamespace(ns *corev1.Namespace) {
+	if ns == nil {
+		return
+	}
+	encoded, ok := ns.Labels[upstreamClusterNameLabel]
+	p.nsMu.Lock()
+	if ok {
+		p.projects[ns.Name] = decodeProjectID(encoded)
+	} else {
+		delete(p.projects, ns.Name)
+	}
+	p.nsMu.Unlock()
+}
+
+func (p *projector) deleteNamespace(ns *corev1.Namespace) {
+	if ns == nil {
+		return
+	}
+	p.nsMu.Lock()
+	delete(p.projects, ns.Name)
+	p.nsMu.Unlock()
+}
+
+// projectForNamespace returns the decoded Milo project id for a namespace, and
+// whether it resolved. false means either the namespace hasn't been indexed
+// yet, or it genuinely carries no upstreamClusterNameLabel.
+func (p *projector) projectForNamespace(ns string) (string, bool) {
+	p.nsMu.RLock()
+	defer p.nsMu.RUnlock()
+	project, ok := p.projects[ns]
+	return project, ok
+}
+
 func (p *projector) upsertPod(pod *corev1.Pod) {
 	if pod == nil || pod.Status.PodIP == "" {
 		return
 	}
+	instance := pod.Labels[upstreamInstanceLabel]
+	// project is "" when unresolved (namespace not yet indexed, or genuinely
+	// missing the label) — recordFor emits "-" rather than ever falling back to
+	// pod.Namespace, which is a synthetic edge-local id, not the project (see
+	// upstreamClusterNameLabel).
+	project, projectOK := p.projectForNamespace(pod.Namespace)
 	info := &podInfo{
-		project:  pod.Namespace,
-		instance: pod.Labels[upstreamInstanceLabel],
+		project:  project,
+		instance: instance,
 	}
 	for _, c := range pod.Spec.Containers {
 		info.vcpuMilli = max64(info.vcpuMilli, milliCPU(c.Resources.Limits[corev1.ResourceCPU]))
@@ -403,9 +516,18 @@ func (p *projector) upsertPod(pod *corev1.Pod) {
 		p.debugf("podindex updated ip=%s %s (was %s) pod=%s/%s",
 			pod.Status.PodIP, info, prev, pod.Namespace, pod.Name)
 	}
-	if info.instance == "" {
+	if instance == "" {
 		p.debugf("podindex warn=missing_instance_label ip=%s pod=%s/%s label=%s",
 			pod.Status.PodIP, pod.Namespace, pod.Name, upstreamInstanceLabel)
+	} else if !projectOK {
+		// A real provider Pod (it carries upstream.instance) whose namespace has
+		// no upstream-cluster-name label. compute's own controller treats an
+		// absent label here as misconfiguration, not a transient state — loud,
+		// unconditional (not debug-gated), since this is a billing-correctness
+		// signal, same tier as "resolve failed" elsewhere in this file.
+		p.stats.projectLabelMissing.Add(1)
+		log.Printf("podindex ALERT=missing_project_label ns=%s pod=%s/%s label=%s (record emitted with project=\"-\")",
+			pod.Namespace, pod.Namespace, pod.Name, upstreamClusterNameLabel)
 	}
 }
 
@@ -773,7 +895,12 @@ func (p *projector) recordFor(w *windowState, end time.Time) usageRecord {
 		DurationS:   dur,
 	}
 	if info != nil {
-		rec.Project = info.project
+		// An empty project (namespace unresolved or genuinely unlabeled) stays
+		// "-" rather than becoming an empty string in the record — same
+		// fail-loud convention as the fully-unresolved case above.
+		if info.project != "" {
+			rec.Project = info.project
+		}
 		rec.Instance = info.instance
 		rec.VCPU = coresFromMilli(info.vcpuMilli)
 		rec.MemoryBytes = info.memoryBytes
@@ -829,7 +956,7 @@ func (p *projector) logStats(ctx context.Context, interval time.Duration) {
 				"dropped_no_uuid=%d dropped_no_state=%d decode_errors=%d "+
 				"windows_open=%d windows_opened=%d windows_closed=%d "+
 				"records_written=%d write_errors=%d unresolved=%d indexed_pod_ips=%d watch_errors=%d "+
-				"stale_events=%d overbilled=%d rotations=%d rotation_deletes=%d",
+				"stale_events=%d overbilled=%d rotations=%d rotation_deletes=%d project_label_missing=%d",
 				time.Since(start).Round(time.Second),
 				p.stats.connections.Load(), p.stats.eventsReceived.Load(), p.stats.eventsWrongTyp.Load(),
 				p.stats.noUUID.Load(), p.stats.noState.Load(), p.stats.decodeErrors.Load(),
@@ -837,7 +964,8 @@ func (p *projector) logStats(ctx context.Context, interval time.Duration) {
 				p.stats.recordsWritten.Load(), p.stats.writeErrors.Load(),
 				p.stats.unresolved.Load(), indexed, p.stats.watchErrors.Load(),
 				p.stats.staleEvents.Load(), p.stats.overbilled.Load(),
-				p.stats.rotations.Load(), p.stats.rotationDeletes.Load())
+				p.stats.rotations.Load(), p.stats.rotationDeletes.Load(),
+				p.stats.projectLabelMissing.Load())
 		}
 	}
 }

@@ -76,11 +76,25 @@ ukpd ──vm.state_change──▶ /var/run/ukp/vm-state.sock ──▶ state-p
 2. **Attribution.** For each instance, the projector resolves:
    `uuid → guest IP` from the node-local `vmm.json`
    (`/var/lib/ukp/data/platform/<uuid>/vmm.json`, `netdev.ip=...`), then
-   `guest IP → project / instance / vcpu / memory` from a **cluster-wide watch of
-   provider Pods** (the guest IP equals the provider Pod's `podIP`; the Pod's
-   namespace is the project, and its container limits are the requested
-   resources). The pod→project index is kept in memory by the watch; no API calls
-   happen per event.
+   `guest IP → instance name / vcpu / memory` from a **cluster-wide watch of
+   provider Pods** (the guest IP equals the provider Pod's `podIP`).
+
+   **The project is not the Pod's namespace.** That namespace name
+   (`ns-<uuid>`) is a synthetic, edge-local identifier Karmada federation
+   assigns to avoid collisions across projects sharing one control plane — it
+   does not exist in the project control plane at all. The real Milo project
+   id is a **label on the Namespace object** (`meta.datumapis.com/upstream-cluster-name`,
+   e.g. `cluster-project-htxrg` → decodes to `project-htxrg`), stamped there by
+   the same federation mechanism before any Instance can exist in it — never on
+   the Pod itself (this repo's own tests assert the Pod must *not* carry it,
+   calling that the legacy multi-cluster routing bug it replaced). So the
+   projector also watches Namespaces cluster-wide, on the same shared informer
+   factory as the Pod watch, and decodes this label the same way
+   `go.datum.net/compute`'s own controller does. A provider Pod whose namespace
+   has no such label is treated as misconfiguration (`podindex ALERT=missing_project_label`),
+   not silently attributed to the namespace's raw name — the record emits
+   `project: "-"` instead. Both indexes are kept in memory by their watches; no
+   API calls happen per event.
 
 3. **Windowing.** Only the `running` state counts as "on" (everything else —
    standby, stopped, stopping, terminated — bills nothing). While an instance is
@@ -93,7 +107,7 @@ ukpd ──vm.state_change──▶ /var/run/ukp/vm-state.sock ──▶ state-p
    `/var/run/ukp/vm-state.usage`:
 
    ```json
-   {"id":"<md5(uuid|start|end)>","project":"<ns>","instance":"<name>","uuid":"...",
+   {"id":"<md5(uuid|start|end)>","project":"<project>","instance":"<name>","uuid":"...",
     "vcpu":N,"memory_bytes":M,"start":"...","end":"...","duration_s":N.N}
    ```
 
@@ -123,9 +137,10 @@ the runtime is:
   (`apps/unikraft-system/edge/ukp-runtime.yaml`, overlay
   `overlays/ukp-runtime`). Publishing the updated bundle rolls the sidecar onto
   every edge cluster automatically.
-- **RBAC:** the sidecar only watches pods
-  (`ClusterRole ukp-state-projector-pod-reader`: get/list/watch) — it never
-  updates anything. See `state-projector-rbac.yaml`.
+- **RBAC:** the sidecar only watches pods and namespaces (the latter needed to
+  resolve the real project — see "Attribution" above)
+  (`ClusterRole ukp-state-projector-pod-reader`: get/list/watch on both) — it
+  never updates anything. See `state-projector-rbac.yaml`.
 - **kind e2e:** the sidecar is built via the e2e workflow (repo-root context) and
   pinned to `:e2e` in `overlays/ukp-runtime-e2e`.
 
@@ -165,8 +180,14 @@ stats uptime=5m0s conns=1 events_received=42 events_wrong_type=0 \
   dropped_no_uuid=0 dropped_no_state=0 decode_errors=0 \
   windows_open=3 windows_opened=7 windows_closed=4 \
   records_written=19 write_errors=0 unresolved=0 indexed_pod_ips=12 \
-  watch_errors=0 stale_events=0 overbilled=0 rotations=0 rotation_deletes=0
+  watch_errors=0 stale_events=0 overbilled=0 rotations=0 rotation_deletes=0 \
+  project_label_missing=0
 ```
+
+`podwatch synced` similarly reports both indexes once caches are usable:
+`podwatch synced indexed_pod_ips=12 indexed_projects=4` — `indexed_projects`
+counts only namespaces that actually carry the project label, so it's normally
+much smaller than the total namespace count in the cluster.
 
 Reading it:
 
@@ -176,6 +197,7 @@ Reading it:
 | `dropped_no_uuid` / `dropped_no_state` rising | the vendor renamed its event fields; each drop logs the raw payload verbatim, so grep `event dropped` and compare against `extractTransition` |
 | `indexed_pod_ips=0` | the pod watch is empty — look for `podwatch error=` (usually the missing `ukp-state-projector-pod-reader` ClusterRole) |
 | `unresolved` rising | attribution failing; `resolve failed` names which stage (`vmm_json_unreadable`, `netdev_ip_missing`, `pod_not_indexed`) |
+| `project_label_missing` rising | a real provider Pod's namespace has no `meta.datumapis.com/upstream-cluster-name` label — `podindex ALERT=missing_project_label` names the namespace; per `compute`'s own controller this is misconfiguration, not transient. Records still emit, with `project: "-"` |
 | `records_written=0` with `windows_open>0` | instances are running but nothing is billed — check `record write_error` and the output path |
 | `write_errors` rising | the output hostPath is not writable; the watermark is not advanced, so the next flush retries the span |
 | `stale_events` / `overbilled` non-zero | see the time-base hazard below |

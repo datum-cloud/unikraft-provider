@@ -17,6 +17,23 @@ spec:
   # and not deployed here.
   description: Start an Instance through the compute API and assert it runs.
   steps:
+    # state-projector's billing "project" comes from a label on the Namespace
+    # object (meta.datumapis.com/upstream-cluster-name), never the namespace's
+    # own name — see cmd/state-projector/README.md "Attribution". In a real
+    # cluster this is stamped by Karmada federation before any Instance can
+    # exist in the namespace; this kind sandbox has no such federation, so
+    # stamp it ourselves to exercise the real decode path end-to-end rather
+    # than only ever hitting the unresolved ("-") fallback.
+    - name: label the test namespace with a Karmada-style project identity
+      try:
+        - apply:
+            resource:
+              apiVersion: v1
+              kind: Namespace
+              metadata:
+                name: ($namespace)
+                labels:
+                  meta.datumapis.com/upstream-cluster-name: cluster-e2e-test-project
     - name: create and start the Instance
       try:
         - apply:
@@ -56,18 +73,19 @@ spec:
         - script:
             timeout: 90s
             env:
-              - name: NAMESPACE
-                value: ($namespace)
+              # The decoded project id, NOT the namespace — state-projector
+              # resolves this from the namespace's upstream-cluster-name label
+              # (stamped by the earlier step), not from $namespace itself. Using
+              # the namespace here would silently reintroduce the bug this test
+              # exists to catch.
+              - name: PROJECT
+                value: e2e-test-project
             content: |
               set -eu
               POD=$(kubectl -n unikraft-system get pod -l app=ukp-runtime -o jsonpath='{.items[0].metadata.name}')
-              # state-projector's uuid -> guest IP resolution has so far always
-              # failed against the real runtime (reason=netdev_ip_missing) — its
-              # regex was copied from ukp-telemetry's ip-surfacer.sh (not in this
-              # repo), with no vendor doc mentioning vmm.json at all. Dump the
-              # real file every run, unconditionally, until that's fixed and
-              # confirmed working — this is ground truth to fix it against
-              # rather than another guess.
+              # Kept for visibility into the uuid -> guest IP resolution path
+              # (guestIP() in cmd/state-projector/main.go) — useful ground truth
+              # if that ever regresses again.
               echo "--- vmm.json for this instance's workspace dir(s) ---"
               kubectl -n unikraft-system exec "$POD" -c ukpd -- \
                 sh -c 'for f in /var/lib/ukp/data/platform/*/vmm.json; do echo "-- $f --"; cat "$f"; echo; done' 2>&1
@@ -77,14 +95,14 @@ spec:
                 # distroless/static (no shell, no grep/cat at all) — ukpd
                 # shares the same ukp-run volume and has a real userland.
                 if kubectl -n unikraft-system exec "$POD" -c ukpd -- \
-                     grep -q "\"project\":\"$NAMESPACE\".*\"instance\":\"e2e-run-instance\"" \
+                     grep -q "\"project\":\"$PROJECT\".*\"instance\":\"e2e-run-instance\"" \
                      /var/run/ukp/vm-state.usage; then
-                  echo "found a usage record for $NAMESPACE/e2e-run-instance"
+                  echo "found a usage record for $PROJECT/e2e-run-instance"
                   exit 0
                 fi
                 sleep 2
               done
-              echo "no usage record for $NAMESPACE/e2e-run-instance after ~80s" >&2
+              echo "no usage record for $PROJECT/e2e-run-instance after ~80s" >&2
               kubectl -n unikraft-system exec "$POD" -c ukpd -- \
                 cat /var/run/ukp/vm-state.usage >&2 2>&1 || true
               exit 1
