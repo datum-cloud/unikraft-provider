@@ -8,6 +8,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // makeProjector returns a projector wired to a temp vmm.json for the given uuid,
@@ -39,6 +42,101 @@ func makeProjector(t *testing.T, uuid, ip string, vcpuMilli, memBytes int64) (*p
 		winMu:   sync.Mutex{},
 	}
 	return p, out
+}
+
+func TestDecodeProjectID(t *testing.T) {
+	cases := []struct{ encoded, want string }{
+		// Real value captured from a live deployment (2026-08-19): namespace
+		// "ns-7c30e6d4-..." carries this label and the actual project is
+		// "project-htxrg" — nothing like the namespace's own opaque name.
+		{"cluster-project-htxrg", "project-htxrg"},
+		// EncodeClusterName replaces "/" with "_" for names containing a path.
+		{"cluster-org_team", "org/team"},
+		{"cluster-", ""},
+	}
+	for _, c := range cases {
+		if got := decodeProjectID(c.encoded); got != c.want {
+			t.Errorf("decodeProjectID(%q) = %q, want %q", c.encoded, got, c.want)
+		}
+	}
+}
+
+// TestUpsertPodResolvesProjectFromNamespaceLabel is the regression guard for
+// the reported bug: state-projector used to set project=pod.Namespace
+// directly, which is a synthetic Karmada-assigned edge identifier
+// (ns-<uuid>), never the real project. The real project is a label on the
+// Namespace object, not the Pod.
+func TestUpsertPodResolvesProjectFromNamespaceLabel(t *testing.T) {
+	p := &projector{
+		pods:     make(map[string]*podInfo),
+		projects: make(map[string]string),
+	}
+	p.upsertNamespace(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "ns-7c30e6d4-b337-4d46-a425-196116dfd5d3",
+			Labels: map[string]string{upstreamClusterNameLabel: "cluster-project-htxrg"},
+		},
+	})
+	p.upsertPod(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "joseszycho-default-dfw-0",
+			Namespace: "ns-7c30e6d4-b337-4d46-a425-196116dfd5d3",
+			Labels:    map[string]string{upstreamInstanceLabel: "joseszycho"},
+		},
+		Status: corev1.PodStatus{PodIP: "10.0.0.9"},
+	})
+
+	info := p.pods["10.0.0.9"]
+	if info == nil {
+		t.Fatal("pod was not indexed")
+	}
+	if info.project != "project-htxrg" {
+		t.Errorf("project = %q, want %q (the namespace's own name must never be used)", info.project, "project-htxrg")
+	}
+	if info.project == "ns-7c30e6d4-b337-4d46-a425-196116dfd5d3" {
+		t.Fatal("project resolved to the raw namespace name — the exact bug this fixes")
+	}
+}
+
+// A provider Pod (carries upstream.instance) in a namespace with no project
+// label must not silently attribute to the namespace's own name — it falls
+// back to unresolved (recordFor emits "-"), and the misconfiguration is
+// counted.
+func TestUpsertPodMissingProjectLabel(t *testing.T) {
+	p := &projector{
+		pods:     make(map[string]*podInfo),
+		projects: make(map[string]string),
+	}
+	p.upsertPod(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "some-instance",
+			Namespace: "ns-unlabeled",
+			Labels:    map[string]string{upstreamInstanceLabel: "some-instance"},
+		},
+		Status: corev1.PodStatus{PodIP: "10.0.0.10"},
+	})
+
+	info := p.pods["10.0.0.10"]
+	if info == nil {
+		t.Fatal("pod was not indexed")
+	}
+	if info.project != "" {
+		t.Errorf("project = %q, want empty (unresolved, not the namespace name)", info.project)
+	}
+	if p.stats.projectLabelMissing.Load() != 1 {
+		t.Errorf("projectLabelMissing = %d, want 1", p.stats.projectLabelMissing.Load())
+	}
+
+	// A non-provider pod (no upstream.instance) in the same unlabeled namespace
+	// is routine — most of the cluster has no project label at all — and must
+	// not count as a misconfiguration.
+	p.upsertPod(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "coredns-x", Namespace: "ns-unlabeled"},
+		Status:     corev1.PodStatus{PodIP: "10.0.0.11"},
+	})
+	if p.stats.projectLabelMissing.Load() != 1 {
+		t.Errorf("projectLabelMissing = %d after a non-provider pod, want still 1", p.stats.projectLabelMissing.Load())
+	}
 }
 
 func TestRotateIfNeeded(t *testing.T) {

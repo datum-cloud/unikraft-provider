@@ -1,13 +1,21 @@
 # RBAC for the ukp-runtime state-projector sidecar: it watches provider Pods
 # cluster-wide to map an instance's guest IP to the project namespace + instance
 # name (upstream.instance label), which it records as usage attribution.
+#
+# Namespaces are also read (not just Pods, despite the ClusterRole's name —
+# left as-is rather than renamed, to avoid a GitOps-reconcile gap swapping one
+# ClusterRole for another): the real Milo project id is a label on the
+# Namespace object (meta.datumapis.com/upstream-cluster-name), never on the
+# Pod — the Pod's own namespace name (ns-<uuid>) is a synthetic, edge-local
+# Karmada identifier, not the project. Using it directly was a real bug, found
+# 2026-08-19 against a live deployment.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: ukp-state-projector-pod-reader
 rules:
   - apiGroups: [""]
-    resources: ["pods"]
+    resources: ["pods", "namespaces"]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
