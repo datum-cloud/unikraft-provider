@@ -42,10 +42,6 @@ const (
 	// instead.
 	ukcCniEnabledAnnotation = "cloud.unikraft.v1.instances/cni-enabled"
 
-	// multusNetworksAnnotation attaches the Pod to a NetworkAttachmentDefinition
-	// as a secondary network, leaving Cilium as the Pod's default network.
-	multusNetworksAnnotation = "k8s.v1.cni.cncf.io/networks"
-
 	// instanceFinalizer gates Instance deletion on teardown of the backing Pod
 	// (and Service). The provider holds this finalizer until it has deleted the
 	// Pod and observed it fully removed, so the Instance — and the upstream
@@ -163,10 +159,6 @@ func (r *InstanceReconciler) handleDeletion(ctx context.Context, instance *compu
 		return ctrl.Result{}, fmt.Errorf("failed to delete service for instance %s: %w", instance.Name, err)
 	}
 
-	if err := r.deleteVPCAttachments(ctx, instance); err != nil {
-		return ctrl.Result{}, err
-	}
-
 	// Gate: do not release the Instance until its backing Pod (and Service) are
 	// fully gone. While either still exists, requeue and wait. The Owns(Pod)/
 	// Owns(Service) watches also re-trigger reconciliation on their final removal;
@@ -234,19 +226,19 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 		return ctrl.Result{}, fmt.Errorf("sandbox runtime is nil")
 	}
 
-	vpcNetworks, vpcReady, err := r.reconcileVPCNetworking(ctx, instance)
+	networkAnnotations, networkReady, err := r.instanceNetworkAnnotations(ctx, instance)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to reconcile vpc networking for instance %s: %w", instance.Name, err)
+		return ctrl.Result{}, fmt.Errorf("failed to resolve network annotations for instance %s: %w", instance.Name, err)
 	}
-	if !vpcReady {
+	if !networkReady {
 		podExists, err := r.podExists(ctx, instance)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
 		if !podExists {
-			// The NAD must exist before the sandbox: Multus resolves the annotation
-			// at sandbox creation and the Pod spec is never rebuilt afterwards.
-			logger.Info("deferring pod creation until vpc networking is ready", "name", instance.Name)
+			// The annotations are resolved at sandbox creation and the Pod spec is
+			// never rebuilt afterwards, so the Pod must not be created without them.
+			logger.Info("deferring pod creation until network annotations are published", "name", instance.Name)
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}
 	}
@@ -286,10 +278,10 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 			delete(instancePod.Annotations, ukcCniEnabledAnnotation)
 		}
 
-		// Attach the guest to its tenant VPC through the NADs the VPC controller
-		// created, one per network interface.
-		if len(vpcNetworks) > 0 {
-			instancePod.Annotations[r.multusAnnotationKey()] = strings.Join(vpcNetworks, ",")
+		// Carry what the networking stack published for this instance's interfaces.
+		// The keys and values are opaque to this provider.
+		for annotation, value := range networkAnnotations {
+			instancePod.Annotations[annotation] = value
 		}
 
 		if instancePod.CreationTimestamp.IsZero() {

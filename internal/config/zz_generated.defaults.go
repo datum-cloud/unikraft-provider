@@ -27,9 +27,6 @@ func SetObjectDefaults_UnikraftProvider(in *UnikraftProvider) {
 	if in.DownstreamResourceManagement.EnableCNI == false {
 		in.DownstreamResourceManagement.EnableCNI = true
 	}
-	if in.DownstreamResourceManagement.MultusNetworkAnnotation == "" {
-		in.DownstreamResourceManagement.MultusNetworkAnnotation = "k8s.v1.cni.cncf.io/networks"
-	}
 	if in.LocationClassName == "" {
 		in.LocationClassName = "self-managed"
 	}
