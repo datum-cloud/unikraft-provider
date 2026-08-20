@@ -18,7 +18,7 @@ require (
 
 require (
 	github.com/k8snetworkplumbingwg/network-attachment-definition-client v1.7.7
-	go.datum.net/cloud v0.0.0-20260730133355-b54fa2052c1a
+	go.datum.net/cloud v0.0.0-20260820222010-dff35859f56d
 	k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3
 )
 

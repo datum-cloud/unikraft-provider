@@ -14,6 +14,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -27,6 +28,10 @@ const (
 	// testNetworkContextName is the network's presence in this location, which
 	// the VPC is named after.
 	testNetworkContextName = "default-us-central-1"
+
+	// testNetworkInterfaceUID is load-bearing: the controller treats a mismatch
+	// as stale rather than binding a recreated interface of the same name.
+	testNetworkInterfaceUID = types.UID("ni-uid-1")
 )
 
 // vpcTestScheme extends the controller test scheme with the networking, cloud
@@ -76,7 +81,7 @@ func boundClaim(instance *computev1alpha.Instance) *networkingv1alpha.NetworkInt
 // allocatedInterface is the NetworkInterface NSO allocated addresses on.
 func allocatedInterface(namespace string) *networkingv1alpha.NetworkInterface {
 	return &networkingv1alpha.NetworkInterface{
-		ObjectMeta: metav1.ObjectMeta{Name: testNetworkInterfaceName, Namespace: namespace},
+		ObjectMeta: metav1.ObjectMeta{Name: testNetworkInterfaceName, Namespace: namespace, UID: testNetworkInterfaceUID},
 		Spec: networkingv1alpha.NetworkInterfaceSpec{
 			Network:       networkingv1alpha.LocalNetworkRef{Name: "default"},
 			InterfaceName: testInterfaceName,
@@ -92,9 +97,11 @@ func allocatedInterface(namespace string) *networkingv1alpha.NetworkInterface {
 	}
 }
 
+// nadFor is the NAD the VPC controller renders from the VPCAttachment, named
+// after the attachment rather than after the interface.
 func nadFor(namespace string) *netattachv1.NetworkAttachmentDefinition {
 	return &netattachv1.NetworkAttachmentDefinition{
-		ObjectMeta: metav1.ObjectMeta{Name: testNetworkInterfaceName, Namespace: namespace},
+		ObjectMeta: metav1.ObjectMeta{Name: vpcAttachmentName(allocatedInterface(namespace)), Namespace: namespace},
 	}
 }
 
@@ -274,6 +281,18 @@ func TestReconcileVPCAttachment_CarriesInterfaceAddresses(t *testing.T) {
 	}
 	if attachment.Spec.Interface.Name != testInterfaceName {
 		t.Errorf("interface name = %q, want %q", attachment.Spec.Interface.Name, testInterfaceName)
+	}
+	if attachment.Spec.Interface.Mode != cloudv1alpha1.VPCAttachmentInterfaceModeHypervisor {
+		t.Errorf("interface mode = %q, want Hypervisor", attachment.Spec.Interface.Mode)
+	}
+	if attachment.Spec.InterfaceRef == nil {
+		t.Fatal("expected interfaceRef to be set")
+	}
+	if attachment.Spec.InterfaceRef.Name != testNetworkInterfaceName {
+		t.Errorf("interfaceRef.name = %q, want %q", attachment.Spec.InterfaceRef.Name, testNetworkInterfaceName)
+	}
+	if attachment.Spec.InterfaceRef.UID != string(testNetworkInterfaceUID) {
+		t.Errorf("interfaceRef.uid = %q, want %q", attachment.Spec.InterfaceRef.UID, testNetworkInterfaceUID)
 	}
 	want := []cloudv1alpha1.IPAddress{"2001:db8:a001::/96", "10.128.0.2/32"}
 	if len(attachment.Spec.Interface.Addresses) != len(want) {

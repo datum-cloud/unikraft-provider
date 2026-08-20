@@ -116,21 +116,21 @@ func (r *InstanceReconciler) reconcileVPCNetworking(
 			continue
 		}
 
-		if err := r.reconcileVPCAttachment(ctx, instance, networkInterface); err != nil {
+		attachmentName, err := r.reconcileVPCAttachment(ctx, instance, networkInterface)
+		if err != nil {
 			return nil, false, err
 		}
 
-		// The NAD is named after the NetworkInterface, so it is stable across
-		// instance replacement within the same slot.
+		// The NAD renders from the VPCAttachment and is named after it.
 		var nad netattachv1.NetworkAttachmentDefinition
-		key := client.ObjectKey{Namespace: instance.Namespace, Name: networkInterface.Name}
+		key := client.ObjectKey{Namespace: instance.Namespace, Name: attachmentName}
 		switch err := r.Get(ctx, key, &nad); {
 		case apierrors.IsNotFound(err):
-			logger.Info("network attachment definition not created yet", "name", networkInterface.Name)
+			logger.Info("network attachment definition not created yet", "name", attachmentName)
 			ready = false
 			continue
 		case err != nil:
-			return nil, false, fmt.Errorf("failed to get network attachment definition %s: %w", networkInterface.Name, err)
+			return nil, false, fmt.Errorf("failed to get network attachment definition %s: %w", attachmentName, err)
 		}
 
 		networks = append(networks, fmt.Sprintf("%s/%s", nad.Namespace, nad.Name))
@@ -190,7 +190,7 @@ func (r *InstanceReconciler) reconcileVPCAttachment(
 	ctx context.Context,
 	instance *computev1alpha.Instance,
 	networkInterface *networkingv1alpha.NetworkInterface,
-) error {
+) (string, error) {
 	logger := log.FromContext(ctx)
 
 	addresses := make([]cloudv1alpha1.IPAddress, 0, len(networkInterface.Spec.Addresses))
@@ -205,27 +205,33 @@ func (r *InstanceReconciler) reconcileVPCAttachment(
 
 	attachment := &cloudv1alpha1.VPCAttachment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      networkInterface.Name,
+			Name:      vpcAttachmentName(networkInterface),
 			Namespace: instance.Namespace,
 		},
 	}
 
 	result, err := controllerutil.CreateOrPatch(ctx, r.Client, attachment, func() error {
 		attachment.Spec.VPC = cloudv1alpha1.VPCRef{Name: networkInterface.Status.NetworkContextRef.Name}
-		attachment.Spec.Interface = cloudv1alpha1.VPCAttachmentInterface{
-			Name:      interfaceName,
-			Addresses: addresses,
+
+		// The controller dereferences this for the addresses, gateway and MTU, and
+		// treats a UID mismatch as stale rather than binding a recreated interface.
+		attachment.Spec.InterfaceRef = &cloudv1alpha1.NetworkInterfaceRef{
+			Name: networkInterface.Name,
+			UID:  string(networkInterface.UID),
 		}
 
-		// GAP: spec.interfaceRef (the back-pointer to the NetworkInterface) and
-		// spec.interface.type: tap (Unikraft guests get a tap device, not a veth)
-		// are being added to the VPCAttachment API and must be set here once that
-		// lands. Until then the VPC controller defaults to the veth plugin.
+		attachment.Spec.Interface = cloudv1alpha1.VPCAttachmentInterface{
+			Name: interfaceName,
+			// A Unikraft guest is a microVM: the interface goes to the VMM as a
+			// device rather than into the pod's network namespace.
+			Mode:      cloudv1alpha1.VPCAttachmentInterfaceModeHypervisor,
+			Addresses: addresses,
+		}
 
 		return controllerutil.SetControllerReference(instance, attachment, r.Scheme)
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create/update vpc attachment %s: %w", attachment.Name, err)
+		return "", fmt.Errorf("failed to create/update vpc attachment %s: %w", attachment.Name, err)
 	}
 
 	logger.Info("reconciled vpc attachment",
@@ -233,7 +239,13 @@ func (r *InstanceReconciler) reconcileVPCAttachment(
 		"name", attachment.Name,
 		"addresses", len(addresses),
 	)
-	return nil
+	return attachment.Name, nil
+}
+
+// vpcAttachmentName names the attachment, and so the NAD rendered from it,
+// after the NetworkInterface it realizes.
+func vpcAttachmentName(networkInterface *networkingv1alpha.NetworkInterface) string {
+	return networkInterface.Name
 }
 
 // deleteVPCAttachments tears down the attachments backing a deleting instance.
@@ -261,7 +273,7 @@ func (r *InstanceReconciler) deleteVPCAttachments(ctx context.Context, instance 
 		}
 
 		attachment := &cloudv1alpha1.VPCAttachment{
-			ObjectMeta: metav1.ObjectMeta{Name: networkInterface.Name, Namespace: instance.Namespace},
+			ObjectMeta: metav1.ObjectMeta{Name: vpcAttachmentName(networkInterface), Namespace: instance.Namespace},
 		}
 		if err := r.Delete(ctx, attachment); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete vpc attachment %s: %w", attachment.Name, err)
