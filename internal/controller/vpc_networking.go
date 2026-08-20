@@ -108,6 +108,14 @@ func (r *InstanceReconciler) reconcileVPCNetworking(
 			continue
 		}
 
+		// The VPC is named after the network's presence in this location, which
+		// NSO records on the interface while fulfilling the claim.
+		if networkInterface.Status.NetworkContextRef == nil || networkInterface.Status.NetworkContextRef.Name == "" {
+			logger.Info("network context not resolved yet", "interface", interfaceName)
+			ready = false
+			continue
+		}
+
 		if err := r.reconcileVPCAttachment(ctx, instance, networkInterface); err != nil {
 			return nil, false, err
 		}
@@ -203,7 +211,7 @@ func (r *InstanceReconciler) reconcileVPCAttachment(
 	}
 
 	result, err := controllerutil.CreateOrPatch(ctx, r.Client, attachment, func() error {
-		attachment.Spec.VPC = cloudv1alpha1.VPCRef{Name: networkInterface.Spec.Network.Name}
+		attachment.Spec.VPC = cloudv1alpha1.VPCRef{Name: networkInterface.Status.NetworkContextRef.Name}
 		attachment.Spec.Interface = cloudv1alpha1.VPCAttachmentInterface{
 			Name:      interfaceName,
 			Addresses: addresses,
@@ -212,7 +220,7 @@ func (r *InstanceReconciler) reconcileVPCAttachment(
 		// GAP: spec.interfaceRef (the back-pointer to the NetworkInterface) and
 		// spec.interface.type: tap (Unikraft guests get a tap device, not a veth)
 		// are being added to the VPCAttachment API and must be set here once that
-		// lands. Until then the VPC controller has to infer the master plugin.
+		// lands. Until then the VPC controller defaults to the veth plugin.
 
 		return controllerutil.SetControllerReference(instance, attachment, r.Scheme)
 	})

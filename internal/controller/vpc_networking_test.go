@@ -23,6 +23,10 @@ import (
 const (
 	testInterfaceName        = "eth0"
 	testNetworkInterfaceName = "vpc-instance-eth0"
+
+	// testNetworkContextName is the network's presence in this location, which
+	// the VPC is named after.
+	testNetworkContextName = "default-us-central-1"
 )
 
 // vpcTestScheme extends the controller test scheme with the networking, cloud
@@ -82,6 +86,9 @@ func allocatedInterface(namespace string) *networkingv1alpha.NetworkInterface {
 				{Family: networkingv1alpha.IPv4Protocol, Address: "10.128.0.2/32", Gateway: "10.128.0.1"},
 			},
 		},
+		Status: networkingv1alpha.NetworkInterfaceStatus{
+			NetworkContextRef: &networkingv1alpha.LocalNetworkContextRef{Name: testNetworkContextName},
+		},
 	}
 }
 
@@ -119,6 +126,17 @@ func TestReconcileSandboxContainers_VPCNetworking(t *testing.T) {
 				claim := boundClaim(instance)
 				claim.Status.NetworkInterfaceRef = nil
 				return []client.Object{claim}
+			},
+			wantPod:     false,
+			wantRequeue: true,
+		},
+		{
+			name: "pod creation deferred while the network context is unresolved",
+			cfg:  vpcEnabledConfig(),
+			objects: func(instance *computev1alpha.Instance) []client.Object {
+				networkInterface := allocatedInterface(instance.Namespace)
+				networkInterface.Status.NetworkContextRef = nil
+				return []client.Object{boundClaim(instance), networkInterface, nadFor(instance.Namespace)}
 			},
 			wantPod:     false,
 			wantRequeue: true,
@@ -250,8 +268,9 @@ func TestReconcileVPCAttachment_CarriesInterfaceAddresses(t *testing.T) {
 		t.Fatalf("expected vpc attachment to be created: %v", err)
 	}
 
-	if attachment.Spec.VPC.Name != "default" {
-		t.Errorf("vpc = %q, want default", attachment.Spec.VPC.Name)
+	// The VPC is named after the NetworkContext, not the Network.
+	if attachment.Spec.VPC.Name != testNetworkContextName {
+		t.Errorf("vpc = %q, want %q", attachment.Spec.VPC.Name, testNetworkContextName)
 	}
 	if attachment.Spec.Interface.Name != testInterfaceName {
 		t.Errorf("interface name = %q, want %q", attachment.Spec.Interface.Name, testInterfaceName)
