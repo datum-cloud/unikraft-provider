@@ -1,0 +1,23 @@
+@startuml component-view
+!$NEW_C4_STYLE = 1
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+!include https://raw.githubusercontent.com/datum-cloud/enhancements/main/enhancements/datum-theme.puml
+
+LAYOUT_LEFT_RIGHT()
+
+System_Boundary(node, "Compute Node") {
+    Container_Ext(runtime, "Unikraft Runtime", "vendor daemon", "Boots and manages microVMs on this node; reports each instance's lifecycle")
+    Container(metering, "Metering Component", "per-node service", "Watches instance lifecycle, attributes each instance to a project, and measures actual running time")
+    ContainerDb(record, "Local Usage Record", "on-node record", "Attributed, windowed usage — the raw material the shipping step reads")
+}
+
+System_Ext(platform, "Datum Platform", "Knows which project owns which instance")
+System_Ext(shipping, "Usage Shipping", "Planned; reads and forwards the local usage record")
+
+Rel(runtime, metering, "Instance lifecycle")
+Rel(platform, metering, "Project / instance identity")
+Rel(metering, record, "Writes")
+Rel(shipping, record, "Reads", "planned")
+
+SHOW_LEGEND()
+@enduml
