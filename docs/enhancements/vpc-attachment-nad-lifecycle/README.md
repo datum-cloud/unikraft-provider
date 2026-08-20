@@ -37,7 +37,13 @@ stage: alpha
   - [Upward: truth to status](#upward-truth-to-status)
   - [Changes VPCAttachment needs to serve as the bridge](#changes-vpcattachment-needs-to-serve-as-the-bridge)
   - [Naming and ownership](#naming-and-ownership)
-- [Plan of record: a NAD per network interface](#plan-of-record-a-nad-per-network-interface)
+- [Plan of record: capability classes drive attachment](#plan-of-record-capability-classes-drive-attachment)
+  - [The layering](#the-layering)
+  - [What each component stops knowing](#what-each-component-stops-knowing)
+  - [Scope: Unikraft and tap only](#scope-unikraft-and-tap-only)
+  - [Why compute can decide this after all](#why-compute-can-decide-this-after-all)
+  - [The concrete contract](#the-concrete-contract)
+- [Superseded: a NAD per network interface, provider-driven](#superseded-a-nad-per-network-interface-provider-driven)
 - [If the kraftlet change ever lands: one NAD per VPC](#if-the-kraftlet-change-ever-lands-one-nad-per-vpc)
 - [Sequencing](#sequencing-1)
 - [API and behavior changes this requires](#api-and-behavior-changes-this-requires)
@@ -45,16 +51,28 @@ stage: alpha
 
 ## Summary
 
-NAD lifecycle should be owned by **a VPCAttachment controller running in the cell**
-— the "companion operator" that `galactic` and `network-services-operator` both
-already assume exists and that nobody has written yet — and the
-**unikraft-provider should own the `VPCAttachment` object, not the NAD**.
+A compute Instance reaches a tenant VPC through four layers, each deciding one
+thing: the **user** picks a capability class, the **location** binds that name to a
+handler it offers, the **runtime class** states the consequences — including whether
+the guest consumes a NIC through a network namespace or a hypervisor — and the
+**data plane** realizes it.
 
-The provider creates one `VPCAttachment` per instance NIC before it creates the
-Pod, the VPCAttachment controller allocates the base62 identifiers and renders
-the NAD as an owned child object, and the provider then references that NAD from
-the Pod annotation. Galactic's CNI chain stays exactly as it is: it reads
-identifiers it did not choose.
+NAD lifecycle belongs to **a VPC controller running in the cell** — the "companion
+operator" that `galactic` and `network-services-operator` both already assume exists
+and that nobody has written yet. It creates the `VPCAttachment` and the
+`NetworkAttachmentDefinition` when a network interface claim is fulfilled, and
+publishes an opaque set of annotations for whoever consumes the interface.
+
+An infrastructure provider reads its own Instance, follows it to the
+`NetworkInterface`, copies those annotations onto its Pod, and creates the Pod.
+It never learns what a VPC, a NAD or a tap device is. Galactic's CNI chain is
+unchanged: it reads identifiers it did not choose.
+
+The first implementation covers one path — the Unikraft runtime provider,
+`Hypervisor` mode, `galactic-tap`. See
+[Plan of record](#plan-of-record-capability-classes-drive-attachment); the sections
+before it record how the design arrived there, including two conclusions it
+reverses.
 
 ## Motivation
 
@@ -757,7 +775,108 @@ path and the naming are identical; only the NAD's owner moves, and
 `status.vpcAttachment` shifts from assigned to learned. The API work in Phase 3 is
 not rework.
 
-## Plan of record: a NAD per network interface
+## Plan of record: capability classes drive attachment
+
+The sections below this one record how the design got here, and two of their
+conclusions are now wrong. They are kept because the reasoning still explains why
+the alternatives were rejected, but this section is what to build.
+
+### The layering
+
+Four layers, each deciding exactly one thing, each reading only the layer above.
+
+| Layer | Decides | Example |
+|---|---|---|
+| **User** | the capability they need | `isolated` |
+| **Location** | which handler offers that capability here, and advertises the names it has | `isolated` → the Unikraft runtime |
+| **Runtime class** | the consequences of that handler — scheduling constraints, overhead, image contract, and **how the guest consumes a NIC** | `Hypervisor` |
+| **Data plane** | how to realize it | `galactic-tap` |
+
+A user never names an implementation. `isolated` is a portable product name that
+binds to a different handler in each location, the way a `StorageClass` name binds
+to a different provisioner in each cloud — which is also what lets one workload
+span locations without carrying an unsatisfiable value.
+
+### What each component stops knowing
+
+- **compute** learns one new thing (which capability class an instance runs under)
+  and publishes the bound `NetworkInterface` on `Instance.status`. It never learns
+  what a VPC, a NAD or a tap device is.
+- **NSO** carries the consumption mode from claim to interface without
+  interpreting it, exactly as it already carries `interfaceName` and `mtu`, and
+  publishes an opaque set of annotations the consumer must apply. It never talks
+  to the data plane.
+- **The VPC controller** creates the `VPCAttachment` and the NAD when a claim is
+  fulfilled, and publishes those annotations. It is the only component that speaks
+  both vocabularies.
+- **The infrastructure provider** reads the `Instance`, follows it to the
+  `NetworkInterface`, copies the published annotations onto its Pod, and creates
+  the Pod. That is the whole of its networking involvement.
+- **galactic** is unchanged and never sees a Datum API.
+
+### Scope: Unikraft and tap only
+
+The layering above is the target. What gets built now is a single path through it:
+the Unikraft runtime provider, `Hypervisor` mode, `galactic-tap`. Concretely:
+
+- No `AttachmentClass`. A cell hosts one networking implementation today, so the
+  object that would choose between implementations has nothing to choose. Add it
+  when a second one exists; nothing here forecloses it.
+- The consumption mode is a **required** setting on the VPC controller, with no
+  default, so a cell must state what it is rather than silently falling back to
+  veth and handing a microVM an interface it cannot use. Unikraft cells set
+  `Hypervisor`.
+- The capability class itself is a compute product API and is tracked separately.
+  Until it exists, the controller's required setting stands in for it — the
+  layering is honoured, one layer is a config value rather than an object.
+
+### Why compute can decide this after all
+
+An earlier section of this document argues that compute cannot know whether a
+guest consumes a NIC through a netns or a hypervisor, because a Unikraft
+`Runtime.Sandbox` is a microVM while the same `Sandbox` elsewhere is a container.
+That argument holds only while `Instance.spec.runtime` is a *shape* discriminator
+with no *handler* selector.
+
+A capability class supplies the handler, so the ambiguity disappears. The
+discriminator says what spec you write — containers, or a boot image and volumes.
+The class says how it executes. Unikraft is the proof they are independent axes:
+a `sandbox` by contract, a microVM by implementation.
+
+That also means the mode belongs on the claim, alongside `interfaceName` and
+`ipFamilies` — the placement this document previously rejected.
+
+### The concrete contract
+
+- `NetworkInterfaceClaim.spec.attachmentMode`: `Netns` | `Hypervisor`. Set by
+  compute from the resolved capability class; defaults to `Netns`. NSO copies it
+  to `NetworkInterface.spec.attachmentMode` and never interprets it.
+- `NetworkInterface.status.consumerAnnotations`: a string map the workload object
+  consuming this interface must carry for the data plane to deliver it. Opaque to
+  NSO and to the consumer alike. For galactic this is
+  `k8s.v1.cni.cncf.io/networks: <namespace>/<name>`; a provider that attaches
+  through a cloud API gets an empty map.
+- `Instance.status.networkInterfaces[].networkInterfaceRef`: the bound
+  `NetworkInterface`, so a provider reads its own input object instead of
+  re-deriving compute's private claim-name convention.
+- `VPCAttachment` is created by the VPC controller when the claim is fulfilled —
+  not by the provider — owned by the `NetworkInterface`, with the NAD owned by the
+  attachment in turn.
+
+Two consequences worth stating plainly. The attachment is per-interface again, so
+its identifier is stable across instance replacement — the property the
+per-attachment shape gave up. And because the controller creates both objects it
+already holds everything it needs to render, so the sideways lookup that shape was
+introduced to remove never arises. The tradeoff that section agonises over does not
+exist in this design.
+
+Ownership reverses with it: an earlier section argues the attachment must not be
+owned by the `NetworkInterface`, because under `reclaimPolicy: Retain` the
+interface outlives the instance. That was correct when the attachment was
+per-Pod. It is now per-interface by construction, so interface ownership is
+right.
+
+## Superseded: a NAD per network interface, provider-driven
 
 Not per instance — **per `NetworkInterface`**. That distinction is what makes this
 shape good rather than merely safe.
