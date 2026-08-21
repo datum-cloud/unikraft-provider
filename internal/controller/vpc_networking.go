@@ -6,16 +6,17 @@ import (
 	computev1alpha "go.datum.net/compute/api/v1alpha"
 )
 
-// injectInterfacesAnnotation asks the networking stack to wire this Pod up to
-// the interfaces its Instance requested. How that happens, and what it is
-// delivered with, belongs to whoever serves the webhook that matches on it.
-const injectInterfacesAnnotation = "networking.datumapis.com/inject-interfaces"
+// injectInterfacesLabel asks the networking stack to wire this Pod up to the
+// interfaces its Instance requested. How that happens, and what it is delivered
+// with, belongs to whoever serves the webhook that matches on it. A label, not
+// an annotation, because a webhook objectSelector can only select on labels.
+const injectInterfacesLabel = "networking.datumapis.com/inject-interfaces"
 
 // requestsInterfaceInjection reports whether an Instance Pod should carry the
-// opt-in annotation.
+// opt-in label.
 //
 // Only stamped when an interface is genuinely wanted. The webhook's
-// objectSelector matches on exactly this annotation, and that narrowness is what
+// objectSelector matches on exactly this label, and that narrowness is what
 // makes its failurePolicy Fail safe: an outage blocks the Pods that need an
 // interface rather than every Pod in the cell.
 func (r *InstanceReconciler) requestsInterfaceInjection(instance *computev1alpha.Instance) bool {

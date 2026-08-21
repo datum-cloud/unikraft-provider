@@ -33,21 +33,21 @@ func vpcEnabledConfig() *config.UnikraftProvider {
 	}
 }
 
-// TestReconcileSandboxContainers_InterfaceInjectionAnnotation verifies the
-// provider's entire networking contribution: one opt-in annotation, stamped
-// only when an interface is genuinely wanted, and no waiting on anything.
-func TestReconcileSandboxContainers_InterfaceInjectionAnnotation(t *testing.T) {
+// TestReconcileSandboxContainers_InterfaceInjectionLabel verifies the provider's
+// entire networking contribution: one opt-in label, stamped only when an
+// interface is genuinely wanted, and no waiting on anything.
+func TestReconcileSandboxContainers_InterfaceInjectionLabel(t *testing.T) {
 	tests := []struct {
-		name           string
-		cfg            *config.UnikraftProvider
-		instance       func() *computev1alpha.Instance
-		wantAnnotation string
+		name      string
+		cfg       *config.UnikraftProvider
+		instance  func() *computev1alpha.Instance
+		wantLabel string
 	}{
 		{
-			name:           "stamped when the instance requests an interface",
-			cfg:            vpcEnabledConfig(),
-			instance:       instanceRequestingInterface,
-			wantAnnotation: "true",
+			name:      "stamped when the instance requests an interface",
+			cfg:       vpcEnabledConfig(),
+			instance:  instanceRequestingInterface,
+			wantLabel: "true",
 		},
 		{
 			name:     "not stamped when the instance requests no interfaces",
@@ -96,8 +96,13 @@ func TestReconcileSandboxContainers_InterfaceInjectionAnnotation(t *testing.T) {
 				t.Fatalf("expected pod to be created, got error: %v", err)
 			}
 
-			if got := pod.Annotations[injectInterfacesAnnotation]; got != tt.wantAnnotation {
-				t.Errorf("annotation %s = %q, want %q", injectInterfacesAnnotation, got, tt.wantAnnotation)
+			// A label, because the webhook's objectSelector cannot select on
+			// annotations.
+			if got := pod.Labels[injectInterfacesLabel]; got != tt.wantLabel {
+				t.Errorf("label %s = %q, want %q", injectInterfacesLabel, got, tt.wantLabel)
+			}
+			if got := pod.Annotations[injectInterfacesLabel]; got != "" {
+				t.Errorf("opt-in must not be stamped as an annotation, got %q", got)
 			}
 		})
 	}

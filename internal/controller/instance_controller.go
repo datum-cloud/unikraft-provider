@@ -242,6 +242,14 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 		// Copy a subset of the Instance labels to the Pod.
 		copyInstancePodLabels(instance.Labels, instancePod.Labels)
 
+		// Ask for the instance's network interfaces to be wired up. A platform
+		// decision like CNI below, and kept out of the identity label allowlist.
+		if r.requestsInterfaceInjection(instance) {
+			instancePod.Labels[injectInterfacesLabel] = "true"
+		} else {
+			delete(instancePod.Labels, injectInterfacesLabel)
+		}
+
 		if instancePod.Annotations == nil {
 			instancePod.Annotations = map[string]string{}
 		}
@@ -259,14 +267,6 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 			instancePod.Annotations[ukcCniEnabledAnnotation] = "true"
 		} else {
 			delete(instancePod.Annotations, ukcCniEnabledAnnotation)
-		}
-
-		// Ask for the instance's network interfaces to be wired up. Platform
-		// controlled, like CNI above, so it is set here rather than passed through.
-		if r.requestsInterfaceInjection(instance) {
-			instancePod.Annotations[injectInterfacesAnnotation] = "true"
-		} else {
-			delete(instancePod.Annotations, injectInterfacesAnnotation)
 		}
 
 		if instancePod.CreationTimestamp.IsZero() {
