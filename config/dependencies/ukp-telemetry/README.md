@@ -89,8 +89,9 @@ annotations are intentionally absent from the runtime DaemonSet.
   Milo grows an OTLP metrics ingest, swap the `prometheusremotewrite` exporter
   for `otlp`.)
 - `UKP_METRICS_TOKEN` — bearer token for ukpd's metrics API (same value as the
-  runtime's `UKP_PROMETHEUS_API_TOKEN`); provide via the optional
-  `ukp-metrics-token` Secret (`token` key).
+  runtime's `UKP_PROMETHEUS_API_TOKEN`); both are sourced from the
+  `ukp-runtime-credentials` Secret (`metrics-token` key), provisioned by the
+  infra repo's ExternalSecret.
 - `UKP_API_TOKEN` — ukpd platform API user token for `/v1/instances/metrics`;
   reuses kraftlet's own ukpd user token, the `kraftlet-ukc-token` Secret
   (`token` key).
