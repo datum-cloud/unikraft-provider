@@ -20,8 +20,8 @@ spec:
             max by (cluster, namespace, pod, container, container_id) (
               kube_pod_container_info{container_id!=""}
             )
-            * on (cluster, namespace, pod) group_left(node) topk by (cluster, namespace, pod) (
-              1, max by (cluster, namespace, pod, node) (kube_pod_info{node!=""})
+            * on (namespace, pod) group_left(node) topk by (namespace, pod) (
+              1, max by (namespace, pod, node) (kube_pod_info{node!=""})
             )
         - record: datum_compute_instance_memory_working_set_bytes
           expr: |
@@ -34,6 +34,6 @@ spec:
             max by (cluster, namespace, pod, container, container_id) (
               kube_pod_container_info{container_id!=""}
             )
-            * on (cluster, namespace, pod) group_left(node) topk by (cluster, namespace, pod) (
-              1, max by (cluster, namespace, pod, node) (kube_pod_info{node!=""})
+            * on (namespace, pod) group_left(node) topk by (namespace, pod) (
+              1, max by (namespace, pod, node) (kube_pod_info{node!=""})
             )
