@@ -43,6 +43,7 @@ stage: alpha
   - [Scope: Unikraft and tap only](#scope-unikraft-and-tap-only)
   - [Why compute can decide this after all](#why-compute-can-decide-this-after-all)
   - [The concrete contract](#the-concrete-contract)
+  - [Two rejected shapes, and why](#two-rejected-shapes-and-why)
 - [Superseded: a NAD per network interface, provider-driven](#superseded-a-nad-per-network-interface-provider-driven)
 - [If the kraftlet change ever lands: one NAD per VPC](#if-the-kraftlet-change-ever-lands-one-nad-per-vpc)
 - [Sequencing](#sequencing-1)
@@ -848,33 +849,81 @@ That also means the mode belongs on the claim, alongside `interfaceName` and
 
 ### The concrete contract
 
-- `NetworkInterfaceClaim.spec.attachmentMode`: `Netns` | `Hypervisor`. Set by
-  compute from the resolved capability class; defaults to `Netns`. NSO copies it
-  to `NetworkInterface.spec.attachmentMode` and never interprets it.
-- `NetworkInterface.status.consumerAnnotations`: a string map the workload object
-  consuming this interface must carry for the data plane to deliver it. Opaque to
-  NSO and to the consumer alike. For galactic this is
-  `k8s.v1.cni.cncf.io/networks: <namespace>/<name>`; a provider that attaches
-  through a cloud API gets an empty map.
-- `Instance.status.networkInterfaces[].networkInterfaceRef`: the bound
-  `NetworkInterface`, so a provider reads its own input object instead of
-  re-deriving compute's private claim-name convention.
-- `VPCAttachment` is created by the VPC controller when the claim is fulfilled —
-  not by the provider — owned by the `NetworkInterface`, with the NAD owned by the
-  attachment in turn.
+Multus knowledge lives in exactly one repo. Whoever writes a
+`NetworkAttachmentDefinition` should be the only thing that knows NADs exist, and
+that is the VPC controller — it renders the conflist, creates the NAD, and injects
+the annotation that delivers it. Nothing else in the platform names a CNI.
 
-Two consequences worth stating plainly. The attachment is per-interface again, so
-its identifier is stable across instance replacement — the property the
-per-attachment shape gave up. And because the controller creates both objects it
-already holds everything it needs to render, so the sideways lookup that shape was
-introduced to remove never arises. The tradeoff that section agonises over does not
-exist in this design.
+- `NetworkInterfaceClaim.spec.attachmentMode`: `Netns` | `Hypervisor`, defaulting
+  to `Netns`. Set by compute from the resolved capability class. NSO copies it to
+  `NetworkInterface.spec.attachmentMode` and never interprets it. It describes how
+  a guest consumes a NIC — a real distinction on any platform, naming no CNI, no
+  Multus, and no Linux device type.
+- A `Prepared` condition on the claim and the interface, meaning the data plane's
+  pre-Pod artifacts exist. Owned by the VPC controller, seeded and then left alone
+  by NSO exactly as `Programmed` is. **Safe to gate on**, unlike `Programmed`,
+  which only becomes true at CNI ADD and therefore deadlocks anything that gates
+  Pod creation on it.
+- `Instance.status.networkInterfaces[].networkInterfaceRef`: the bound
+  `NetworkInterface`, so nothing has to re-derive compute's private claim-name
+  convention. Read by the webhook below.
+- A **mutating admission webhook on Pods**, served by the VPC controller. It
+  matches only Pods carrying an opt-in annotation, resolves them to their Instance
+  and its interfaces, and injects whatever the delivery mechanism requires — today
+  `k8s.v1.cni.cncf.io/networks`.
+- `VPCAttachment` and the NAD are created by the VPC controller when the claim is
+  fulfilled, the attachment owned by the `NetworkInterface` and the NAD by the
+  attachment.
+
+The infrastructure provider's entire networking involvement is then: stamp one
+opt-in annotation on Pods for instances that request an interface, and honour a
+scheduling gate it already honours. It names no CNI, resolves no interface,
+creates no object, and waits on nothing it has to understand.
+
+The opt-in annotation is worth keeping even though the webhook could key off the
+Pod's owner reference to the Instance. It is what makes the webhook's
+`objectSelector` narrow, and a narrow selector is what makes `failurePolicy: Fail`
+safe: an outage then blocks exactly the Pods that need an interface, loudly,
+instead of either blocking every Pod in the cell or letting Pods come up silently
+unattached.
+
+Two costs are real and worth stating. A mutating webhook means the Pod you applied
+is not the Pod you get, so it should record what it injected. And it is an
+availability dependency on the Pod creation path, which the narrow selector bounds
+but does not remove.
+
+Two consequences worth stating plainly. The attachment is per-interface, so its
+identifier is stable across instance replacement. And because the controller
+creates the attachment, the NAD, and the annotation, it holds every input at every
+step — no lookup crosses a component boundary, so there is no naming convention
+for two repos to disagree about.
 
 Ownership reverses with it: an earlier section argues the attachment must not be
 owned by the `NetworkInterface`, because under `reclaimPolicy: Retain` the
-interface outlives the instance. That was correct when the attachment was
-per-Pod. It is now per-interface by construction, so interface ownership is
-right.
+interface outlives the instance. That was correct when the attachment was per-Pod.
+It is now per-interface by construction, so interface ownership is right.
+
+### Two rejected shapes, and why
+
+Both were proposed during review, built, and withdrawn. They are recorded because
+the reasons are the whole argument for the webhook.
+
+**An opaque annotation map on the interface** — `status.consumerAnnotations`, which
+the provider would copy verbatim onto its Pod. It fails four ways. It puts an
+instruction in a status field, which should record what is rather than direct a
+third party. It assumes the consumer is a Kubernetes Pod. Its opacity is fiction:
+the value is `k8s.v1.cni.cncf.io/networks` in plain sight on a published API, so
+every reader learns Multus exists whether or not their code is typed against it.
+And an untyped string map has no validation, no schema evolution, and no way to
+deprecate a key.
+
+**A typed reference to the delivery object** — `status.consumerRef` naming the
+`NetworkAttachmentDefinition`. Better on all four counts, and still wrong: it
+requires the provider to map a kind to a mechanism, which is Multus knowledge
+compressed into a switch statement rather than removed. Once a webhook exists the
+field has no external reader at all — the controller that writes the NAD is the
+one that injects the annotation — so publishing it on NSO's API is a component
+talking to itself through someone else's schema.
 
 ## Superseded: a NAD per network interface, provider-driven
 
