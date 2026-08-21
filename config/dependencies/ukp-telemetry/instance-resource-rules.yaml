@@ -12,7 +12,7 @@ spec:
         - record: datum_compute_instance_cpu_usage_seconds_total
           expr: |
             label_replace(
-              instance_cpu_time_s,
+              instance_cpu_time_s_total,
               "container_id", "$1",
               "instance_uuid", "(.*)"
             )

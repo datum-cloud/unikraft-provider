@@ -53,7 +53,7 @@ kube-state-metrics as `kube_pod_container_info{container_id=...}`:
 
 ```promql
 label_replace(
-  instance_cpu_time_s,
+  instance_cpu_time_s_total,
   "container_id", "$1",
   "instance_uuid", "(.*)"
 )
