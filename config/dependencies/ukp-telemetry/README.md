@@ -84,10 +84,10 @@ annotations are intentionally absent from the runtime DaemonSet.
 - `LOCAL_METRICS_RW_ENDPOINT` — edge-local VictoriaMetrics remote-write
   destination. This is where edge `VMAlert` records the Pod-shaped
   `datum_compute_instance_*` metrics consumed by the compute Prometheus Adapter.
-- `METRICS_RW_ENDPOINT` — hub Prometheus remote-write destination
-  (VictoriaMetrics). Set to your environment's `vminsert`/remote-write URL. (If
-  Milo grows an OTLP metrics ingest, swap the `prometheusremotewrite` exporter
-  for `otlp`.)
+- `METRICS_RW_ENDPOINT` — hub remote-write destination. Defaults to the edge
+  `gke-remote-write` VMAgent's ingest endpoint, which relays to the hub; edge
+  clusters have no in-cluster `vminsert`. Set to your environment's
+  equivalent.
 - `UKP_METRICS_TOKEN` — bearer token for ukpd's metrics API (same value as the
   runtime's `UKP_PROMETHEUS_API_TOKEN`); both are sourced from the
   `ukp-runtime-credentials` Secret (`metrics-token` key), provisioned by the

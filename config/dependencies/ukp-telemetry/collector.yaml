@@ -69,7 +69,7 @@ spec:
     - name: LOCAL_METRICS_RW_ENDPOINT
       value: http://vmsingle-edge-metrics.telemetry-system.svc.cluster.local:8429/api/v1/write
     - name: METRICS_RW_ENDPOINT
-      value: http://vminsert.datum-cloud-telemetry-system.svc.cluster.local:8480/insert/0/prometheus/api/v1/write
+      value: http://vmagent-gke-remote-write.telemetry-system.svc.cluster.local:8429/api/v1/write
   volumes:
     - name: ukp-data
       hostPath:
