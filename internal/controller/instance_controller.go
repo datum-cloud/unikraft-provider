@@ -368,6 +368,17 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 		}
 	}
 
+	// Forward the sandbox's image pull secrets by name only. The Secret itself
+	// is resolved downstream by kraftlet, so the provider never needs to read
+	// it and must not cache Secrets cluster-wide.
+	var imagePullSecrets []core.LocalObjectReference
+	if sandbox := instance.Spec.Runtime.Sandbox; sandbox != nil && len(sandbox.ImagePullSecrets) > 0 {
+		imagePullSecrets = make([]core.LocalObjectReference, 0, len(sandbox.ImagePullSecrets))
+		for _, ref := range sandbox.ImagePullSecrets {
+			imagePullSecrets = append(imagePullSecrets, core.LocalObjectReference{Name: ref.Name})
+		}
+	}
+
 	containers := make([]core.Container, 0, len(sandboxContainers))
 	for i := range sandboxContainers {
 		sc := &sandboxContainers[i]
@@ -463,8 +474,9 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 	}
 
 	spec := core.PodSpec{
-		Containers: containers,
-		Volumes:    volumes,
+		Containers:       containers,
+		Volumes:          volumes,
+		ImagePullSecrets: imagePullSecrets,
 		// Sandbox workloads must not be granted Kubernetes API access. Disable
 		// projection of the default ServiceAccount token so no credential is
 		// mounted into the instance Pod (the apiserver still assigns the default
