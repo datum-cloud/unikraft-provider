@@ -73,7 +73,7 @@ spec:
   volumes:
     - name: ukp-data
       hostPath:
-        path: /var/lib/ukp
+        path: /var/mnt/ukp
         type: Directory
     - name: ukp-logs-tree
       emptyDir: {}
