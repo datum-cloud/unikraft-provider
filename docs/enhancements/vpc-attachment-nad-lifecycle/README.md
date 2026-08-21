@@ -868,22 +868,27 @@ the annotation that delivers it. Nothing else in the platform names a CNI.
   `NetworkInterface`, so nothing has to re-derive compute's private claim-name
   convention. Read by the webhook below.
 - A **mutating admission webhook on Pods**, served by the VPC controller. It
-  matches only Pods carrying an opt-in annotation, resolves them to their Instance
+  matches only Pods carrying an opt-in **label**, resolves them to their Instance
   and its interfaces, and injects whatever the delivery mechanism requires — today
-  `k8s.v1.cni.cncf.io/networks`.
+  the `k8s.v1.cni.cncf.io/networks` annotation.
 - `VPCAttachment` and the NAD are created by the VPC controller when the claim is
   fulfilled, the attachment owned by the `NetworkInterface` and the NAD by the
   attachment.
 
 The infrastructure provider's entire networking involvement is then: stamp one
-opt-in annotation on Pods for instances that request an interface, and honour a
+opt-in label on Pods for instances that request an interface, and honour a
 scheduling gate it already honours. It names no CNI, resolves no interface,
 creates no object, and waits on nothing it has to understand.
 
-The opt-in annotation is worth keeping even though the webhook could key off the
-Pod's owner reference to the Instance. It is what makes the webhook's
-`objectSelector` narrow, and a narrow selector is what makes `failurePolicy: Fail`
-safe: an outage then blocks exactly the Pods that need an interface, loudly,
+The opt-in must be a **label**, not an annotation: `objectSelector` is a
+`LabelSelector` and cannot match annotations. That detail is load-bearing rather
+than cosmetic — get it wrong and the selector never matches, the webhook never
+fires, and Pods come up with no interface while every object involved looks
+healthy.
+
+The opt-in is worth having at all even though the webhook could key off the Pod's
+owner reference to the Instance. It is what makes the `objectSelector` narrow, and
+a narrow selector is what makes `failurePolicy: Fail` safe: an outage then blocks exactly the Pods that need an interface, loudly,
 instead of either blocking every Pod in the cell or letting Pods come up silently
 unattached.
 
