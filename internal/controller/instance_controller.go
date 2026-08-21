@@ -226,23 +226,6 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 		return ctrl.Result{}, fmt.Errorf("sandbox runtime is nil")
 	}
 
-	networkAnnotations, networkReady, err := r.instanceNetworkAnnotations(ctx, instance)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to resolve network annotations for instance %s: %w", instance.Name, err)
-	}
-	if !networkReady {
-		podExists, err := r.podExists(ctx, instance)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		if !podExists {
-			// The annotations are resolved at sandbox creation and the Pod spec is
-			// never rebuilt afterwards, so the Pod must not be created without them.
-			logger.Info("deferring pod creation until network annotations are published", "name", instance.Name)
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-		}
-	}
-
 	instancePod := &core.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      instance.Name,
@@ -278,10 +261,12 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 			delete(instancePod.Annotations, ukcCniEnabledAnnotation)
 		}
 
-		// Carry what the networking stack published for this instance's interfaces.
-		// The keys and values are opaque to this provider.
-		for annotation, value := range networkAnnotations {
-			instancePod.Annotations[annotation] = value
+		// Ask for the instance's network interfaces to be wired up. Platform
+		// controlled, like CNI above, so it is set here rather than passed through.
+		if r.requestsInterfaceInjection(instance) {
+			instancePod.Annotations[injectInterfacesAnnotation] = "true"
+		} else {
+			delete(instancePod.Annotations, injectInterfacesAnnotation)
 		}
 
 		if instancePod.CreationTimestamp.IsZero() {
@@ -899,17 +884,4 @@ func (r *InstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		WithOptions(controller.Options{MaxConcurrentReconciles: 5}).
 		Named("instance").
 		Complete(r)
-}
-
-// podExists reports whether the Instance's backing Pod has been created.
-func (r *InstanceReconciler) podExists(ctx context.Context, instance *computev1alpha.Instance) (bool, error) {
-	var pod core.Pod
-	key := client.ObjectKey{Name: instance.Name, Namespace: instance.Namespace}
-	switch err := r.Get(ctx, key, &pod); {
-	case apierrors.IsNotFound(err):
-		return false, nil
-	case err != nil:
-		return false, fmt.Errorf("failed to check backing pod for instance %s: %w", instance.Name, err)
-	}
-	return true, nil
 }

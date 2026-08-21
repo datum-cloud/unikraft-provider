@@ -15,6 +15,3 @@ rules:
 - apiGroups: ["compute.datumapis.com"]
   resources: ["instances", "instances/status"]
   verbs: ["get", "list", "watch", "update", "patch"]
-- apiGroups: ["networking.datumapis.com"]
-  resources: ["networkinterfaces"]
-  verbs: ["get", "list", "watch"]
