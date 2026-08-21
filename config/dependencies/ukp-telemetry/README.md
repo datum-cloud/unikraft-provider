@@ -92,7 +92,8 @@ annotations are intentionally absent from the runtime DaemonSet.
   runtime's `UKP_PROMETHEUS_API_TOKEN`); provide via the optional
   `ukp-metrics-token` Secret (`token` key).
 - `UKP_API_TOKEN` — ukpd platform API user token for `/v1/instances/metrics`;
-  provide via the optional `ukp-api-token` Secret (`token` key).
+  reuses kraftlet's own ukpd user token, the `kraftlet-ukc-token` Secret
+  (`token` key).
 - The project comes from the Namespace label `resourcemanager.miloapis.com/project-name`,
   configured on the `k8sattributes` processor in `collector.yaml` — change the
   `key:` there if your environment uses a different label.

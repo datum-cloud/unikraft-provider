@@ -58,7 +58,7 @@ spec:
     - name: UKP_API_TOKEN
       valueFrom:
         secretKeyRef:
-          name: ukp-api-token
+          name: kraftlet-ukc-token
           key: token
           optional: true
     # Destinations. Logs -> OTLP (edge logs collector -> ClickHouse); metrics ->
