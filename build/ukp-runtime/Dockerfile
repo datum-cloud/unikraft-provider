@@ -70,13 +70,13 @@ COPY unikraft-cloud-staging.sources /etc/apt/sources.list.d/unikraft-cloud-stagi
 # itself. Taking only some packages from staging installs both, and the two
 # write the same files. Move the set back to stable once the vendor ships the
 # feature there.
-ARG UKP_AGENT_VERSION=6:0.2.5-77+b4499ac-2staging+deb13
+ARG UKP_AGENT_VERSION=6:0.2.5-86+fdeedd0-2staging+deb13
 ARG UKP_CONFIG_VERSION=6:1.4.16-eb909a6-2staging+deb13
 ARG UKP_COREDNS_VERSION=6:1.14.6-17+eed166d-2staging+deb13
-ARG UKP_FIRECRACKER_VERSION=6:1.16.1-50+d2cd2b7-2staging+deb13
+ARG UKP_FIRECRACKER_VERSION=6:1.16.1-53+e24d439-2staging+deb13
 ARG UKP_NETWORKING_VERSION=6:1.5.10-71b92e0-2staging+deb13
-ARG UKP_OPENRESTY_VERSION=6:1.31.1.1-33+7f008f8-2staging+deb13
-ARG UKP_PLATFORM_VERSION=6:0.12.0-68+092714d-2staging+deb13
+ARG UKP_OPENRESTY_VERSION=6:1.31.1.1-34+2acfc15-2staging+deb13
+ARG UKP_PLATFORM_VERSION=6:0.12.0-122+c93af1d-2staging+deb13
 
 # ukp-remote-cni: server-side CNI shim for kraftlet.
 ARG UKP_REMOTE_CNI_VERSION=6:0.1.1-19+b84b457-2staging+deb13
