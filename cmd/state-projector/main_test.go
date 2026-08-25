@@ -362,6 +362,38 @@ func TestVendorPayloadDrivesWindowing(t *testing.T) {
 	}
 }
 
+// TestResolvesAtWindowOpenBeforeVmmJSONDeleted is the regression guard for a
+// real production race: a short-lived instance can fully stop, and have ukpd
+// clean up its <uuid>/vmm.json, within seconds of starting. Resolving lazily
+// at close/flush time (the original design) loses that race and attributes
+// nothing. Resolving at window-open — while the VM is guaranteed to still be
+// running — must win it instead.
+func TestResolvesAtWindowOpenBeforeVmmJSONDeleted(t *testing.T) {
+	const uuid = "cc20e657-7db8-49bb-b34c-5882c18676f1"
+	p, out := makeProjector(t, uuid, "10.0.0.20", 2000, 4*1024*1024*1024)
+
+	p.handleEvent(stateChange{Timestamp: "1970-01-01T00:00:10Z", Type: "vm.state_change",
+		Data: map[string]interface{}{"vm": uuid, "prev": "starting", "new": "running"}})
+
+	// ukpd deletes the instance's workspace directory (including vmm.json)
+	// shortly after it stops — simulate that happening before the closing
+	// event is handled.
+	if err := os.RemoveAll(filepath.Join(p.platformDir, uuid)); err != nil {
+		t.Fatal(err)
+	}
+
+	p.handleEvent(stateChange{Timestamp: "1970-01-01T00:00:52Z", Type: "vm.state_change",
+		Data: map[string]interface{}{"vm": uuid, "prev": "running", "new": "stopping"}})
+
+	recs := readRecords(t, out)
+	if len(recs) != 1 {
+		t.Fatalf("expected 1 record, got %d: %v", len(recs), recs)
+	}
+	if recs[0].Project != "my-project" || recs[0].Instance != "web-1" {
+		t.Errorf("attribution lost after vmm.json was deleted post-open: %+v", recs[0])
+	}
+}
+
 // A window must close on any non-running state even when the event carries no
 // old-state field, so a renamed/missing "prev" cannot strand it open and stop
 // billing a stopped instance.
