@@ -676,6 +676,9 @@ func (p *projector) handleEvent(ev stateChange) {
 					"(first flush will bill the gap to wall clock)",
 					uuid, ts.Format(time.RFC3339), skew.Round(time.Second))
 			}
+			// Resolve now, while the VM is guaranteed to be running (so its
+			// vmm.json is guaranteed to exist) — see resolveWindow's comment.
+			p.resolveWindow(w)
 			return
 		}
 		// Already running: no-op (started is idempotent).
@@ -858,25 +861,42 @@ func (p *projector) cleanupOldRotations() {
 	}
 }
 
+// resolveWindow attempts to resolve a window's attribution once, caching the
+// result on w.resolved. It is called both when a window opens — while the VM
+// is guaranteed to be running, so its vmm.json is guaranteed to exist — and
+// again lazily from recordFor as a fallback/retry for anything still
+// unresolved (e.g. the pod watch had not yet synced when the window opened).
+//
+// Resolving only at close/flush time (the original design) loses a real race:
+// a short-lived instance can fully stop, and have ukpd clean up its
+// <uuid>/vmm.json, within seconds of starting — verified against a real
+// deployment where every window for a handful of ~40-60s instances failed
+// with vmm_json_unreadable because vmm.json no longer existed by the time
+// recordFor() ran. Resolving at open time wins that race for the common case.
+func (p *projector) resolveWindow(w *windowState) {
+	if w.resolved != nil {
+		return
+	}
+	info, reason := p.resolve(w.uuid)
+	if info != nil {
+		w.resolved = info
+		log.Printf("resolve ok uuid=%s %s", w.uuid, info)
+		return
+	}
+	if reason != w.lastResolveLog {
+		// Attribution retries every flush; log each distinct reason once per
+		// window so a persistent failure does not repeat indefinitely.
+		p.stats.unresolved.Add(1)
+		log.Printf("resolve failed uuid=%s reason=%s platform_dir=%s (record emitted with project=\"-\")",
+			w.uuid, reason, p.platformDir)
+		w.lastResolveLog = reason
+	}
+}
+
 // recordFor resolves the instance's identity/resources and builds the record.
 func (p *projector) recordFor(w *windowState, end time.Time) usageRecord {
+	p.resolveWindow(w)
 	info := w.resolved
-	if info == nil {
-		var reason string
-		info, reason = p.resolve(w.uuid)
-		w.resolved = info
-		switch {
-		case info != nil:
-			log.Printf("resolve ok uuid=%s %s", w.uuid, info)
-		case reason != w.lastResolveLog:
-			// Attribution retries every flush; log each distinct reason once per
-			// window so a persistent failure does not repeat indefinitely.
-			p.stats.unresolved.Add(1)
-			log.Printf("resolve failed uuid=%s reason=%s platform_dir=%s (record emitted with project=\"-\")",
-				w.uuid, reason, p.platformDir)
-			w.lastResolveLog = reason
-		}
-	}
 	start := w.reportedUntil
 	dur := end.Sub(start).Seconds()
 	if dur < 0 {
