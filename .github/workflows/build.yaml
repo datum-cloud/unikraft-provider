@@ -9,7 +9,7 @@ on:
 
 jobs:
   validate-kustomize:
-    uses: datum-cloud/actions/.github/workflows/validate-kustomize.yaml@v1.20.0
+    uses: datum-cloud/actions/.github/workflows/validate-kustomize.yaml@v1.21.0
 
   publish-container-image:
     needs:
@@ -19,7 +19,7 @@ jobs:
       contents: read
       packages: write
       attestations: write
-    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.20.0
+    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.21.0
     with:
       image-name: unikraft-provider
       platforms: linux/amd64,linux/arm64
@@ -34,7 +34,7 @@ jobs:
       id-token: write
       contents: read
       packages: write
-    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.20.0
+    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.21.0
     with:
       image-name: ukp-runtime
       context: build/ukp-runtime
@@ -56,7 +56,7 @@ jobs:
       id-token: write
       contents: read
       packages: write
-    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.20.0
+    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.21.0
     with:
       image-name: ukp-state-projector
       context: .
@@ -70,7 +70,7 @@ jobs:
       - publish-container-image
       - publish-runtime-image
       - publish-state-projector-image
-    uses: datum-cloud/actions/.github/workflows/publish-kustomize-bundle.yaml@v1.20.0
+    uses: datum-cloud/actions/.github/workflows/publish-kustomize-bundle.yaml@v1.21.0
     with:
       bundle-name: ghcr.io/datum-cloud/unikraft-provider-kustomize
       bundle-path: config
