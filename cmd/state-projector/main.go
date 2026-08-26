@@ -6,10 +6,13 @@
 // carry a runtime instance uuid and an old/new state, but no notion of a Datum
 // project. The projector bridges that gap on the node:
 //
-//	uuid -> guest IP   from the per-instance vmm.json (same parse as ukp-telemetry's
-//	                   ip-surfacer; guest IP is the provider Pod's podIP)
-//	guest IP -> project / instance / requested resources
-//	                   from a cluster-wide watch of provider Pods
+//	uuid -> project / instance / requested resources
+//	        Kraftlet (the virtual-kubelet provider driving these Pods) sets each
+//	        container's status.containerID to the ukpd instance uuid itself, so
+//	        the provider Pod carrying that containerID is the Pod for this
+//	        instance — no IP lookup needed. (An earlier design joined via the
+//	        guest's IP, read from the per-instance vmm.json; that broke when a
+//	        CNI integration change stopped populating it, confirmed 2026-08-26.)
 //
 // For each instance it maintains an open "running window" and, on scale-to-zero
 // (STANDBY), stop, or a periodic flush, appends a windowed usage record (JSONL) to
@@ -111,32 +114,17 @@ const onState = "running"
 // computed against wall clock (see periodicFlush).
 const maxEventSkew = time.Minute
 
-// Why an instance could not be attributed to a project. Each points at a
-// different root cause, so they are logged distinctly rather than as one
-// "unresolved" catch-all.
+// Why an instance could not be attributed to a project. Kept as a named
+// constant (rather than an inline string) so the log line and any future
+// second reason stay consistent.
 const (
 	reasonOK            = "ok"
-	reasonVMMUnreadble  = "vmm_json_unreadable" // wrong platform-dir, or ukpd has not written it yet
-	reasonNoNetdevIP    = "netdev_ip_missing"   // vmm.json exists but carries no netdev.ip=
-	reasonPodNotIndexed = "pod_not_indexed"     // guest IP resolved, but no provider Pod has that podIP
+	reasonPodNotIndexed = "pod_not_indexed" // no provider Pod's containerID matches this uuid
 )
 
-var (
-	// Parse the per-instance vmm.json (Firecracker config) for the guest's IP.
-	// vmm.json is itself JSON, and its boot_args string value wraps the netdev
-	// arg in escaped double quotes, so the raw bytes read
-	// netdev.ip=\"172.16.0.5/30:172.16.0.6:172.16.0.6::<hostname>:internal\" —
-	// confirmed against a real vmm.json from ukpd (not just mirrored from
-	// ukp-telemetry's ip-surfacer.sh, which isn't in this repo and turned out
-	// not to match). The optional `\"` / `"` are skipped rather than required,
-	// so an unescaped or differently-quoted variant still matches; the IP
-	// itself is the first dotted-quad, before the /<prefix>.
-	netdevIPRe = regexp.MustCompile(`netdev\.ip=\\?"?([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)`)
-
-	// uidFieldRe is used to scan for the instance uuid if the event does not carry
-	// a uuid at the top level of data.
-	uuidRe = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
-)
+// uuidRe is used to scan for the instance uuid if an event does not carry one
+// at the top level of its data.
+var uuidRe = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 
 // stateChange is the subset of a vm.state_change event (JSON encoding) we care
 // about. json.Decoder tolerates unknown fields, so the full vendor payload is
@@ -166,7 +154,8 @@ type usageRecord struct {
 }
 
 // podInfo is the identity + requested resources of the provider Pod for an
-// instance, indexed by its podIP (the guest's IP).
+// instance, indexed by the ukpd instance uuid (read off the Pod's container
+// status containerID — see resolve).
 type podInfo struct {
 	project     string
 	instance    string
@@ -225,7 +214,6 @@ type stats struct {
 }
 
 type projector struct {
-	platformDir     string
 	socketPath      string
 	outputPath      string
 	flushInterval   time.Duration
@@ -235,7 +223,8 @@ type projector struct {
 
 	stats stats
 
-	// resolved pods: guest IP (podIP) -> info. Guarded by podMu.
+	// resolved pods: ukpd instance uuid (from a container status containerID)
+	// -> info. Guarded by mu.
 	mu   sync.RWMutex
 	pods map[string]*podInfo
 
@@ -268,7 +257,6 @@ func main() {
 		// ephemeral layer, where ukpd and Vector cannot reach them.
 		socketPath    = flag.String("socket", "/var/run/ukp/vm-state.sock", "unix socket path to listen on; ukpd's vm.state_change sink connects here")
 		outputPath    = flag.String("output", "/var/run/ukp/vm-state.usage", "path to append windowed usage JSONL (must be on a hostPath Vector can read)")
-		platformDir   = flag.String("platform-dir", "/var/lib/ukp/data/platform", "ukpd per-instance workspace dir (holds <uuid>/vmm.json)")
 		flushInterval = flag.Duration("flush-interval", 5*time.Minute, "how often open running windows are flushed as incremental records")
 		statsInterval = flag.Duration("stats-interval", time.Minute, "how often the stats heartbeat line is logged")
 		kubeconfig    = flag.String("kubeconfig", "", "optional path to a kubeconfig; defaults to in-cluster config")
@@ -286,15 +274,15 @@ func main() {
 	flag.Parse()
 
 	// Log the resolved configuration before anything can fail: a projector
-	// pointed at the wrong socket or platform-dir looks exactly like an idle
-	// one, and this line is what distinguishes them.
+	// pointed at the wrong socket looks exactly like an idle one, and this
+	// line is what distinguishes them.
 	hostname, _ := os.Hostname()
 	authMode := "in-cluster"
 	if *kubeconfig != "" {
 		authMode = "kubeconfig=" + *kubeconfig
 	}
-	log.Printf("boot node=%s socket=%s output=%s platform_dir=%s flush_interval=%s stats_interval=%s auth=%s debug=%t on_state=%q rotate_size_mb=%d rotate_max_age=%s",
-		hostname, *socketPath, *outputPath, *platformDir, *flushInterval, *statsInterval, authMode, *debug, onState, *rotateSizeMB, *rotateMaxAge)
+	log.Printf("boot node=%s socket=%s output=%s flush_interval=%s stats_interval=%s auth=%s debug=%t on_state=%q rotate_size_mb=%d rotate_max_age=%s",
+		hostname, *socketPath, *outputPath, *flushInterval, *statsInterval, authMode, *debug, onState, *rotateSizeMB, *rotateMaxAge)
 
 	cfg, err := k8sClientConfig(*kubeconfig)
 	if err != nil {
@@ -306,7 +294,6 @@ func main() {
 	}
 
 	p := &projector{
-		platformDir:     *platformDir,
 		socketPath:      *socketPath,
 		outputPath:      *outputPath,
 		flushInterval:   *flushInterval,
@@ -327,12 +314,6 @@ func main() {
 	if err := os.MkdirAll(filepath.Dir(*outputPath), 0o755); err != nil {
 		log.Fatalf("boot fatal=mkdir_output_dir dir=%s err=%v", filepath.Dir(*outputPath), err)
 	}
-	// Surface the platform dir's readability now rather than as a per-event
-	// attribution failure later.
-	if _, err := os.Stat(*platformDir); err != nil {
-		log.Printf("boot warn=platform_dir_unreadable dir=%s err=%v (attribution will fail until ukpd creates it)", *platformDir, err)
-	}
-
 	go p.watchPods(ctx, clientset)
 	go p.periodicFlush(ctx)
 	go p.logStats(ctx, *statsInterval)
@@ -349,9 +330,9 @@ func k8sClientConfig(kubeconfig string) (*rest.Config, error) {
 	return rest.InClusterConfig()
 }
 
-// watchPods maintains two indexes off a single shared informer factory:
-// guest-IP -> (project, instance, resources), from a cluster-wide watch of
-// provider Pods (they live on the Kraftlet virtual node, so node-scoping
+// watchPods maintains two indexes off a single shared informer factory: ukpd
+// instance uuid -> (project, instance, resources), from a cluster-wide watch
+// of provider Pods (they live on the Kraftlet virtual node, so node-scoping
 // cannot apply — same constraint ukp-telemetry's k8sattributes has); and
 // namespace -> decoded Milo project id, from a cluster-wide watch of
 // Namespaces (see upstreamClusterNameLabel) — the project a Pod belongs to is
@@ -404,7 +385,7 @@ func (p *projector) watchPods(ctx context.Context, clientset *kubernetes.Clients
 		p.nsMu.RLock()
 		nsIndexed := len(p.projects)
 		p.nsMu.RUnlock()
-		log.Printf("podwatch synced indexed_pod_ips=%d indexed_projects=%d", indexed, nsIndexed)
+		log.Printf("podwatch synced indexed_instances=%d indexed_projects=%d", indexed, nsIndexed)
 	}()
 
 	log.Printf("podwatch starting scope=cluster-wide resync=30s")
@@ -475,8 +456,38 @@ func (p *projector) projectForNamespace(ns string) (string, bool) {
 	return project, ok
 }
 
+// containerIDs returns the ukpd instance uuid(s) backing this Pod's
+// containers. Kraftlet (the virtual-kubelet provider driving these Pods) sets
+// each container's status.containerID to the ukpd instance uuid itself —
+// confirmed against a live deployment (2026-08-26): a Pod's
+// status.containerStatuses[0].containerID matched exactly one of ukpd's own
+// <platform-dir>/<uuid>/ directories, with no "docker://"/"containerd://"
+// scheme prefix. A prefix is stripped defensively anyway, in case a future
+// Kraftlet version adds one.
+func containerIDs(pod *corev1.Pod) []string {
+	var ids []string
+	for _, cs := range pod.Status.ContainerStatuses {
+		id := cs.ContainerID
+		if id == "" {
+			continue
+		}
+		if _, rest, ok := strings.Cut(id, "://"); ok {
+			id = rest
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 func (p *projector) upsertPod(pod *corev1.Pod) {
-	if pod == nil || pod.Status.PodIP == "" {
+	if pod == nil {
+		return
+	}
+	ids := containerIDs(pod)
+	if len(ids) == 0 {
+		// Normal before the container has actually started (e.g. still
+		// ContainerCreating) — not yet indexable, not a misconfiguration.
+		p.debugf("podindex skip reason=no_container_id pod=%s/%s", pod.Namespace, pod.Name)
 		return
 	}
 	instance := pod.Labels[upstreamInstanceLabel]
@@ -501,24 +512,31 @@ func (p *projector) upsertPod(pod *corev1.Pod) {
 	}
 
 	p.mu.Lock()
-	prev, existed := p.pods[pod.Status.PodIP]
-	p.pods[pod.Status.PodIP] = info
+	added, changed := false, false
+	for _, id := range ids {
+		prev, existed := p.pods[id]
+		p.pods[id] = info
+		if !existed {
+			added = true
+		} else if !prev.equal(info) {
+			changed = true
+		}
+	}
 	total := len(p.pods)
 	p.mu.Unlock()
 
 	// The informer's 30s resync replays every pod in the cluster, so log only
 	// when the indexed value actually changed — otherwise this floods.
-	if !existed {
+	if added {
 		p.stats.podIndexed.Add(1)
-		p.debugf("podindex added ip=%s %s pod=%s/%s total=%d",
-			pod.Status.PodIP, info, pod.Namespace, pod.Name, total)
-	} else if !prev.equal(info) {
-		p.debugf("podindex updated ip=%s %s (was %s) pod=%s/%s",
-			pod.Status.PodIP, info, prev, pod.Namespace, pod.Name)
+		p.debugf("podindex added uuids=%v %s pod=%s/%s total=%d",
+			ids, info, pod.Namespace, pod.Name, total)
+	} else if changed {
+		p.debugf("podindex updated uuids=%v %s pod=%s/%s", ids, info, pod.Namespace, pod.Name)
 	}
 	if instance == "" {
-		p.debugf("podindex warn=missing_instance_label ip=%s pod=%s/%s label=%s",
-			pod.Status.PodIP, pod.Namespace, pod.Name, upstreamInstanceLabel)
+		p.debugf("podindex warn=missing_instance_label uuids=%v pod=%s/%s label=%s",
+			ids, pod.Namespace, pod.Name, upstreamInstanceLabel)
 	} else if !projectOK {
 		// A real provider Pod (it carries upstream.instance) whose namespace has
 		// no upstream-cluster-name label. compute's own controller treats an
@@ -532,18 +550,20 @@ func (p *projector) upsertPod(pod *corev1.Pod) {
 }
 
 func (p *projector) deletePod(pod *corev1.Pod) {
-	if pod == nil || pod.Status.PodIP == "" {
+	if pod == nil {
+		return
+	}
+	ids := containerIDs(pod)
+	if len(ids) == 0 {
 		return
 	}
 	p.mu.Lock()
-	_, existed := p.pods[pod.Status.PodIP]
-	delete(p.pods, pod.Status.PodIP)
+	for _, id := range ids {
+		delete(p.pods, id)
+	}
 	total := len(p.pods)
 	p.mu.Unlock()
-	if existed {
-		p.debugf("podindex removed ip=%s pod=%s/%s total=%d",
-			pod.Status.PodIP, pod.Namespace, pod.Name, total)
-	}
+	p.debugf("podindex removed uuids=%v pod=%s/%s total=%d", ids, pod.Namespace, pod.Name, total)
 }
 
 func milliCPU(q resource.Quantity) int64 {
@@ -553,11 +573,12 @@ func milliCPU(q resource.Quantity) int64 {
 	return q.MilliValue()
 }
 
-// lookupIP returns the podInfo for a guest IP, plus whether it was found.
-func (p *projector) lookupIP(ip string) (*podInfo, bool) {
+// lookupUUID returns the podInfo for a ukpd instance uuid, plus whether it
+// was found.
+func (p *projector) lookupUUID(uuid string) (*podInfo, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	info, ok := p.pods[ip]
+	info, ok := p.pods[uuid]
 	return info, ok
 }
 
@@ -676,6 +697,9 @@ func (p *projector) handleEvent(ev stateChange) {
 					"(first flush will bill the gap to wall clock)",
 					uuid, ts.Format(time.RFC3339), skew.Round(time.Second))
 			}
+			// Resolve now, while the VM is guaranteed to be running (so its
+			// vmm.json is guaranteed to exist) — see resolveWindow's comment.
+			p.resolveWindow(w)
 			return
 		}
 		// Already running: no-op (started is idempotent).
@@ -858,25 +882,42 @@ func (p *projector) cleanupOldRotations() {
 	}
 }
 
+// resolveWindow attempts to resolve a window's attribution once, caching the
+// result on w.resolved. It is called both when a window opens — while the VM
+// is guaranteed to be running, so its vmm.json is guaranteed to exist — and
+// again lazily from recordFor as a fallback/retry for anything still
+// unresolved (e.g. the pod watch had not yet synced when the window opened).
+//
+// Resolving only at close/flush time (the original design) loses a real race:
+// a short-lived instance can fully stop, and have ukpd clean up its
+// <uuid>/vmm.json, within seconds of starting — verified against a real
+// deployment where every window for a handful of ~40-60s instances failed
+// with vmm_json_unreadable because vmm.json no longer existed by the time
+// recordFor() ran. Resolving at open time wins that race for the common case.
+func (p *projector) resolveWindow(w *windowState) {
+	if w.resolved != nil {
+		return
+	}
+	info, reason := p.resolve(w.uuid)
+	if info != nil {
+		w.resolved = info
+		log.Printf("resolve ok uuid=%s %s", w.uuid, info)
+		return
+	}
+	if reason != w.lastResolveLog {
+		// Attribution retries every flush; log each distinct reason once per
+		// window so a persistent failure does not repeat indefinitely.
+		p.stats.unresolved.Add(1)
+		log.Printf("resolve failed uuid=%s reason=%s (record emitted with project=\"-\")",
+			w.uuid, reason)
+		w.lastResolveLog = reason
+	}
+}
+
 // recordFor resolves the instance's identity/resources and builds the record.
 func (p *projector) recordFor(w *windowState, end time.Time) usageRecord {
+	p.resolveWindow(w)
 	info := w.resolved
-	if info == nil {
-		var reason string
-		info, reason = p.resolve(w.uuid)
-		w.resolved = info
-		switch {
-		case info != nil:
-			log.Printf("resolve ok uuid=%s %s", w.uuid, info)
-		case reason != w.lastResolveLog:
-			// Attribution retries every flush; log each distinct reason once per
-			// window so a persistent failure does not repeat indefinitely.
-			p.stats.unresolved.Add(1)
-			log.Printf("resolve failed uuid=%s reason=%s platform_dir=%s (record emitted with project=\"-\")",
-				w.uuid, reason, p.platformDir)
-			w.lastResolveLog = reason
-		}
-	}
 	start := w.reportedUntil
 	dur := end.Sub(start).Seconds()
 	if dur < 0 {
@@ -908,27 +949,28 @@ func (p *projector) recordFor(w *windowState, end time.Time) usageRecord {
 	return rec
 }
 
-// resolve maps an instance uuid to identity/resources by reading the guest IP from
-// its vmm.json and looking that IP up in the pod index. The returned reason
-// names which stage failed, since each has a different fix.
+// resolve maps an instance uuid directly to identity/resources via the pod
+// index. Kraftlet sets each provider Pod container's status.containerID to
+// the ukpd instance uuid itself (see containerIDs), so the Pod carrying that
+// containerID is the Pod for this instance — a plain map lookup, no IP or
+// on-disk file involved.
+//
+// This replaced an earlier guest-IP-based join (uuid -> vmm.json's netdev.ip
+// -> pod.Status.PodIP) after a CNI integration change on the runtime stopped
+// populating netdev.ip in vmm.json entirely (confirmed 2026-08-26), and
+// separately after Kraftlet was observed leaving status.podIP unset on Pods
+// that were otherwise fully Running — two independent ways that join could
+// break. The containerID join depends on neither.
 func (p *projector) resolve(uuid string) (*podInfo, string) {
-	ip, err := guestIP(p.platformDir, uuid)
-	if err != nil {
-		if errors.Is(err, errNoNetdevIP) {
-			return nil, reasonNoNetdevIP
-		}
-		p.debugf("resolve detail uuid=%s stage=vmm_json err=%v", uuid, err)
-		return nil, reasonVMMUnreadble
-	}
-	info, ok := p.lookupIP(ip)
+	info, ok := p.lookupUUID(uuid)
 	if !ok {
 		p.mu.RLock()
 		indexed := len(p.pods)
 		p.mu.RUnlock()
-		p.debugf("resolve detail uuid=%s stage=pod_index guest_ip=%s indexed_pod_ips=%d", uuid, ip, indexed)
+		p.debugf("resolve detail uuid=%s stage=pod_index indexed_instances=%d", uuid, indexed)
 		return nil, reasonPodNotIndexed
 	}
-	p.debugf("resolve detail uuid=%s guest_ip=%s %s", uuid, ip, info)
+	p.debugf("resolve detail uuid=%s %s", uuid, info)
 	return info, reasonOK
 }
 
@@ -955,7 +997,7 @@ func (p *projector) logStats(ctx context.Context, interval time.Duration) {
 			log.Printf("stats uptime=%s conns=%d events_received=%d events_wrong_type=%d "+
 				"dropped_no_uuid=%d dropped_no_state=%d decode_errors=%d "+
 				"windows_open=%d windows_opened=%d windows_closed=%d "+
-				"records_written=%d write_errors=%d unresolved=%d indexed_pod_ips=%d watch_errors=%d "+
+				"records_written=%d write_errors=%d unresolved=%d indexed_instances=%d watch_errors=%d "+
 				"stale_events=%d overbilled=%d rotations=%d rotation_deletes=%d project_label_missing=%d",
 				time.Since(start).Round(time.Second),
 				p.stats.connections.Load(), p.stats.eventsReceived.Load(), p.stats.eventsWrongTyp.Load(),
@@ -972,24 +1014,6 @@ func (p *projector) logStats(ctx context.Context, interval time.Duration) {
 
 func coresFromMilli(milli int64) int64 {
 	return milli / 1000
-}
-
-// errNoNetdevIP distinguishes "vmm.json exists but has no guest IP" from "could
-// not read vmm.json", which have different causes.
-var errNoNetdevIP = errors.New("netdev.ip not found in vmm.json")
-
-// guestIP extracts the guest IP for an instance from its vmm.json workspace file.
-func guestIP(platformDir, uuid string) (string, error) {
-	path := filepath.Join(platformDir, uuid, "vmm.json")
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("reading %s: %w", path, err)
-	}
-	m := netdevIPRe.FindSubmatch(b)
-	if len(m) < 2 {
-		return "", fmt.Errorf("%s: %w", path, errNoNetdevIP)
-	}
-	return string(m[1]), nil
 }
 
 // windowID is a deterministic id for a (uuid, start, end) window, for downstream

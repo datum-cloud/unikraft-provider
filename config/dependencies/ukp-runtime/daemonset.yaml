@@ -174,8 +174,9 @@ spec:
               mountPath: /var/lib/dbus/machine-id
               readOnly: true
         # Per-second usage billing: listens on the vm.state_change socket sink,
-        # attributes each instance to its project (guest IP -> provider Pod),
-        # and appends windowed usage JSONL to /var/run/ukp/vm-state.usage for the
+        # attributes each instance to its project (via the provider Pod whose
+        # container status containerID matches the ukpd instance uuid), and
+        # appends windowed usage JSONL to /var/run/ukp/vm-state.usage for the
         # edge billing-usage-collector Vector agent to tail. See
         # docs/enhancements/per-second-usage-billing/.
         - name: state-projector
@@ -188,7 +189,6 @@ spec:
           args:
             - -socket=/var/run/ukp/vm-state.sock
             - -output=/var/run/ukp/vm-state.usage
-            - -platform-dir=/var/lib/ukp/data/platform
             - -stats-interval=1m
             - -debug=true
             # The output file lives on ukp-run, a hostPath ukpd also depends
@@ -210,12 +210,12 @@ spec:
           securityContext:
             privileged: true
           volumeMounts:
-            # Reads ukpd's per-instance vmm.json to resolve uuid -> guest IP.
-            - name: ukp-data
-              mountPath: /var/lib/ukp
-              readOnly: true
             # Listens on /run/ukp/vm-state.sock and appends enriched usage to
-            # /run/ukp/vm-state.usage (== /var/run/ukp in-container).
+            # /run/ukp/vm-state.usage (== /var/run/ukp in-container). No
+            # longer mounts ukp-data: attribution now joins on the ukpd
+            # instance uuid via the provider Pod's container status
+            # containerID (see cmd/state-projector/main.go's resolve()),
+            # not vmm.json.
             - name: ukp-run
               mountPath: /var/run/ukp
       volumes:

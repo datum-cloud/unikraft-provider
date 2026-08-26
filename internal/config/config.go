@@ -140,4 +140,15 @@ type DownstreamResourceManagementConfig struct {
 	// +optional
 	// +default=true
 	EnableCNI bool `json:"enableCNI,omitempty"`
+
+	// EnableVPCNetworking attaches every Instance to the tenant network its
+	// interfaces belong to: the provider marks the Pod of an Instance that
+	// requests an interface, and the networking stack wires it up from there.
+	// Like EnableCNI this is a platform-wide setting rather than a per-Instance
+	// one.
+	// Defaults to disabled; set to true only in cells that run the VPC controller.
+	//
+	// +optional
+	// +default=false
+	EnableVPCNetworking bool `json:"enableVPCNetworking,omitempty"`
 }
