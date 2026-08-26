@@ -1,0 +1,24 @@
+@startuml architecture-context
+!$NEW_C4_STYLE = 1
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+!include https://raw.githubusercontent.com/datum-cloud/enhancements/main/enhancements/datum-theme.puml
+
+Person(customer, "Customer", "Runs workloads on Unikraft instances and expects to be billed for what they actually used")
+Person(operator, "Platform Operator", "Needs to trust that usage numbers are correct")
+
+System_Ext(runtime, "Unikraft Runtime", "Vendor-built; boots and manages microVMs, knows nothing about projects, customers, or billing")
+
+System(metering, "Per-Node Metering Component", "Watches each instance's real lifecycle and turns it into an accurate, project-attributed usage record")
+
+System(shipping, "Usage Shipping (Vector)", "Built and deployed: reads the local usage record and forwards it as a billing Cloudevent")
+
+System_Ext(billing, "Platform Billing Pipeline", "Meters and bills usage; owns pricing and invoicing")
+
+Rel_D(customer, runtime, "Runs workloads on")
+Rel_R(runtime, metering, "Instance lifecycle")
+Rel_R(metering, shipping, "Usage records")
+Rel_R(shipping, billing, "Forwards usage")
+Rel_U(operator, metering, "Monitors")
+
+SHOW_LEGEND()
+@enduml
