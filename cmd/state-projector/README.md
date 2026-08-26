@@ -73,11 +73,23 @@ ukpd ──vm.state_change──▶ /var/run/ukp/vm-state.sock ──▶ state-p
    nothing — with no error from either side. The DaemonSet passes all three paths
    explicitly for this reason.
 
-2. **Attribution.** For each instance, the projector resolves:
-   `uuid → guest IP` from the node-local `vmm.json`
-   (`/var/lib/ukp/data/platform/<uuid>/vmm.json`, `netdev.ip=...`), then
-   `guest IP → instance name / vcpu / memory` from a **cluster-wide watch of
-   provider Pods** (the guest IP equals the provider Pod's `podIP`).
+2. **Attribution.** For each instance, the projector resolves `uuid → project /
+   instance name / vcpu / memory` from a **cluster-wide watch of provider
+   Pods**, matching on the Pod's own container status: Kraftlet (the
+   virtual-kubelet provider driving these Pods) sets each container's
+   `status.containerID` to the ukpd instance uuid itself — confirmed against a
+   live deployment (2026-08-26) — so the provider Pod carrying that
+   containerID is the Pod for this instance. No IP is involved.
+
+   This replaced an earlier guest-IP-based join (`uuid` → `vmm.json`'s
+   `netdev.ip` → the Pod's `podIP`), retired after two independent problems
+   broke it in production: a CNI integration change on the runtime stopped
+   populating `netdev.ip` in `vmm.json` entirely (confirmed 2026-08-26 — every
+   `vmm.json` on an affected node had `boot_args: "unikraft"`, no `netdev.ip=`
+   anywhere), and separately Kraftlet was observed leaving `status.podIP`
+   unset on Pods that were otherwise fully `Running`. Either alone broke
+   attribution for every instance on the node; the containerID join depends
+   on neither `vmm.json` nor the Pod's IP.
 
    **The project is not the Pod's namespace.** That namespace name
    (`ns-<uuid>`) is a synthetic, edge-local identifier Karmada federation
@@ -179,13 +191,13 @@ line that says whether anything is arriving and anything is coming out:
 stats uptime=5m0s conns=1 events_received=42 events_wrong_type=0 \
   dropped_no_uuid=0 dropped_no_state=0 decode_errors=0 \
   windows_open=3 windows_opened=7 windows_closed=4 \
-  records_written=19 write_errors=0 unresolved=0 indexed_pod_ips=12 \
+  records_written=19 write_errors=0 unresolved=0 indexed_instances=12 \
   watch_errors=0 stale_events=0 overbilled=0 rotations=0 rotation_deletes=0 \
   project_label_missing=0
 ```
 
 `podwatch synced` similarly reports both indexes once caches are usable:
-`podwatch synced indexed_pod_ips=12 indexed_projects=4` — `indexed_projects`
+`podwatch synced indexed_instances=12 indexed_projects=4` — `indexed_projects`
 counts only namespaces that actually carry the project label, so it's normally
 much smaller than the total namespace count in the cluster.
 
@@ -195,8 +207,8 @@ Reading it:
 |---|---|
 | `events_received=0` | ukpd never connected — check the `vm-state-sink` entry in `log-sinks.json` and that `conn listening` names the socket ukpd dials |
 | `dropped_no_uuid` / `dropped_no_state` rising | the vendor renamed its event fields; each drop logs the raw payload verbatim, so grep `event dropped` and compare against `extractTransition` |
-| `indexed_pod_ips=0` | the pod watch is empty — look for `podwatch error=` (usually the missing `ukp-state-projector-pod-reader` ClusterRole) |
-| `unresolved` rising | attribution failing; `resolve failed` names which stage (`vmm_json_unreadable`, `netdev_ip_missing`, `pod_not_indexed`) |
+| `indexed_instances=0` | the pod watch is empty, or no provider Pod has a `status.containerID` set yet — look for `podwatch error=` (usually the missing `ukp-state-projector-pod-reader` ClusterRole) or `podindex skip reason=no_container_id` (Pod not yet started) |
+| `unresolved` rising | attribution failing; `resolve failed reason=pod_not_indexed` — no provider Pod's containerID matches this uuid yet (pod watch not synced, or the Pod's container hasn't started) |
 | `project_label_missing` rising | a real provider Pod's namespace has no `meta.datumapis.com/upstream-cluster-name` label — `podindex ALERT=missing_project_label` names the namespace; per `compute`'s own controller this is misconfiguration, not transient. Records still emit, with `project: "-"` |
 | `records_written=0` with `windows_open>0` | instances are running but nothing is billed — check `record write_error` and the output path |
 | `write_errors` rising | the output hostPath is not writable; the watermark is not advanced, so the next flush retries the span |
@@ -262,7 +274,9 @@ kubectl -n unikraft-system logs -l app=ukp-runtime -c state-projector \
   | grep -E 'ALERT|WARN|error=|dropped|write_error|resolve failed'
 
 # The usage file it wrote (what Vector tails)
-kubectl -n unikraft-system exec -it <ukp-runtime-pod> -c state-projector -- \
+# NOT -c state-projector: it runs on distroless/static (no shell, no tail).
+# ukpd shares the same ukp-run hostPath and has a real userland.
+kubectl -n unikraft-system exec -it <ukp-runtime-pod> -c ukpd -- \
   tail -20 /var/run/ukp/vm-state.usage
 ```
 
@@ -274,6 +288,7 @@ window (re-read to confirm no double-counting).
 
 `cmd/state-projector/main_test.go` covers:
 
+- `containerIDs` stripping a `scheme://` prefix from a container status,
 - event-key parsing (including the real `vm`/`prev`/`new` vendor payload),
 - the vendor payload driving windowing end-to-end (a parse that reads the states
   off the wrong keys emits nothing at all, silently — this is the guard against

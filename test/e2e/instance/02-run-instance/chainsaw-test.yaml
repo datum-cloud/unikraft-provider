@@ -83,12 +83,17 @@ spec:
             content: |
               set -eu
               POD=$(kubectl -n unikraft-system get pod -l app=ukp-runtime -o jsonpath='{.items[0].metadata.name}')
-              # Kept for visibility into the uuid -> guest IP resolution path
-              # (guestIP() in cmd/state-projector/main.go) — useful ground truth
-              # if that ever regresses again.
-              echo "--- vmm.json for this instance's workspace dir(s) ---"
+              # Kept for visibility into the uuid -> Pod resolution path
+              # (containerIDs()/resolve() in cmd/state-projector/main.go):
+              # Kraftlet sets each provider Pod container's status.containerID
+              # to the ukpd instance uuid itself, which is what attribution
+              # joins on — useful ground truth if that ever regresses again.
+              echo "--- provider Pod containerID for this instance ---"
+              kubectl get pod -l upstream.instance=e2e-run-instance \
+                -o jsonpath='{.items[0].status.containerStatuses[*].containerID}{"\n"}' 2>&1
+              echo "--- ukpd's own per-instance workspace dirs on the node ---"
               kubectl -n unikraft-system exec "$POD" -c ukpd -- \
-                sh -c 'for f in /var/lib/ukp/data/platform/*/vmm.json; do echo "-- $f --"; cat "$f"; echo; done' 2>&1
+                ls /var/lib/ukp/data/platform/ 2>&1
               for i in $(seq 1 40); do
                 POD=$(kubectl -n unikraft-system get pod -l app=ukp-runtime -o jsonpath='{.items[0].metadata.name}')
                 # -c ukpd, not state-projector: state-projector runs on

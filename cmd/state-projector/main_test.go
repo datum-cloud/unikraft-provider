@@ -13,30 +13,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// makeProjector returns a projector wired to a temp vmm.json for the given uuid,
-// with a pre-populated guest-IP -> pod index.
-func makeProjector(t *testing.T, uuid, ip string, vcpuMilli, memBytes int64) (*projector, string) {
+// makeProjector returns a projector with a pre-populated uuid -> pod index
+// (the ukpd instance uuid, as it would be read off a container status
+// containerID — see containerIDs in main.go).
+func makeProjector(t *testing.T, uuid string, vcpuMilli, memBytes int64) (*projector, string) {
 	t.Helper()
-	dir := t.TempDir()
-	// Write a vmm.json whose boot args carry the guest netdev IP.
-	vmPath := filepath.Join(dir, uuid)
-	if err := os.MkdirAll(vmPath, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// The real format (captured from a running ukpd): boot_args wraps
-	// netdev.ip in escaped quotes as a compound "<ip>/<prefix>:<gw>:<gw>::<host>:internal"
-	// field, not a bare IP — see the netdevIPRe comment in main.go.
-	vmmJSON := `{"boot-source":{"boot_args":"unikraft netdev.ip=\"` + ip + `/30:172.16.0.6:172.16.0.6::somehost:internal\" -- /server"}}`
-	if err := os.WriteFile(filepath.Join(vmPath, "vmm.json"), []byte(vmmJSON), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	out := filepath.Join(t.TempDir(), "vm-state.usage")
 	p := &projector{
-		platformDir: dir,
-		socketPath:  "/tmp/test.sock",
-		outputPath:  out,
+		socketPath: "/tmp/test.sock",
+		outputPath: out,
 		pods: map[string]*podInfo{
-			ip: {project: "my-project", instance: "web-1", vcpuMilli: vcpuMilli, memoryBytes: memBytes},
+			uuid: {project: "my-project", instance: "web-1", vcpuMilli: vcpuMilli, memoryBytes: memBytes},
 		},
 		windows: make(map[string]*windowState),
 		winMu:   sync.Mutex{},
@@ -83,10 +70,12 @@ func TestUpsertPodResolvesProjectFromNamespaceLabel(t *testing.T) {
 			Namespace: "ns-7c30e6d4-b337-4d46-a425-196116dfd5d3",
 			Labels:    map[string]string{upstreamInstanceLabel: "joseszycho"},
 		},
-		Status: corev1.PodStatus{PodIP: "10.0.0.9"},
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{{ContainerID: "5ae0061b-d18e-4246-9c81-2f693f0faa6c"}},
+		},
 	})
 
-	info := p.pods["10.0.0.9"]
+	info := p.pods["5ae0061b-d18e-4246-9c81-2f693f0faa6c"]
 	if info == nil {
 		t.Fatal("pod was not indexed")
 	}
@@ -113,10 +102,12 @@ func TestUpsertPodMissingProjectLabel(t *testing.T) {
 			Namespace: "ns-unlabeled",
 			Labels:    map[string]string{upstreamInstanceLabel: "some-instance"},
 		},
-		Status: corev1.PodStatus{PodIP: "10.0.0.10"},
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{{ContainerID: "22eb85cf-661f-4b51-8d77-1f051c73a7e3"}},
+		},
 	})
 
-	info := p.pods["10.0.0.10"]
+	info := p.pods["22eb85cf-661f-4b51-8d77-1f051c73a7e3"]
 	if info == nil {
 		t.Fatal("pod was not indexed")
 	}
@@ -132,7 +123,9 @@ func TestUpsertPodMissingProjectLabel(t *testing.T) {
 	// not count as a misconfiguration.
 	p.upsertPod(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "coredns-x", Namespace: "ns-unlabeled"},
-		Status:     corev1.PodStatus{PodIP: "10.0.0.11"},
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{{ContainerID: "af25bc66-2fd7-4a86-b587-2bfc62ab5c19"}},
+		},
 	})
 	if p.stats.projectLabelMissing.Load() != 1 {
 		t.Errorf("projectLabelMissing = %d after a non-provider pod, want still 1", p.stats.projectLabelMissing.Load())
@@ -233,31 +226,27 @@ func TestCleanupOldRotations(t *testing.T) {
 	}
 }
 
-// TestGuestIPRealVmmJSON is a golden regression test using the exact bytes
-// captured from a real ukpd's vmm.json (chainsaw e2e run, 2026-08-19). The
-// original regex required digits immediately after "netdev.ip=" and never
-// matched in production — vmm.json is itself JSON, and boot_args's string
-// value wraps the netdev arg in escaped quotes, so the real bytes read
-// `netdev.ip=\"172.16.0.5/30:...`, not `netdev.ip=172.16.0.5`.
-func TestGuestIPRealVmmJSON(t *testing.T) {
-	const raw = `{"boot-source":{"kernel_image_path":"/var/lib/ukp/images/x","initrd_path":"/var/lib/ukp/images/y","boot_args":"unikraft netdev.ip=\"172.16.0.5/30:172.16.0.6:172.16.0.6::yu1uwkqertaqmlxdkoncxki7bdyzbvdrsdhif7qfabo:internal\" env.vars=PATH=/usr/local/sbin -- /server"},"machine-config":{"vcpu_count":1,"mem_size_mib":256,"track_dirty_pages":true},"vsock":{"guest_cid":3,"uds_path":"v.sock"},"drives":[],"fs":[],"network-interfaces":[{"iface_id":"eth0","guest_mac":"12:b0:ac:10:00:05","host_dev_name":"ukp1.vif1"}],"consoles":[{"id":"console0","ports":[{"console":true,"name":"default","tx":{"type":"stdout"}}]}]}`
-
-	dir := t.TempDir()
-	const uuid = "cc20e657-7db8-49bb-b34c-5882c18676f1"
-	vmPath := filepath.Join(dir, uuid)
-	if err := os.MkdirAll(vmPath, 0o755); err != nil {
-		t.Fatal(err)
+// TestContainerIDsStripsSchemePrefix covers containerIDs, which replaced the
+// old vmm.json-based guest-IP join: Kraftlet sets each provider Pod
+// container's status.containerID to the ukpd instance uuid itself (confirmed
+// against a live deployment, 2026-08-26 — a Pod's containerID matched
+// exactly one of ukpd's own <platform-dir>/<uuid>/ directories, with no
+// scheme prefix). A "docker://"/"containerd://"-style prefix is stripped
+// defensively in case a future Kraftlet version adds one.
+func TestContainerIDsStripsSchemePrefix(t *testing.T) {
+	pod := &corev1.Pod{
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{
+				{ContainerID: "5ae0061b-d18e-4246-9c81-2f693f0faa6c"},
+				{ContainerID: "docker://10243eed-e706-4b70-b24b-32dba403ab60"},
+				{ContainerID: ""},
+			},
+		},
 	}
-	if err := os.WriteFile(filepath.Join(vmPath, "vmm.json"), []byte(raw), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	ip, err := guestIP(dir, uuid)
-	if err != nil {
-		t.Fatalf("guestIP() error = %v", err)
-	}
-	if ip != "172.16.0.5" {
-		t.Errorf("guestIP() = %q, want 172.16.0.5", ip)
+	got := containerIDs(pod)
+	want := []string{"5ae0061b-d18e-4246-9c81-2f693f0faa6c", "10243eed-e706-4b70-b24b-32dba403ab60"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("containerIDs() = %v, want %v", got, want)
 	}
 }
 
@@ -291,7 +280,7 @@ func TestExtractTransitionKeys(t *testing.T) {
 }
 
 func TestWindowOnOffSingleRecord(t *testing.T) {
-	p, out := makeProjector(t, "51020cdc-eee4-440a-8b0b-57c4690ae3d0", "10.0.0.5", 1000, 2*1024*1024*1024)
+	p, out := makeProjector(t, "51020cdc-eee4-440a-8b0b-57c4690ae3d0", 1000, 2*1024*1024*1024)
 
 	p.handleEvent(stateChange{Timestamp: "1970-01-01T00:01:40Z", Type: "vm.state_change",
 		Data: map[string]interface{}{"uuid": "51020cdc-eee4-440a-8b0b-57c4690ae3d0", "old_state": "starting", "state": "running"}})
@@ -336,7 +325,7 @@ func TestWindowOnOffSingleRecord(t *testing.T) {
 // silently opens no window and emits no record at all.
 func TestVendorPayloadDrivesWindowing(t *testing.T) {
 	const uuid = "dda7fe99-387a-4d81-80f2-35e2b51ee5c5"
-	p, out := makeProjector(t, uuid, "10.0.0.7", 2000, 1024*1024*1024)
+	p, out := makeProjector(t, uuid, 2000, 1024*1024*1024)
 
 	p.handleEvent(stateChange{Timestamp: "1970-01-01T00:01:40Z", Type: "vm.state_change",
 		Data: map[string]interface{}{"vm": uuid, "prev": "starting", "new": "running"}})
@@ -362,44 +351,12 @@ func TestVendorPayloadDrivesWindowing(t *testing.T) {
 	}
 }
 
-// TestResolvesAtWindowOpenBeforeVmmJSONDeleted is the regression guard for a
-// real production race: a short-lived instance can fully stop, and have ukpd
-// clean up its <uuid>/vmm.json, within seconds of starting. Resolving lazily
-// at close/flush time (the original design) loses that race and attributes
-// nothing. Resolving at window-open — while the VM is guaranteed to still be
-// running — must win it instead.
-func TestResolvesAtWindowOpenBeforeVmmJSONDeleted(t *testing.T) {
-	const uuid = "cc20e657-7db8-49bb-b34c-5882c18676f1"
-	p, out := makeProjector(t, uuid, "10.0.0.20", 2000, 4*1024*1024*1024)
-
-	p.handleEvent(stateChange{Timestamp: "1970-01-01T00:00:10Z", Type: "vm.state_change",
-		Data: map[string]interface{}{"vm": uuid, "prev": "starting", "new": "running"}})
-
-	// ukpd deletes the instance's workspace directory (including vmm.json)
-	// shortly after it stops — simulate that happening before the closing
-	// event is handled.
-	if err := os.RemoveAll(filepath.Join(p.platformDir, uuid)); err != nil {
-		t.Fatal(err)
-	}
-
-	p.handleEvent(stateChange{Timestamp: "1970-01-01T00:00:52Z", Type: "vm.state_change",
-		Data: map[string]interface{}{"vm": uuid, "prev": "running", "new": "stopping"}})
-
-	recs := readRecords(t, out)
-	if len(recs) != 1 {
-		t.Fatalf("expected 1 record, got %d: %v", len(recs), recs)
-	}
-	if recs[0].Project != "my-project" || recs[0].Instance != "web-1" {
-		t.Errorf("attribution lost after vmm.json was deleted post-open: %+v", recs[0])
-	}
-}
-
 // A window must close on any non-running state even when the event carries no
 // old-state field, so a renamed/missing "prev" cannot strand it open and stop
 // billing a stopped instance.
 func TestWindowClosesWithoutOldState(t *testing.T) {
 	const uuid = "81020cdc-eee4-440a-8b0b-57c4690ae3d0"
-	p, out := makeProjector(t, uuid, "10.0.0.8", 1000, 1024)
+	p, out := makeProjector(t, uuid, 1000, 1024)
 
 	p.handleEvent(stateChange{Timestamp: "1970-01-01T00:00:10Z", Type: "vm.state_change",
 		Data: map[string]interface{}{"vm": uuid, "new": "running"}})
@@ -419,7 +376,7 @@ func TestWindowClosesWithoutOldState(t *testing.T) {
 // guessing the instance stopped.
 func TestUnknownStateLeavesWindowOpen(t *testing.T) {
 	const uuid = "91020cdc-eee4-440a-8b0b-57c4690ae3d0"
-	p, _ := makeProjector(t, uuid, "10.0.0.10", 1000, 1024)
+	p, _ := makeProjector(t, uuid, 1000, 1024)
 
 	p.handleEvent(stateChange{Timestamp: "1970-01-01T00:00:10Z", Type: "vm.state_change",
 		Data: map[string]interface{}{"vm": uuid, "new": "running"}})
@@ -432,7 +389,7 @@ func TestUnknownStateLeavesWindowOpen(t *testing.T) {
 }
 
 func TestIncrementalFlushAndDeterministicID(t *testing.T) {
-	p, out := makeProjector(t, "61020cdc-eee4-440a-8b0b-57c4690ae3d0", "10.0.0.9", 2000, 1024*1024*1024)
+	p, out := makeProjector(t, "61020cdc-eee4-440a-8b0b-57c4690ae3d0", 2000, 1024*1024*1024)
 	p.flushInterval = 5 * time.Minute
 
 	p.handleEvent(stateChange{Timestamp: "1970-01-01T00:10:00Z", Type: "vm.state_change",
@@ -463,7 +420,7 @@ func TestIncrementalFlushAndDeterministicID(t *testing.T) {
 }
 
 func TestUnresolvedAttribution(t *testing.T) {
-	p, out := makeProjector(t, "71020cdc-eee4-440a-8b0b-57c4690ae3d0", "10.0.0.99", 1000, 1024)
+	p, out := makeProjector(t, "71020cdc-eee4-440a-8b0b-57c4690ae3d0", 1000, 1024)
 	// No pod indexed for 10.0.0.99 -> attribution falls back to "-" but the
 	// window is still emitted (fail toward not-dropping).
 	p.pods = nil

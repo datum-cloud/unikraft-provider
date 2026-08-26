@@ -21,7 +21,6 @@ spec:
           args:
             - -socket=/var/run/ukp/vm-state.sock
             - -output=/var/run/ukp/vm-state.usage
-            - -platform-dir=/var/lib/ukp/data/platform
             - -stats-interval=1m
             - -debug=true
             - -rotate-size-mb=64
