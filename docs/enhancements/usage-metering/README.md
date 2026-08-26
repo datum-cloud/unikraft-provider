@@ -34,11 +34,12 @@ component, running on every node, that watches each instance's real lifecycle as
 happens and turns it into an accurate record: which project it belongs to, and exactly
 how long it actually ran.
 
-That record is the raw material a second, much simpler step will use: reading it and
+That record is the raw material a second, much simpler step uses: reading it and
 forwarding it, in the platform's standard format, to wherever usage is ultimately
-metered and billed. The first half — producing an accurate, attributed usage record —
-is built and has been validated end to end. The second half — shipping that record
-onward — is the next step, and is a comparatively small piece of work, because the hard
+metered and billed. Both halves are now built. The first — producing an accurate,
+attributed usage record — has been validated end to end, including against real
+production traffic. The second — shipping that record onward — is implemented as a
+Vector agent that tails the record and forwards it as a billing Cloudevent; the hard
 problem here was never "how do we move data," it was "how do we know, correctly, what
 happened and to whom."
 
@@ -78,11 +79,9 @@ provisioned.
   does not decide what anyone owes.
 - **Metering anything that isn't actually running.** Reserved-but-idle capacity isn't
   billed through this mechanism.
-- **The full path to the central billing system, end to end, right now.** This covers
-  producing an accurate record on each node and the plan for shipping it onward. Full
-  validation of the shipping step is sequenced behind the compute service reliably
-  running real instances — this document says so plainly rather than assuming it
-  around.
+- **Deciding how the runtime itself is configured or upgraded.** This works with
+  whatever identity and lifecycle information the runtime already exposes on the node;
+  it does not change the runtime's own behavior.
 
 ## Proposal
 
@@ -131,11 +130,10 @@ stateDiagram-v2
     Idle --> [*]: instance removed
 ```
 
-This has already been built and validated end to end in a full simulated environment,
-and is now deployed and running on real infrastructure. What's still outstanding is
-confirming it against real, live traffic — which is waiting on the compute service
-reliably getting instances to a running state there, not on anything this component
-still needs to do.
+This has been built and validated end to end — first in a full simulated environment,
+and now confirmed against real production traffic: long-running instances are
+correctly attributed to their real project, with the right size and elapsed time,
+flushing incrementally as expected.
 
 ### Risks and Mitigations
 
@@ -146,11 +144,13 @@ still needs to do.
 - **The component itself has an outage.** Any gap is bounded and self-heals on
   restart; a retried report never counts the same usage twice.
 - **Local usage data could grow without bound.** The component manages this on its
-  own, keeping only what's needed until the shipping step (once it exists) has
-  confirmed it was picked up.
-- **This can't be fully proven until the compute service is reliably running real
-  instances.** That's a sequencing fact, not a flaw in this design — it's called out
-  here rather than glossed over.
+  own, keeping only what's needed until the shipping step confirms it was picked up.
+- **The runtime changes something this depends on.** This has already happened once —
+  a networking change on the runtime silently broke how instances were identified —
+  and the fix was to depend on a more fundamental, less coupled piece of identity
+  instead of chasing the specific thing that changed. The same caution applies to the
+  planned ingestion change below: prefer the option least coupled to incidental
+  runtime behavior.
 
 ## Design Details
 
@@ -165,30 +165,44 @@ would not have that same immediacy or precision.
 
 ### The Shipping Step
 
-The next piece of work is comparatively small: a lightweight, widely used
-data-shipping tool will read the usage records this component produces and forward
-them — translated into the platform's standard usage format — to wherever usage is
-ultimately metered and billed. Because the hard problem (accurate measurement and
-attribution) is already solved, this step is mostly about transport and format, not
-new logic.
+This is built: a lightweight, widely used data-shipping tool (Vector) reads the usage
+records this component produces and forwards them — translated into the platform's
+standard billing Cloudevent format — to the billing pipeline. Because the hard problem
+(accurate measurement and attribution) was already solved, this step turned out to be
+exactly what it was expected to be: mostly transport and format, not new logic.
 
 ## Technical Details
 
 The metering component is a small program written in Go, running as a sidecar
 container inside the same per-node pod as the Unikraft runtime itself — one per
 compute node, deployed and upgraded alongside the runtime rather than as a separate
-rollout. It connects directly to the runtime's own local event stream on that node, so
-it learns about a lifecycle change essentially as it happens, not on a polling delay.
-It separately keeps track of which project each instance belongs to by watching the
-cluster, and combines the two to produce each usage record. Records are appended, one
-per line, to a plain local file on the node as they're produced.
+rollout.
 
-Reading that file and shipping it onward is planned to be handled by **Vector**, a
-widely used open-source data-pipeline agent. Vector would run on each node as well
-(the file it reads is local to that node), tailing it as new lines are appended and
-forwarding each one, translated into the platform's usage-event format, to the billing
-pipeline. This piece has not been built yet — it's the next step once the metering
-side is confirmed against real traffic.
+**Ingest.** It connects to the runtime's own local event stream on that node, so it
+learns about a lifecycle change essentially as it happens, not on a polling delay.
+Today that connection is a Unix socket the runtime pushes events over live. That has
+one real drawback: it requires an active connection at the exact moment an event
+fires, so a redeploy or brief crash of this component can miss an event a live socket
+would have delivered. The planned change is to instead have the runtime write its
+events to a plain file on disk, which this component tails — durable to its own
+restarts, since the runtime keeps appending regardless of whether anything is reading
+at that moment. This is a resilience improvement to *how events arrive*; it does not
+change anything about how usage is measured or attributed once they do.
+
+**Attribute.** It separately keeps track of which project and instance each running VM
+belongs to, by watching the cluster — the runtime itself has no notion of either.
+Originally this join went through the instance's network address; that broke when a
+networking change on the runtime stopped exposing it, so it was replaced with a more
+direct piece of identity the runtime exposes per instance regardless of its network
+configuration. The two are combined to produce each usage record, which is appended,
+one per line, to a plain local file.
+
+**Ship.** Reading that file and shipping it onward is handled by **Vector**, a widely
+used open-source data-pipeline agent, running on each node as well (the file it reads
+is local to that node). It tails the file as new lines are appended, and for each one
+emits a billing Cloudevent — carrying the project, the instance, and the resource
+consumption for that window (compute-time and memory-time) — to the platform's billing
+pipeline.
 
 ## Drawbacks
 
@@ -210,14 +224,27 @@ side is confirmed against real traffic.
 ## Implementation History
 
 - The per-node metering component: **implemented and validated** end to end in a
-  simulated environment, and deployed to real infrastructure. Confirming it against
-  real production traffic is pending the compute service reliably running instances
-  there.
-- The shipping step: **proposed here**, not yet built.
+  simulated environment, and **confirmed against real production traffic** —
+  long-running instances are correctly attributed with the right project, size, and
+  elapsed time.
+- The instance-identity join it uses: **revised once already**. It originally went
+  through the instance's network address; a networking change on the runtime broke
+  that, and it was replaced with a more direct piece of identity — verified against
+  the same production traffic above.
+- The shipping step: **implemented and deployed** — a Vector agent tails the local
+  usage record and forwards each window as a billing Cloudevent to the platform's
+  billing pipeline.
+- Ingestion (runtime → metering component): **planned change** from a Unix socket to
+  a file the runtime writes and this component tails, for resilience to this
+  component's own restarts.
 
 ## Infrastructure Needed
 
-- A data-shipping component, configured to read this component's output and forward
-  it onward — not yet deployed.
+- ~~A data-shipping component, configured to read this component's output and forward
+  it onward.~~ Done — deployed as part of the platform's existing Vector-based billing
+  agent.
 - A receiving side on the platform's billing pipeline able to accept what gets
-  shipped once that step exists.
+  shipped — in place, since this reuses the same billing Cloudevent pipeline other
+  usage sources already ship through.
+- A runtime configuration change to add the planned file-based event sink, once the
+  ingestion migration above is scheduled.
