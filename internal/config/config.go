@@ -25,11 +25,6 @@ type UnikraftProvider struct {
 	WebhookServer WebhookServerConfig `json:"webhookServer"`
 
 	DownstreamResourceManagement DownstreamResourceManagementConfig `json:"downstreamResourceManagement"`
-
-	// LocationClassName configures the operator to only consider resources
-	// attached to locations with the specified location class.
-	// +default="self-managed"
-	LocationClassName string `json:"locationClassName"`
 }
 
 // +k8s:deepcopy-gen=true

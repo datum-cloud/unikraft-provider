@@ -21,7 +21,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	computev1alpha "go.datum.net/compute/api/v1alpha"
-	networkingv1alpha "go.datum.net/network-services-operator/api/v1alpha"
 	"go.datum.net/unikraft-provider/internal/config"
 	"go.datum.net/unikraft-provider/internal/controller"
 	// +kubebuilder:scaffold:imports
@@ -36,7 +35,6 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(computev1alpha.AddToScheme(scheme))
-	utilruntime.Must(networkingv1alpha.AddToScheme(scheme))
 
 	utilruntime.Must(config.AddToScheme(scheme))
 	utilruntime.Must(config.RegisterDefaults(scheme))
@@ -105,8 +103,7 @@ func main() {
 	}
 
 	if err = (&controller.InstanceReconciler{
-		Config:            &serverConfig,
-		LocationClassName: serverConfig.LocationClassName,
+		Config: &serverConfig,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "InstanceReconciler")
 		os.Exit(1)

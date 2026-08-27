@@ -1,0 +1,11 @@
+# Box overlay: copy to the runtime-container root as
+# docker-compose.override.yaml so compose auto-merges it.
+# Replaces the local named data volume with the real quota-enabled XFS
+# mount at /var/lib/ukp.
+volumes:
+  data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/ukp

@@ -1,0 +1,57 @@
+# Local prototype configuration for the containerized ukp stack.
+# Modeled on the generated /etc/ukp.conf of a native install; all
+# credentials are dummies. Syntax is bash (sourced by every launcher).
+
+## Global configuration
+UKP_DATA="/var/lib/ukp/data"
+UKP_BACKUPS="/var/lib/ukp/backups"
+UKP_VOLUMES="/var/lib/ukp/volumes"
+UKP_SNAPSHOTS="/var/lib/ukp/snapshots"
+UKP_IMAGES="/var/lib/ukp/images"
+UKP_RUNTIME="/var/run/ukp"
+UKP_USERDB="/var/lib/ukp/data/users.json"
+UKP_LOGDIR="/var/log/ukp"
+UKP_PROMETHEUS_API_TOKEN=""
+UKP_PROMETHEUS_API_TOKEN_PRIVATE="local-prototype-metrics-token"
+
+# No manually-mounted volumes locally; the fs barrier is a no-op.
+UKP_CUSTOM_MPOINTS=()
+
+## Platform daemon
+UKPD_EXTRA_ARGS=()
+UKPD_EXTRA_ARGS+=("--vmm-initrd-map-shared")
+
+## Network/IP configuration
+NET_IFACE="eth0"
+NET_MODE="isolates"
+NET_SEGMENT="172.16.0.0/12"
+NET_COUNT="16"
+
+## Public DNS (test-only zones; no real DNS involved locally)
+DNS_HOSTNAME="proto0"
+DNS_ZONE_API="ukp.test"
+DNS_ZONE_APP="ukp-app.test"
+
+## Internal DNS
+IDNS_HOSTNAME="ns"
+IDNS_ZONE="internal"
+IDNS_EMAIL="ns@internal"
+
+## Platform agent (dummy upstream credentials; pulls will fail locally)
+AGENT_PULL_NATS_USER="local"
+AGENT_PULL_NATS_TOKEN="dummy"
+AGENT_PULL_HARBOR_TOKEN="dummy"
+AGENT_PULL_INCLUDE="official"
+AGENT_PULL_IGNORE="test"
+AGENT_OTEL_ADDR=""
+AGENT_OTEL_TOKEN=""
+
+## Lego daemon (never used locally; certs are pre-seeded self-signed)
+CLOUDFLARE_DNS_API_TOKEN="dummy"
+CLOUDFLARE_DNS_EMAIL="dummy@example.invalid"
+
+## Optional port forwarding
+REMOTE_PSQLD=""
+LOCAL_PSQLD=""
+REMOTE_SMBD=""
+LOCAL_SMBD=""

@@ -1,0 +1,41 @@
+# Disposable pair for VPC attachment lifecycle testing. Deliberately on the
+# existing taptest network: its NetworkContext keeps another user, so deleting
+# this workload exercises attachment teardown without risking a network that
+# cannot be recreated.
+apiVersion: compute.datumapis.com/v1alpha
+kind: Workload
+metadata:
+  name: lifecycle
+  namespace: default
+spec:
+  placements:
+    - name: dfw
+      cityCodes: ["DFW"]
+      scaleSettings:
+        minReplicas: 1
+        instanceManagementPolicy: OrderedReady
+    - name: iad
+      cityCodes: ["IAD"]
+      scaleSettings:
+        minReplicas: 1
+        instanceManagementPolicy: OrderedReady
+  template:
+    metadata:
+      labels:
+        app: lifecycle
+    spec:
+      networkInterfaces:
+        - name: eth0
+          ipFamilies: ["IPv6"]
+          network:
+            name: taptest
+          reclaimPolicy: Delete
+      runtime:
+        resources:
+          instanceType: datumcloud/d1-standard-2
+        sandbox:
+          containers:
+            - name: hello
+              image: index.docker.io/scotwells/datum-compute-hello-world@sha256:48bb65ab466f459382e856eb763a7a89eb45b284e4fe64a8ec0d3b4f2395987c
+          imagePullSecrets:
+            - name: dockerhub-pull

@@ -27,7 +27,4 @@ func SetObjectDefaults_UnikraftProvider(in *UnikraftProvider) {
 	if in.DownstreamResourceManagement.EnableCNI == false {
 		in.DownstreamResourceManagement.EnableCNI = true
 	}
-	if in.LocationClassName == "" {
-		in.LocationClassName = "self-managed"
-	}
 }
