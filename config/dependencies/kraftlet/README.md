@@ -87,6 +87,17 @@ for this; disabling it restores `NodeReady` while keeping every other
 `0.6.0-staging` feature (image-pull creds, CNI). Revisit once Unikraft
 supports this check for direct-connect deployments.
 
+### Node providerID
+
+`KRAFTLET_NODE_PROVIDER_ID=unikraft://kraftlet-$(NODE_NAME)` is set so the VK
+node carries a `spec.providerID`. Kraftlet does not generate one by default, and
+a node without a providerID is *deleted* by the node-lifecycle controller when
+its lease goes stale (rather than merely going `NotReady`). Once that happens
+kraftlet does not re-register: it loops on `nodes "kraftlet-<node>" not found`
+while the garbage collector reaps each freshly created lease, so the host stays
+unschedulable until the DaemonSet is restarted. The value only has to be unique
+and stable per node — nothing resolves it against a cloud API.
+
 ## Open items (before production)
 
 - **PVC watcher is OFF.** N independent kraftlets would run N cluster-wide

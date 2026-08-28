@@ -46,7 +46,7 @@ spec:
           # imagePullSecrets are forwarded to ukpd) and remote-CNI support
           # (--cni-service/--cni-token). Released kraftlet stops at 0.2, so
           # the feature track is -staging.
-          image: ghcr.io/unikraft-cloud/kraftlet:0.6.0-staging.28
+          image: ghcr.io/unikraft-cloud/kraftlet:0.6.0-staging.46
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-c"]
           # Distinct virtual-kubelet node name per host: kraftlet-<node>.
@@ -103,3 +103,7 @@ spec:
               value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
             - name: KRAFTLET_NODE_INTERNAL_IP
               valueFrom: { fieldRef: { fieldPath: status.hostIP } }
+            # Without a providerID the node-lifecycle controller deletes the VK
+            # node outright when its lease lapses, and kraftlet never re-registers.
+            - name: KRAFTLET_NODE_PROVIDER_ID
+              value: "unikraft://kraftlet-$(NODE_NAME)"
