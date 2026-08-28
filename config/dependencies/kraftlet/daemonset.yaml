@@ -103,3 +103,7 @@ spec:
               value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
             - name: KRAFTLET_NODE_INTERNAL_IP
               valueFrom: { fieldRef: { fieldPath: status.hostIP } }
+            # Without a providerID the node-lifecycle controller deletes the VK
+            # node outright when its lease lapses, and kraftlet never re-registers.
+            - name: KRAFTLET_NODE_PROVIDER_ID
+              value: "unikraft://kraftlet-$(NODE_NAME)"
