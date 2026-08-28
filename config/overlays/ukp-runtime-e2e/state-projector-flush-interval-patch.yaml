@@ -19,7 +19,7 @@ spec:
       containers:
         - name: state-projector
           args:
-            - -socket=/var/run/ukp/vm-state.sock
+            - -events-path=/var/run/ukp/vm-state.events
             - -output=/var/run/ukp/vm-state.usage
             - -stats-interval=1m
             - -debug=true

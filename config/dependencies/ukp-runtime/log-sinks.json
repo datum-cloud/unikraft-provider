@@ -10,10 +10,10 @@
     "backoff_time_s": 2
   },
   {
-    "name": "vm-state-sink",
-    "type": "socket",
+    "name": "vm-state-file-sink",
+    "type": "file",
     "encoding": "json",
-    "path": "/run/ukp/vm-state.sock",
+    "path": "/run/ukp/vm-state.events",
     "events": ["vm.state_change"],
     "reliable": false,
     "buffer_size_kb": 64,

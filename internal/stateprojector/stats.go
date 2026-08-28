@@ -14,7 +14,6 @@ import (
 // line answers "is anything arriving, and is anything coming out" without
 // correlating a whole log stream.
 type stats struct {
-	connections         atomic.Int64
 	decodeErrors        atomic.Int64
 	eventsReceived      atomic.Int64
 	eventsWrongTyp      atomic.Int64
@@ -42,9 +41,9 @@ type statsSource struct {
 }
 
 // logHeartbeat runs unconditionally (not only under -debug) and is the first
-// line to read when diagnosing: if events_received stays 0 the sink never
-// connected, and if records_written stays 0 while windows open, attribution
-// or the output path is at fault.
+// line to read when diagnosing: if events_received stays 0 nothing has
+// arrived in the events file yet, and if records_written stays 0 while
+// windows open, attribution or the output path is at fault.
 func logHeartbeat(ctx context.Context, s *stats, src statsSource, interval time.Duration) {
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
@@ -54,13 +53,13 @@ func logHeartbeat(ctx context.Context, s *stats, src statsSource, interval time.
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			log.Printf("stats uptime=%s conns=%d events_received=%d events_wrong_type=%d "+
+			log.Printf("stats uptime=%s events_received=%d events_wrong_type=%d "+
 				"dropped_no_uuid=%d dropped_no_state=%d decode_errors=%d "+
 				"windows_open=%d windows_opened=%d windows_closed=%d "+
 				"records_written=%d write_errors=%d unresolved=%d indexed_instances=%d watch_errors=%d "+
 				"stale_events=%d overbilled=%d rotations=%d rotation_deletes=%d project_label_missing=%d",
 				time.Since(start).Round(time.Second),
-				s.connections.Load(), s.eventsReceived.Load(), s.eventsWrongTyp.Load(),
+				s.eventsReceived.Load(), s.eventsWrongTyp.Load(),
 				s.noUUID.Load(), s.noState.Load(), s.decodeErrors.Load(),
 				src.openWindows(), s.windowsOpened.Load(), s.windowsClosed.Load(),
 				s.recordsWritten.Load(), s.writeErrors.Load(),

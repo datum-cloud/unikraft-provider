@@ -39,7 +39,7 @@ window) and has no clean way to maintain a live pod→project index. The split i
 
 | concern | owner | why |
 |---|---|---|
-| consume `vm.state_change` | state-projector | needs a node-local socket sink |
+| consume `vm.state_change` | state-projector | needs to tail a node-local file |
 | enrich uuid → project / instance / resources | state-projector | needs k8s-aware, node-local logic |
 | stateful running-window + duration | state-projector | Vector VRL is per-event / stateless |
 | format + ship billing Cloudevent | Vector | pure stateless transport — its job |
@@ -47,31 +47,55 @@ window) and has no clean way to maintain a live pod→project index. The split i
 ## How it works
 
 ```
-ukpd ──vm.state_change──▶ /var/run/ukp/vm-state.sock ──▶ state-projector
-                                                        │  maintains open windows
-                                                        │  appends JSONL
-                                                        ▼
-                                              /var/run/ukp/vm-state.usage
-                                                        │  (hostPath)
-                                                        ▼
-                                  Vector file source → remap → billing_gateway
+ukpd ──vm.state_change──▶ /var/run/ukp/vm-state.events ──▶ state-projector (tails)
+                                                          │  maintains open windows
+                                                          │  appends JSONL
+                                                          ▼
+                                                /var/run/ukp/vm-state.usage
+                                                          │  (hostPath)
+                                                          ▼
+                                    Vector file source → remap → billing_gateway
 ```
 
-1. **Ingest.** ukpd streams `vm.state_change` events over a Unix socket to the
-   projector (`-socket /var/run/ukp/vm-state.sock`). The sink is configured in the
-   runtime's `log-sinks.json` (`vm-state-sink`, `type: socket`,
-   `events: ["vm.state_change"]`, `reliable: true`).
+1. **Ingest.** ukpd writes `vm.state_change` events, one JSON object per line,
+   to a plain file the projector tails (`-events-path /var/run/ukp/vm-state.events`).
+   The sink is configured in the runtime's `log-sinks.json`
+   (`vm-state-file-sink`, `type: file`, `events: ["vm.state_change"]`,
+   `reliable: false`).
 
-   The two halves name that socket differently, and both are correct: ukpd's
+   This replaced an earlier Unix-socket transport (ukpd pushing events over a
+   live connection) because that requires an active listener at the exact
+   moment an event fires — a redeploy or brief crash of this component could
+   miss an event a socket would have delivered. A file sink has no such
+   requirement: ukpd keeps appending regardless of whether anything is
+   reading, and the tailer resumes from a persisted byte offset
+   (`<events-path>.offset`) across restarts, so a restart re-reads only what
+   it missed rather than replaying everything or skipping a gap. Replaying
+   an already-processed event is safe: every transition in `processor.go` is
+   idempotent (re-entering `running` or re-closing an already-closed window
+   is a no-op), so an at-least-once read is enough — no exactly-once offset
+   bookkeeping is needed.
+
+   The two halves name this file differently, and both are correct: ukpd's
    `log-sinks.json` says `/run/ukp/...` because its `debian:trixie-slim` image
    symlinks `/var/run` → `/run`, while the projector must say `/var/run/ukp/...`
    because `distroless/static` has **no such symlink** — there, `/run` and
    `/var/run` are separate real directories and only `/var/run/ukp` is the
    mounted hostPath. Both therefore resolve to the same file on the node. Leaving
-   the projector on a `/run/ukp` path would put its socket and usage file in the
-   container's ephemeral layer, where ukpd cannot connect and Vector sees
-   nothing — with no error from either side. The DaemonSet passes all three paths
+   the projector on a `/run/ukp` path would put its events and usage files in the
+   container's ephemeral layer, where ukpd cannot write to them and Vector sees
+   nothing — with no error from either side. The DaemonSet passes both paths
    explicitly for this reason.
+
+   **This file has no built-in cap** — vendor-confirmed (2026-08-28):
+   `--log-rotation` only applies to the primary `--log-path` controller log,
+   not sink files, though `SIGHUP` does reopen a sink file the same way it
+   reopens that log. Nothing here rotates this file for us; an external
+   logrotate-style rotation (rename the file, then `SIGHUP` the `ukpd`
+   container) is an operational requirement, not yet automated. The tailer
+   itself is rotation-*safe* regardless of who rotates it or when: it detects
+   the file at this path being replaced (via file identity, not just a size
+   check) and reopens from the start.
 
 2. **Attribution.** For each instance, the projector resolves `uuid → project /
    instance name / vcpu / memory` from a **cluster-wide watch of provider
@@ -129,10 +153,12 @@ ukpd ──vm.state_change──▶ /var/run/ukp/vm-state.sock ──▶ state-p
 
 ### Data contract — input and output
 
-- **Input** (`vm.state_change` from ukpd):
-  `{timestamp, type: "vm.state_change", data: {vm, prev, new}}` — the parser also
-  tolerates `uuid`/`old_state`/`new_state` variants for other builds and falls
-  back to scanning for a uuid-shaped token.
+- **Input** (`vm.state_change` from ukpd, one JSON object per line):
+  `{timestamp, type: "vm.state_change", data: {vm, prev, new}}` — these are
+  the only keys ukpd has ever actually emitted (confirmed against production
+  traffic), so the parser reads only these; if `vm` is ever renamed, a
+  uuid-shaped-token fallback still recovers the uuid by scanning the raw
+  payload.
 - **Output** (usage record; one per window): the fields above. The `id` is a
   deterministic `md5(uuid|start|end)`, so replaying a window does not double-count
   billing downstream (the billing gateway/buffer dedups on it).
@@ -161,17 +187,21 @@ The Vector side ships separately in `datum-infra`
 
 ## Failure modes / guarantees
 
-- **Projector down (transient):** the socket sink is `reliable: true` and
-  disk-buffered on the ukpd side (`buffer_size_kb: 64`), so ukpd holds undelivered
-  events and replays them on reconnect. Because events carry their original
-  timestamps, full running windows are reconstructed from a replay — an outage
-  does **not** mean events are lost.
+- **Projector down (transient):** ukpd's file sink keeps appending regardless
+  of whether anything is reading, so no event is lost while the projector is
+  down. On restart, the tailer resumes from its persisted offset
+  (`<events-path>.offset`) and picks up exactly what it missed. This is the
+  main reason this transport replaced the earlier Unix socket, where an
+  absent listener at the moment of an event meant that event was gone.
 - **Projector crash mid-window:** the open window's watermark lives in memory,
   so a crash after reading a `running` event but before flushing its record loses
   that in-flight segment — bounded to at most one flush interval (~5 min) of a
   running instance.
-- **Prolonged outage on a busy node:** the 64 KB sender buffer can overflow at
-  the edge if the projector stays down through heavy instance churn.
+- **The events file itself has no built-in cap** (vendor-confirmed — see
+  "How it works" above): if nothing ever rotates it, it grows unbounded on
+  the same `ukp-run` hostPath `ukpd` depends on. Rotating it is an external,
+  not-yet-automated operational step (rename + `SIGHUP` to `ukpd`); the
+  tailer here only guarantees it won't break when that eventually happens.
 
 None of these require changes here to mitigate further, but they're the operational
 envelope worth knowing.
@@ -188,7 +218,7 @@ per-pod and per-resolution detail; everything below is on by default.
 line that says whether anything is arriving and anything is coming out:
 
 ```
-stats uptime=5m0s conns=1 events_received=42 events_wrong_type=0 \
+stats uptime=5m0s events_received=42 events_wrong_type=0 \
   dropped_no_uuid=0 dropped_no_state=0 decode_errors=0 \
   windows_open=3 windows_opened=7 windows_closed=4 \
   records_written=19 write_errors=0 unresolved=0 indexed_instances=12 \
@@ -205,7 +235,7 @@ Reading it:
 
 | symptom | meaning |
 |---|---|
-| `events_received=0` | ukpd never connected — check the `vm-state-sink` entry in `log-sinks.json` and that `conn listening` names the socket ukpd dials |
+| `events_received=0` | either ukpd hasn't written anything to the events file yet, or the tailer is pointed at the wrong path — check the `vm-state-file-sink` entry in `log-sinks.json` and that `conn tailing path=` names the file ukpd writes |
 | `dropped_no_uuid` / `dropped_no_state` rising | the vendor renamed its event fields; each drop logs the raw payload verbatim, so grep `event dropped` and compare against `extractTransition` |
 | `indexed_instances=0` | the pod watch is empty, or no provider Pod has a `status.containerID` set yet — look for `podwatch error=` (usually the missing `ukp-state-projector-pod-reader` ClusterRole) or `podindex skip reason=no_container_id` (Pod not yet started) |
 | `unresolved` rising | attribution failing; `resolve failed reason=pod_not_indexed` — no provider Pod's containerID matches this uuid yet (pod watch not synced, or the Pod's container hasn't started) |
@@ -286,24 +316,28 @@ window (re-read to confirm no double-counting).
 
 ## Testing
 
-`cmd/state-projector/main_test.go` covers:
+Tests live in `internal/stateprojector`, one file per source file. Notably:
 
-- `containerIDs` stripping a `scheme://` prefix from a container status,
-- event-key parsing (including the real `vm`/`prev`/`new` vendor payload),
-- the vendor payload driving windowing end-to-end (a parse that reads the states
-  off the wrong keys emits nothing at all, silently — this is the guard against
-  that),
-- on/off transition → single windowed record with correct attribution and
-  duration,
-- a window closing on any non-running state even with no old-state field, and
-  staying open when the new state is unparseable,
-- incremental flush + deterministic ids,
-- unresolved attribution failing toward `-` (emit rather than drop).
+- `file_source_test.go`: tailing appended lines, holding back an incomplete
+  trailing line until it's completed, resuming from a persisted offset,
+  and reopening from the start when the file at the events path is
+  replaced (simulating an external rotation),
+- `event_test.go`: event-key parsing (the real `vm`/`prev`/`new` vendor
+  payload, and the uuid-shaped-token fallback for an unrecognized uuid key),
+- `pod_index_test.go`: `containerIDs` stripping a `scheme://` prefix, and
+  attribution resolving from the Namespace label rather than the raw
+  namespace name,
+- `processor_test.go`: on/off transition → single windowed record with
+  correct attribution and duration; a window closing on any non-running
+  state even with no old-state field; staying open when the new state is
+  unparseable; incremental flush + deterministic ids; unresolved
+  attribution failing toward `-` (emit rather than drop),
+- `writer_test.go`: output-file rotation and age-based cleanup.
 
 Run with:
 
 ```sh
 cd /Users/joseszycho/unikraft-provider
-go test ./cmd/state-projector/...
+go test ./internal/stateprojector/... -race
 ```
 
