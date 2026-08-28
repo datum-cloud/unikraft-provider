@@ -46,7 +46,7 @@ spec:
           # imagePullSecrets are forwarded to ukpd) and remote-CNI support
           # (--cni-service/--cni-token). Released kraftlet stops at 0.2, so
           # the feature track is -staging.
-          image: ghcr.io/unikraft-cloud/kraftlet:0.6.0-staging.28
+          image: ghcr.io/unikraft-cloud/kraftlet:0.6.0-staging.46
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-c"]
           # Distinct virtual-kubelet node name per host: kraftlet-<node>.
