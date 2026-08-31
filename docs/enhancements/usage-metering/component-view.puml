@@ -15,7 +15,7 @@ System_Boundary(node, "Compute Node") {
 System_Ext(platform, "Datum Platform", "Knows which project owns which instance")
 System_Ext(billing, "Platform Billing Pipeline", "Receives billing Cloudevents")
 
-Rel(runtime, metering, "Instance lifecycle", "planned: file log sink (today: Unix socket)")
+Rel(runtime, metering, "Instance lifecycle", "file log sink")
 Rel(platform, metering, "Project / instance identity")
 Rel(metering, record, "Writes")
 Rel(shipping, record, "Tails")

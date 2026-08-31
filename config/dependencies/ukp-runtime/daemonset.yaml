@@ -173,7 +173,7 @@ spec:
             - name: host-machine-id
               mountPath: /var/lib/dbus/machine-id
               readOnly: true
-        # Per-second usage billing: listens on the vm.state_change socket sink,
+        # Per-second usage billing: tails the vm.state_change file sink,
         # attributes each instance to its project (via the provider Pod whose
         # container status containerID matches the ukpd instance uuid), and
         # appends windowed usage JSONL to /var/run/ukp/vm-state.usage for the
@@ -187,7 +187,7 @@ spec:
           # the always-on window/record lines and the stats heartbeat. Drop that
           # arg once the pipeline is trusted — on a busy node it is chatty.
           args:
-            - -socket=/var/run/ukp/vm-state.sock
+            - -events-path=/var/run/ukp/vm-state.events
             - -output=/var/run/ukp/vm-state.usage
             - -stats-interval=1m
             - -debug=true
@@ -210,12 +210,12 @@ spec:
           securityContext:
             privileged: true
           volumeMounts:
-            # Listens on /run/ukp/vm-state.sock and appends enriched usage to
-            # /run/ukp/vm-state.usage (== /var/run/ukp in-container). No
-            # longer mounts ukp-data: attribution now joins on the ukpd
-            # instance uuid via the provider Pod's container status
-            # containerID (see cmd/state-projector/main.go's resolve()),
-            # not vmm.json.
+            # Tails /run/ukp/vm-state.events (ukpd's file-type log sink) and
+            # appends enriched usage to /run/ukp/vm-state.usage (== both
+            # under /var/run/ukp in-container). No longer mounts ukp-data:
+            # attribution now joins on the ukpd instance uuid via the
+            # provider Pod's container status containerID (see
+            # internal/stateprojector/pod_index.go's resolve()), not vmm.json.
             - name: ukp-run
               mountPath: /var/run/ukp
       volumes:
