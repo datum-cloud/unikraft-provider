@@ -1,0 +1,222 @@
+# Vector agent for the compute per-second usage billing e2e. A single-replica
+# Deployment (not a DaemonSet — one compute node's vm-state.usage is enough for
+# e2e) that reproduces the production edge `billing-usage-collector-unikraft`
+# Vector program: it tails the same `vm-state.usage` hostPath state-projector
+# writes, turns each windowed usage line into a billing CloudEvent, and POSTs
+# it to the mock billing gateway deployed alongside it (mock-billing-gateway.yaml).
+#
+# The `meter_unikraft_usage` transform mirrors the production VRL in
+# datum-infra (`apps/billing-vector-agent/components/billing-usage-collector-unikraft`);
+# the mock gateway replaces the real (API-keyed) billing_gateway sink.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vector-config
+data:
+  vector.yaml: |
+    # Tailing state-projector's output requires file checkpoints, which live
+    # under a Vector-owned data dir (emptyDir below).
+    data_dir: "/vector-data-dir"
+
+    sources:
+      # Tail the same file state-projector appends to. `read_from: beginning`
+      # replays any records written before Vector started (e.g. by the
+      # 02-run-instance test), and the state-projector rotates by rename so the
+      # file source re-follows the path automatically.
+      unikraft_vm_state:
+        type: file
+        include:
+          - /var/run/ukp/vm-state.usage
+
+    transforms:
+      # Turn one windowed usage line into a billing CloudEvent. Each line
+      # arriving from the file source looks like:
+      #   {"id":"<md5(uuid|start|end)>","project":"...","instance":"...",
+      #    "uuid":"...","vcpu":2,"memory_bytes":268435456,"start":"...",
+      #    "end":"...","duration_s":N.N}
+      meter_unikraft_usage:
+        type: remap
+        inputs:
+          - unikraft_vm_state
+        source: |
+          if is_string(.message) {
+            parsed, err = parse_json(string!(.message))
+            if err != null {
+              abort
+            }
+            . = object(parsed) ?? {}
+          }
+
+          vcpu = to_float(.vcpu) ?? 0.0
+          memory_bytes = to_float(.memory_bytes) ?? 0.0
+          duration_s = to_float(.duration_s) ?? 0.0
+
+          project = to_string(.project) ?? ""
+          instance = to_string(.instance) ?? ""
+          window_id = to_string(.id) ?? ""
+          window_end = to_string(.end) ?? ""
+
+          # A usage window without an id or without a project attributed to it
+          # is not billable — drop it rather than emit a malformed CloudEvent.
+          if window_id == "" || project == "" {
+            abort
+          }
+
+          vcpu_seconds = vcpu * duration_s
+          # Bill memory in GiB-seconds, not byte-seconds: convert the window's
+          # allocated bytes to GiB (divide by 2^30) before scaling by duration.
+          memory_gib_seconds = (memory_bytes / 1073741824.0) * duration_s
+
+          region = "us-east-1"
+
+          # One CloudEvent per metric, like the production NSO billing collector:
+          # each event carries a single data.value and a per-type deterministic
+          # id (window id + type suffix) so a reprocessed window dedupes per
+          # metric rather than collapsing vCPU and memory into one event.
+          dims = {
+            "project": project,
+            "instance": instance,
+            "region": region,
+          }
+          base_event = {
+            "specversion": "1.0",
+            "source": "//compute.datumapis.com/instance",
+            "subject": "projects/" + project,
+            "time": window_end,
+            "datacontenttype": "application/json",
+            "data": {
+              "value": "",
+              "dimensions": dims,
+            },
+          }
+
+          events = []
+          vcpu_event = base_event
+          vcpu_event.id = window_id + "-vcpu"
+          vcpu_event.type = "compute.datumapis.com/instance/cpu-seconds"
+          vcpu_event.data.value = to_string(vcpu_seconds)
+          events = push(events, vcpu_event)
+
+          mem_event = base_event
+          mem_event.id = window_id + "-mem"
+          mem_event.type = "compute.datumapis.com/instance/memory-seconds"
+          mem_event.data.value = to_string(memory_gib_seconds)
+          events = push(events, mem_event)
+
+          . = events
+
+    sinks:
+      # Same shape as the production billing_gateway sink (http, json codec,
+      # buffered with a retry policy), but pointed at the in-cluster mock
+      # gateway instead of the real API-keyed ingestion endpoint.
+      billing_gateway:
+        type: http
+        inputs:
+          - meter_unikraft_usage
+        uri: "${BILLING_GATEWAY_URL}/v1/usage/events:batchIngest"
+        method: post
+        encoding:
+          codec: json
+        batch:
+          max_events: 100
+          timeout_secs: 1
+        tls:
+          verify_certificate: false
+        buffer:
+          type: memory
+          when_full: block
+        request:
+          retry_policy:
+            max_retries: 30
+            initial_backoff_secs: 1
+            max_backoff_secs: 60
+            jitter_mode: full
+---
+# A single Vector agent for the e2e. It must run on a compute/runtime node —
+# the same node state-projector writes vm-state.usage to — so it mounts the
+# same ukp-run hostPath and reads it read-only.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vector
+  labels:
+    app.kubernetes.io/name: vector
+    app.kubernetes.io/component: billing-usage-meter
+    app.kubernetes.io/part-of: unikraft-provider
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vector
+  template:
+    metadata:
+      labels:
+        app: vector
+        app.kubernetes.io/name: vector
+        app.kubernetes.io/component: billing-usage-meter
+        app.kubernetes.io/part-of: unikraft-provider
+    spec:
+      # Vector must run on the same compute/runtime node state-projector writes
+      # vm-state.usage to (it mounts that hostPath read-only), and it must be a
+      # real machine — never the Kraftlet virtual-kubelet node, where plain
+      # containers get translated into microVMs and fail. Same node affinity the
+      # ukp-runtime/kraftlet DaemonSets use: require the compute-node label and
+      # exclude the virtual node. In the single-node kind e2e this is the one
+      # control-plane node.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: compute.datumapis.com/runtime
+                    operator: In
+                    values: ["unikraft"]
+                  - key: unikraft.com/virtual-kubelet
+                    operator: DoesNotExist
+      # Tolerate the control-plane taint so it can schedule on the single node.
+      tolerations:
+        - operator: Exists
+      volumes:
+        - name: config
+          configMap:
+            name: vector-config
+        # Same hostPath ukp-runtime's state-projector writes vm-state.usage to,
+        # read-only here — Vector never writes to it.
+        - name: ukp-run
+          hostPath:
+            path: /var/run/ukp
+            type: DirectoryOrCreate
+        # File-source checkpoints and buffer storage.
+        - name: data
+          emptyDir: {}
+      containers:
+        - name: vector
+          # Pin the tag the production Vector (datum-infra / NSO) chart uses.
+          image: timberio/vector:0.55.0-alpine
+          args:
+            - --config-dir
+            - /etc/vector
+          env:
+            - name: BILLING_GATEWAY_URL
+              value: "http://mock-billing-gateway.unikraft-system.svc.cluster.local:8080"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/vector
+              readOnly: true
+            - name: ukp-run
+              mountPath: /var/run/ukp
+              readOnly: true
+            - name: data
+              mountPath: /vector-data-dir
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            # The vector image runs as root by default, which can read the
+            # 0644 usage files state-projector writes. Keep privilege
+            # escalation off.
+            allowPrivilegeEscalation: false

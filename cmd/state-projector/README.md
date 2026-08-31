@@ -147,9 +147,12 @@ ukpd ──vm.state_change──▶ /var/run/ukp/vm-state.events ──▶ state
     "vcpu":N,"memory_bytes":M,"start":"...","end":"...","duration_s":N.N}
    ```
 
-   Vector tails this file and wraps each line as a billing Cloudevent
-   (`compute.datumapis.com/instance/usage`, `subject: projects/<project>`,
-   `data: {vcpu_seconds, memory_byte_seconds}`).
+   Vector tails this file and wraps each line as **two** billing CloudEvents
+   — one per metric, `compute.datumapis.com/instance/cpu-seconds` and
+   `compute.datumapis.com/instance/memory-seconds`, with a per-type id
+   (`<window id>-vcpu` / `-mem`), `subject: projects/<project>`, and a single
+   `data.value` per event (`vcpu * duration_s`, and `(memory_bytes / 2^30) *
+   duration_s` — memory billed in GiB-seconds).
 
 ### Data contract — input and output
 
