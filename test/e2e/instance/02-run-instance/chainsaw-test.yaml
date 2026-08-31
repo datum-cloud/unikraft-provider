@@ -115,3 +115,147 @@ spec:
               kubectl -n unikraft-system exec "$POD" -c ukpd -- \
                 cat /var/run/ukp/vm-state.usage >&2 2>&1 || true
               exit 1
+    # Last leg of per-second billing. state-projector writes one JSON line per
+    # windowed usage record to vm-state.usage; Vector (config/overlays/vector-e2e)
+    # tails that file and turns each record into TWO billing CloudEvents — a
+    # cpu-seconds event and a memory-seconds event, per the production NSO
+    # per-metric convention — then POSTs them to the mock billing gateway.
+    #
+    # The step above only proves state-projector WROTE the record; this step
+    # proves Vector shipped it correctly. Rather than trust Vector's arithmetic
+    # (or hardcode numbers, which would drift with window timing), we recompute
+    # the expected values ourselves from the SAME record and check the events:
+    #     vcpu_seconds       = record.vcpu                * record.duration_s
+    #     memory_gib_seconds = (record.memory_bytes / 2^30) * record.duration_s
+    # (the exact products the VRL transform computes). We assert the gateway
+    # received, for that record, both events whose data.value equals these — so a
+    # match proves Vector computed the same result from the same input, end to
+    # end from state-projector's file to the billing consumer.
+    - name: assert Vector shipped vCPU and memory usage billing CloudEvents to the mock gateway
+      try:
+        - script:
+            timeout: 120s
+            env:
+              - name: PROJECT
+                value: e2e-test-project
+              - name: INSTANCE
+                value: e2e-run-instance
+            content: |
+              set -eu
+              DEADLINE=$(($(date +%s) + 100))
+              while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+                POD=$(kubectl -n unikraft-system get pod -l app=ukp-runtime -o jsonpath='{.items[0].metadata.name}')
+                # state-projector runs on distroless/static (no shell); ukpd
+                # shares the same ukp-run volume and has a real userland.
+                USAGE=$(kubectl -n unikraft-system exec "$POD" -c ukpd -- \
+                  cat /var/run/ukp/vm-state.usage 2>/dev/null || true)
+                MOCK_LOGS=$(kubectl -n unikraft-system logs -l app=mock-billing-gateway --tail=200 2>/dev/null || true)
+                if [ -z "$USAGE" ] || [ -z "$MOCK_LOGS" ]; then
+                  sleep 5
+                  continue
+                fi
+                # Verified with the same dedent pattern as the NSO billing e2e
+                # (python passed via -c + textwrap.dedent, so an indented block
+                # scalar here can't break an inline heredoc delimiter).
+                # Receives the usage records on stdin; mock-gateway logs +
+                # project/instance on argv. Exits 0 once the gateway has a
+                # CloudEvents whose values reproduce a real usage record.
+                PYTHON_VERIFY="
+                import sys, json
+                usage_txt = sys.stdin.read()
+                logs_txt, project, instance = sys.argv[2], sys.argv[3], sys.argv[4]
+
+                # Expected values, per usage record id, from vm-state.usage.
+                expected = {}
+                for line in usage_txt.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        r = json.loads(line)
+                    except Exception:
+                        continue
+                    if r.get('instance') != instance or r.get('project') != project:
+                        continue
+                    dur = float(r.get('duration_s') or 0)
+                    expected[r.get('id')] = {
+                        'vcpu_seconds': float(r.get('vcpu') or 0) * dur,
+                        # Billed in GiB-seconds like the VRL transform: bytes -> GiB
+                        # (divide by 2^30) before scaling by duration.
+                        'memory_gib_seconds': (float(r.get('memory_bytes') or 0) / 1073741824.0) * dur,
+                    }
+                if not expected:
+                    raise SystemExit(1)
+
+                # Collect billing CloudEvents from the mock gateway's logs. The
+                # mock gateway prints one request body per log line; Vector's
+                # http sink may batch as a JSON array or as NDJSON, so accept
+                # either a single object, a line array, or one object per line.
+                events = []
+                for line in logs_txt.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except Exception:
+                        continue
+                    if isinstance(obj, list):
+                        events.extend(obj)
+                    elif isinstance(obj, dict) and 'type' in obj:
+                        events.append(obj)
+
+                # Like the production NSO billing collector, each usage record
+                # maps to TWO CloudEvents — one cpu-seconds and one
+                # memory-seconds — with per-type ids (record id + '-vcpu' /
+                # '-mem'). Verify one usage record has BOTH events present, each
+                # reproducing its metric from the usage record, with the right
+                # project/instance dimensions.
+                VCU_TYPE = 'compute.datumapis.com/instance/cpu-seconds'
+                MEM_TYPE = 'compute.datumapis.com/instance/memory-seconds'
+                def close(a, b):
+                    return a is not None and abs(float(a) - b) <= max(1e-3, 1e-6 * abs(b))
+
+                def ev(rid, etype):
+                    for e in events:
+                        if (e.get('id') == rid and e.get('type') == etype
+                                and e.get('subject') == 'projects/' + project):
+                            return e
+                    return None
+
+                for rid, want in expected.items():
+                    vcpu = ev(rid + '-vcpu', VCU_TYPE)
+                    mem = ev(rid + '-mem', MEM_TYPE)
+                    if vcpu is None or mem is None:
+                        continue
+                    vd = vcpu.get('data') or {}
+                    md = mem.get('data') or {}
+                    if not close(vd.get('value'), want['vcpu_seconds']):
+                        continue
+                    if not close(md.get('value'), want['memory_gib_seconds']):
+                        continue
+                    vdim = vd.get('dimensions') or {}
+                    mdim = md.get('dimensions') or {}
+                    if vdim.get('project') != project or vdim.get('instance') != instance:
+                        continue
+                    if mdim.get('project') != project or mdim.get('instance') != instance:
+                        continue
+                    print('SUCCESS: usage CloudEvents id=%s vcpu_seconds=%s memory_gib_seconds=%s' % (rid, vd['value'], md['value']))
+                    raise SystemExit(0)
+                # Not found yet — let the shell loop retry.
+                raise SystemExit(1)
+                "
+                if echo "$USAGE" | python3 -c "import sys, textwrap; exec(textwrap.dedent(sys.argv[1]))" "$PYTHON_VERIFY" "$MOCK_LOGS" "$PROJECT" "$INSTANCE"; then
+                  echo "SUCCESS: Vector shipped the vCPU + memory usage billing CloudEvents to the mock gateway"
+                  exit 0
+                fi
+                sleep 5
+              done
+              echo "FAIL: no matching usage billing CloudEvents reached the mock gateway after ~100s" >&2
+              echo "--- usage records for $PROJECT ---" >&2
+              echo "$USAGE" | grep "\"instance\":\"$INSTANCE\"" >&2 2>/dev/null || true
+              echo "--- mock gateway logs ---" >&2
+              kubectl -n unikraft-system logs -l app=mock-billing-gateway --tail=200 >&2 2>/dev/null || true
+              echo "--- vector logs ---" >&2
+              kubectl -n unikraft-system logs -l app=vector --tail=50 >&2 2>/dev/null || true
+              exit 1
