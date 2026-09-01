@@ -13,4 +13,3 @@ downstreamResourceManagement:
   # CNI is on by default, but this kind e2e environment doesn't deploy
   # ukp-remote-cni, so it's turned off here.
   enableCNI: false
-locationClassName: "self-managed"

@@ -1,0 +1,134 @@
+# Local prototype of the containerized ukp stack.
+#
+# Pod pattern: `netbase` owns the network + IPC namespaces; every other
+# service joins them (network_mode/ipc: service:netbase) so TAP devices,
+# loopback sockets, and the /dev/shm notify objects are shared exactly as
+# they are on a native install. See docs/unikraft-runtime-containerization.md.
+#
+# Local limits (macOS/Colima): amd64 emulation, no /dev/kvm — instance
+# start stops at the VMM; everything up to that point is exercised.
+name: ukp-proto
+
+x-ukp: &ukp
+  image: ukp-runtime:proto
+  platform: linux/amd64
+  privileged: true
+
+volumes:
+  data: {}
+  run: {}
+  log: {}
+
+services:
+  netbase:
+    <<: *ukp
+    command: ["sleep", "infinity"]
+    stop_signal: SIGKILL
+    ipc: shareable
+
+  seed:
+    <<: *ukp
+    command: ["bash", "/seed.sh"]
+    restart: "no"
+    volumes:
+      - data:/var/lib/ukp
+      - ./ukp.conf.local:/etc/ukp.conf:ro
+      - ./seed.sh:/seed.sh:ro
+
+  netsetup:
+    <<: *ukp
+    command: ["/usr/lib/ukp/networking/netsetup", "start"]
+    restart: "no"
+    network_mode: "service:netbase"
+    volumes:
+      - ./ukp.conf.local:/etc/ukp.conf:ro
+    depends_on:
+      netbase:
+        condition: service_started
+
+  # ipset/nft/iptables-nft all require NETLINK_NETFILTER, which qemu-user
+  # emulation does not translate — the firewall can only run on a real
+  # amd64 host. Enable with: docker compose --profile firewall up -d
+  firewall:
+    <<: *ukp
+    profiles: ["firewall"]
+    command: ["/usr/lib/ukp/networking/firewall", "start"]
+    restart: "no"
+    network_mode: "service:netbase"
+    volumes:
+      - data:/var/lib/ukp
+      - ./ukp.conf.local:/etc/ukp.conf:ro
+    depends_on:
+      netsetup:
+        condition: service_completed_successfully
+
+  ukpd:
+    <<: *ukp
+    command: ["/usr/lib/ukp/platform/launcher/ukpd"]
+    restart: unless-stopped
+    network_mode: "service:netbase"
+    ipc: "service:netbase"
+    volumes:
+      - data:/var/lib/ukp
+      - run:/var/run/ukp
+      - log:/var/log/ukp
+      - ./ukp.conf.local:/etc/ukp.conf:ro
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      netsetup:
+        condition: service_completed_successfully
+    healthcheck:
+      # Any HTTP response on the API port means ukpd is up (replaces the
+      # native install's `sleep 10` postdelay unit). First boot creates
+      # ~80MB of database files, which takes minutes under qemu-user
+      # emulation — hence the generous retry budget (harmless on real
+      # hardware, where boot takes seconds).
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://127.0.0.1:45232/v1/instances"]
+      interval: 10s
+      timeout: 3s
+      retries: 60
+      start_period: 30s
+
+  coredns:
+    <<: *ukp
+    command: ["/usr/lib/ukp/coredns/launcher/coredns"]
+    restart: unless-stopped
+    network_mode: "service:netbase"
+    volumes:
+      - data:/var/lib/ukp
+      - run:/var/run/ukp
+      - log:/var/log/ukp
+      - ./ukp.conf.local:/etc/ukp.conf:ro
+    depends_on:
+      ukpd:
+        condition: service_healthy
+
+  openresty:
+    <<: *ukp
+    command: ["/usr/lib/ukp/openresty/launcher/openresty"]
+    restart: unless-stopped
+    network_mode: "service:netbase"
+    ipc: "service:netbase"
+    volumes:
+      - data:/var/lib/ukp
+      - run:/var/run/ukp
+      - log:/var/log/ukp
+      - ./ukp.conf.local:/etc/ukp.conf:ro
+    depends_on:
+      ukpd:
+        condition: service_healthy
+
+  agent:
+    <<: *ukp
+    command: ["/usr/lib/ukp/agent/launcher/agent", "run"]
+    restart: unless-stopped
+    network_mode: "service:netbase"
+    volumes:
+      - data:/var/lib/ukp
+      - run:/var/run/ukp
+      - log:/var/log/ukp
+      - ./ukp.conf.local:/etc/ukp.conf:ro
+    depends_on:
+      ukpd:
+        condition: service_healthy

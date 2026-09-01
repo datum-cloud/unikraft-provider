@@ -65,9 +65,8 @@ var instancePodLabelKeys = []string{
 
 type InstanceReconciler struct {
 	client.Client
-	Scheme            *runtime.Scheme
-	Config            *config.UnikraftProvider
-	LocationClassName string
+	Scheme *runtime.Scheme
+	Config *config.UnikraftProvider
 }
 
 // Reconcile implements the reconciliation logic

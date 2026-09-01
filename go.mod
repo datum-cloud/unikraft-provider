@@ -8,7 +8,7 @@ require (
 	// "Available" condition rename that this provider owns.
 	// Repin to a stable go.datum.net/compute tag once the #107 chain reaches compute main.
 	go.datum.net/compute v0.7.1-0.20260803161139-d4cd11e5b1e9
-	go.datum.net/network-services-operator v0.23.6
+	go.datum.net/network-services-operator v0.23.6 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	k8s.io/api v0.36.2
 	k8s.io/apimachinery v0.36.2

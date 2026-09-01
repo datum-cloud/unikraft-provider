@@ -1,0 +1,91 @@
+# Datum-minimal ukp runtime as a DaemonSet (evaluation prototype).
+# Profile: netsetup (init) + ukpd + agent. No firewall/openresty/coredns/lego —
+# ingress and policy are owned by the platform (see
+# docs/unikraft-runtime-containerization.md §7).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ukp-system
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ukp-runtime
+  namespace: ukp-system
+spec:
+  selector:
+    matchLabels:
+      app: ukp-runtime
+  template:
+    metadata:
+      labels:
+        app: ukp-runtime
+    spec:
+      hostNetwork: true
+      hostIPC: true
+      dnsPolicy: Default
+      priorityClassName: system-node-critical
+      # Tolerate everything, like CNI/kube-proxy DaemonSets: this node is
+      # deliberately CNI-less, so it permanently carries
+      # node.kubernetes.io/not-ready:NoSchedule (plus the dedicated-node
+      # taint), and the runtime must run regardless of node conditions.
+      tolerations:
+        - operator: Exists
+      initContainers:
+        - name: seed
+          image: docker.io/library/ukp-runtime:proto
+          imagePullPolicy: Never
+          command: ["bash", "/seed.sh"]
+          volumeMounts:
+            - { name: ukp-data, mountPath: /var/lib/ukp }
+            - { name: ukp-conf, mountPath: /etc/ukp.conf, readOnly: true }
+            - { name: seed-script, mountPath: /seed.sh, readOnly: true }
+        - name: netsetup
+          image: docker.io/library/ukp-runtime:proto
+          imagePullPolicy: Never
+          command: ["/usr/lib/ukp/networking/netsetup", "start"]
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - { name: ukp-conf, mountPath: /etc/ukp.conf, readOnly: true }
+      containers:
+        - name: ukpd
+          image: docker.io/library/ukp-runtime:proto
+          imagePullPolicy: Never
+          command: ["/usr/lib/ukp/platform/launcher/ukpd"]
+          securityContext:
+            privileged: true
+          # No resource limits: guest VM memory is charged to this
+          # container's cgroup (see doc §8.3).
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "curl -s -o /dev/null http://127.0.0.1:45232/v1/instances"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - { name: ukp-data, mountPath: /var/lib/ukp }
+            - { name: ukp-run, mountPath: /var/run/ukp }
+            - { name: ukp-log, mountPath: /var/log/ukp }
+            - { name: ukp-conf, mountPath: /etc/ukp.conf, readOnly: true }
+        - name: agent
+          image: docker.io/library/ukp-runtime:proto
+          imagePullPolicy: Never
+          command: ["/usr/lib/ukp/agent/launcher/agent", "run"]
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - { name: ukp-data, mountPath: /var/lib/ukp }
+            - { name: ukp-run, mountPath: /var/run/ukp }
+            - { name: ukp-log, mountPath: /var/log/ukp }
+            - { name: ukp-conf, mountPath: /etc/ukp.conf, readOnly: true }
+      volumes:
+        - name: ukp-data
+          hostPath: { path: /var/lib/ukp, type: Directory }
+        - name: ukp-run
+          hostPath: { path: /var/run/ukp, type: DirectoryOrCreate }
+        - name: ukp-log
+          hostPath: { path: /var/log/ukp, type: DirectoryOrCreate }
+        - name: ukp-conf
+          hostPath: { path: /etc/ukp.conf, type: File }
+        - name: seed-script
+          hostPath: { path: /root/runtime-container/seed.sh, type: File }
