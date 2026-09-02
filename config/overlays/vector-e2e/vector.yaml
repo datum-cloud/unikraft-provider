@@ -69,10 +69,14 @@ data:
 
           region = "us-east-1"
 
+          # The gateway's validate.go requires `id` to parse as a ULID
+          vcpu_ulid = "0" + upcase(slice(md5(window_id + "vcpu"), 1, 26) ?? "")
+          mem_ulid = "0" + upcase(slice(md5(window_id + "mem"), 1, 26) ?? "")
+
           # One CloudEvent per metric, like the production NSO billing collector:
           # each event carries a single data.value and a per-type deterministic
-          # id (window id + type suffix) so a reprocessed window dedupes per
-          # metric rather than collapsing vCPU and memory into one event.
+          # id so a reprocessed window dedupes per metric rather than collapsing
+          # vCPU and memory into one event.
           dims = {
             "project": project,
             "instance": instance,
@@ -92,13 +96,13 @@ data:
 
           events = []
           vcpu_event = base_event
-          vcpu_event.id = window_id + "-vcpu"
+          vcpu_event.id = vcpu_ulid
           vcpu_event.type = "compute.datumapis.com/instance/cpu-seconds"
           vcpu_event.data.value = to_string(vcpu_seconds)
           events = push(events, vcpu_event)
 
           mem_event = base_event
-          mem_event.id = window_id + "-mem"
+          mem_event.id = mem_ulid
           mem_event.type = "compute.datumapis.com/instance/memory-seconds"
           mem_event.data.value = to_string(memory_gib_seconds)
           events = push(events, mem_event)

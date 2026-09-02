@@ -207,10 +207,14 @@ spec:
 
                 # Like the production NSO billing collector, each usage record
                 # maps to TWO CloudEvents — one cpu-seconds and one
-                # memory-seconds — with per-type ids (record id + '-vcpu' /
-                # '-mem'). Verify one usage record has BOTH events present, each
-                # reproducing its metric from the usage record, with the right
-                # project/instance dimensions.
+                # memory-seconds. The gateway's validate.go requires `id` to
+                # parse as a ULID, so the VRL transform doesn't use the record
+                # id directly
+                import hashlib
+                def pseudo_ulid(window_id, suffix):
+                    h = hashlib.md5((window_id + suffix).encode()).hexdigest()
+                    return '0' + h[1:26].upper()
+
                 VCU_TYPE = 'compute.datumapis.com/instance/cpu-seconds'
                 MEM_TYPE = 'compute.datumapis.com/instance/memory-seconds'
                 def close(a, b):
@@ -224,8 +228,8 @@ spec:
                     return None
 
                 for rid, want in expected.items():
-                    vcpu = ev(rid + '-vcpu', VCU_TYPE)
-                    mem = ev(rid + '-mem', MEM_TYPE)
+                    vcpu = ev(pseudo_ulid(rid, 'vcpu'), VCU_TYPE)
+                    mem = ev(pseudo_ulid(rid, 'mem'), MEM_TYPE)
                     if vcpu is None or mem is None:
                         continue
                     vd = vcpu.get('data') or {}

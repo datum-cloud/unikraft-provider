@@ -149,10 +149,14 @@ ukpd ──vm.state_change──▶ /var/run/ukp/vm-state.events ──▶ state
 
    Vector tails this file and wraps each line as **two** billing CloudEvents
    — one per metric, `compute.datumapis.com/instance/cpu-seconds` and
-   `compute.datumapis.com/instance/memory-seconds`, with a per-type id
-   (`<window id>-vcpu` / `-mem`), `subject: projects/<project>`, and a single
-   `data.value` per event (`vcpu * duration_s`, and `(memory_bytes / 2^30) *
-   duration_s` — memory billed in GiB-seconds).
+   `compute.datumapis.com/instance/memory-seconds`. The billing gateway
+   requires `id` to parse as a ULID, so each event's id is not the window id
+   directly: it's a deterministic pseudo-ULID (window id hashed with a
+   per-metric suffix, sliced/padded the same way the NSO collector fakes its
+   own ULID from a uuid) — distinct per metric, stable across reprocessing so
+   the gateway/NATS dedup by id still works. `subject: projects/<project>`,
+   and a single `data.value` per event (`vcpu * duration_s`, and
+   `(memory_bytes / 2^30) * duration_s` — memory billed in GiB-seconds).
 
 ### Data contract — input and output
 
