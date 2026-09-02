@@ -238,11 +238,9 @@ spec:
                         continue
                     if not close(md.get('value'), want['memory_gib_seconds']):
                         continue
-                    vdim = vd.get('dimensions') or {}
-                    mdim = md.get('dimensions') or {}
-                    if vdim.get('project') != project or vdim.get('instance') != instance:
-                        continue
-                    if mdim.get('project') != project or mdim.get('instance') != instance:
+                    # Deliberately no dimensions on these events (see the VRL
+                    # transform)
+                    if vd.get('dimensions') or md.get('dimensions'):
                         continue
                     print('SUCCESS: usage CloudEvents id=%s vcpu_seconds=%s memory_gib_seconds=%s' % (rid, vd['value'], md['value']))
                     raise SystemExit(0)

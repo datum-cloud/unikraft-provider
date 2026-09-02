@@ -52,7 +52,6 @@ data:
           duration_s = to_float(.duration_s) ?? 0.0
 
           project = to_string(.project) ?? ""
-          instance = to_string(.instance) ?? ""
           window_id = to_string(.id) ?? ""
           window_end = to_string(.end) ?? ""
 
@@ -67,8 +66,6 @@ data:
           # allocated bytes to GiB (divide by 2^30) before scaling by duration.
           memory_gib_seconds = (memory_bytes / 1073741824.0) * duration_s
 
-          region = "us-east-1"
-
           # The gateway's validate.go requires `id` to parse as a ULID
           vcpu_ulid = "0" + upcase(slice(md5(window_id + "vcpu"), 1, 26) ?? "")
           mem_ulid = "0" + upcase(slice(md5(window_id + "mem"), 1, 26) ?? "")
@@ -77,11 +74,6 @@ data:
           # each event carries a single data.value and a per-type deterministic
           # id so a reprocessed window dedupes per metric rather than collapsing
           # vCPU and memory into one event.
-          dims = {
-            "project": project,
-            "instance": instance,
-            "region": region,
-          }
           base_event = {
             "specversion": "1.0",
             "source": "//compute.datumapis.com/instance",
@@ -90,7 +82,6 @@ data:
             "datacontenttype": "application/json",
             "data": {
               "value": "",
-              "dimensions": dims,
             },
           }
 
