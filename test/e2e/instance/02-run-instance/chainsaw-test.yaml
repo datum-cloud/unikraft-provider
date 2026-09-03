@@ -125,9 +125,9 @@ spec:
     # proves Vector shipped it correctly. Rather than trust Vector's arithmetic
     # (or hardcode numbers, which would drift with window timing), we recompute
     # the expected values ourselves from the SAME record and check the events:
-    #     vcpu_seconds       = record.vcpu                * record.duration_s
-    #     memory_gib_seconds = (record.memory_bytes / 2^30) * record.duration_s
-    # (the exact products the VRL transform computes). We assert the gateway
+    #     milli_vcpu_seconds = round(record.vcpu                * record.duration_s * 1000)
+    #     milli_gib_seconds  = round((record.memory_bytes / 2^30) * record.duration_s * 1000)
+    # (milli-units since data.value is INT64 on the wire). We assert the gateway
     # received, for that record, both events whose data.value equals these — so a
     # match proves Vector computed the same result from the same input, end to
     # end from state-projector's file to the billing consumer.
@@ -178,11 +178,14 @@ spec:
                     if r.get('instance') != instance or r.get('project') != project:
                         continue
                     dur = float(r.get('duration_s') or 0)
+                    vcpu_seconds = float(r.get('vcpu') or 0) * dur
+                    memory_gib_seconds = (float(r.get('memory_bytes') or 0) / 1073741824.0) * dur
+                    # data.value is INT64 on the wire, so the VRL bills in
+                    # milli-units (round then truncate to int) instead of the
+                    # fractional value directly.
                     expected[r.get('id')] = {
-                        'vcpu_seconds': float(r.get('vcpu') or 0) * dur,
-                        # Billed in GiB-seconds like the VRL transform: bytes -> GiB
-                        # (divide by 2^30) before scaling by duration.
-                        'memory_gib_seconds': (float(r.get('memory_bytes') or 0) / 1073741824.0) * dur,
+                        'milli_vcpu_seconds': round(vcpu_seconds * 1000),
+                        'milli_gib_seconds': round(memory_gib_seconds * 1000),
                     }
                 if not expected:
                     raise SystemExit(1)
@@ -234,15 +237,14 @@ spec:
                         continue
                     vd = vcpu.get('data') or {}
                     md = mem.get('data') or {}
-                    if not close(vd.get('value'), want['vcpu_seconds']):
+                    if not close(vd.get('value'), want['milli_vcpu_seconds']):
                         continue
-                    if not close(md.get('value'), want['memory_gib_seconds']):
+                    if not close(md.get('value'), want['milli_gib_seconds']):
                         continue
-                    # Deliberately no dimensions on these events (see the VRL
-                    # transform)
+                    # No dimensions on these events (see the VRL transform).
                     if vd.get('dimensions') or md.get('dimensions'):
                         continue
-                    print('SUCCESS: usage CloudEvents id=%s vcpu_seconds=%s memory_gib_seconds=%s' % (rid, vd['value'], md['value']))
+                    print('SUCCESS: usage CloudEvents id=%s milli_vcpu_seconds=%s milli_gib_seconds=%s' % (rid, vd['value'], md['value']))
                     raise SystemExit(0)
                 # Not found yet — let the shell loop retry.
                 raise SystemExit(1)
