@@ -10,6 +10,29 @@ import (
 	"time"
 )
 
+// flushSkipTolerance absorbs sub-interval ticker jitter: time.Ticker isn't
+// perfectly periodic under scheduler/GC pressure, so a tick can land a few
+// microseconds short of a full interval since the last flush. Without this,
+// that's enough for the skip check below to defer the window a whole extra
+// cycle, doubling its reported duration for one record. Doesn't change what
+// gets billed -- emitWindow's duration is always reportedUntil to the real
+// "now" regardless of this tolerance; it only affects whether a window
+// flushes this cycle or the next.
+const flushSkipTolerance = 1 * time.Second
+
+// flushSkipThreshold is how much of the interval must have elapsed before a
+// window is due for a flush. Caps the tolerance at 10% of the interval so it
+// can never reach or exceed the interval itself for a very short one (e.g. a
+// test using a sub-second flush-interval) -- that would degenerate into
+// flushing on every tick regardless of elapsed time.
+func flushSkipThreshold(interval time.Duration) time.Duration {
+	tolerance := flushSkipTolerance
+	if maxTolerance := interval / 10; tolerance > maxTolerance {
+		tolerance = maxTolerance
+	}
+	return interval - tolerance
+}
+
 // resolver maps an instance uuid to its identity/resources. Satisfied by
 // *podIndex; kept as an interface so processor doesn't depend on how
 // attribution is actually looked up (k8s-backed today, a fake in tests).
@@ -150,8 +173,9 @@ func (p *processor) periodicFlush(ctx context.Context) {
 			now := time.Now().UTC()
 			p.windows.Lock()
 			var flushed, skipped int
+			threshold := flushSkipThreshold(p.interval)
 			for _, w := range p.windows.all() {
-				if now.Sub(w.reportedUntil) < p.interval {
+				if now.Sub(w.reportedUntil) < threshold {
 					skipped++
 					continue
 				}
