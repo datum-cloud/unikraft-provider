@@ -5,8 +5,8 @@
 #             the Datum identity of the owning compute Instance, keyed on the
 #             guest IP; a tiny busybox sidecar just surfaces that IP onto the
 #             log path (it holds no Kubernetes logic).
-#   metrics — ukpd's Prometheus endpoints (/metrics/controller, /metrics/host,
-#             /metrics/agent), scraped directly.
+#   metrics — ukpd's Prometheus endpoints and platform API instance metrics,
+#             scraped directly.
 #
 # Requires the OpenTelemetry Operator (OpenTelemetryCollector CRD). Deployed to
 # compute nodes only. See README.md.
@@ -22,6 +22,9 @@ spec:
   mode: daemonset
   serviceAccount: ukp-telemetry
   image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.144.0
+  # Needed for node-local ukpd platform API scrapes on 127.0.0.1:45232.
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
   # vm.log is root:root 0640; a node log agent runs as root to read it.
   securityContext:
     runAsUser: 0
@@ -43,24 +46,34 @@ spec:
         fieldRef:
           fieldPath: status.hostIP
     # Bearer token for ukpd's metrics API (same value as the runtime's
-    # UKP_PROMETHEUS_API_TOKEN). Provide it as key `token` in the optional
-    # ukp-metrics-token Secret; without it, metrics scraping returns 401.
+    # UKP_PROMETHEUS_API_TOKEN, both sourced from ukp-runtime-credentials);
+    # without it, metrics scraping returns 401.
     - name: UKP_METRICS_TOKEN
       valueFrom:
         secretKeyRef:
-          name: ukp-metrics-token
+          name: ukp-runtime-credentials
+          key: metrics-token
+          optional: true
+    # Bearer token for ukpd's platform API (/v1/instances/metrics).
+    - name: UKP_API_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: kraftlet-ukc-token
           key: token
           optional: true
     # Destinations. Logs -> OTLP (edge logs collector -> ClickHouse); metrics ->
-    # Prometheus remote-write (VictoriaMetrics). Override per environment.
+    # local edge VictoriaMetrics for HPA and hub VictoriaMetrics for observability.
+    # Override per environment.
     - name: LOGS_OTLP_ENDPOINT
       value: edge-logs-collector-collector.edge-logs-system.svc.cluster.local:4317
+    - name: LOCAL_METRICS_RW_ENDPOINT
+      value: http://vmsingle-edge-metrics.telemetry-system.svc.cluster.local:8429/api/v1/write
     - name: METRICS_RW_ENDPOINT
-      value: http://vminsert.datum-cloud-telemetry-system.svc.cluster.local:8480/insert/0/prometheus/api/v1/write
+      value: http://vmagent-gke-remote-write.telemetry-system.svc.cluster.local:8429/api/v1/write
   volumes:
     - name: ukp-data
       hostPath:
-        path: /var/lib/ukp
+        path: /var/mnt/ukp
         type: Directory
     - name: ukp-logs-tree
       emptyDir: {}
@@ -126,10 +139,18 @@ spec:
           - type: move
             from: attributes.uuid
             to: 'resource["ukp.instance.uuid"]'
-      # Runtime + host metrics — one scrape job per ukpd metrics path.
+      # Runtime + host metrics plus per-instance resource metrics.
       prometheus:
         config:
           scrape_configs:
+            - job_name: ukpd-instances
+              scrape_interval: 15s
+              metrics_path: /v1/instances/metrics
+              authorization:
+                type: Bearer
+                credentials: ${env:UKP_API_TOKEN}
+              static_configs:
+                - targets: ['127.0.0.1:45232']
             - job_name: ukpd-controller
               scrape_interval: 30s
               metrics_path: /metrics/controller
@@ -202,6 +223,10 @@ spec:
         endpoint: ${env:METRICS_RW_ENDPOINT}
         resource_to_telemetry_conversion:
           enabled: true
+      prometheusremotewrite/local:
+        endpoint: ${env:LOCAL_METRICS_RW_ENDPOINT}
+        resource_to_telemetry_conversion:
+          enabled: true
     service:
       extensions:
         - file_storage
@@ -213,4 +238,4 @@ spec:
         metrics:
           receivers: [prometheus]
           processors: [memory_limiter, resource, batch]
-          exporters: [prometheusremotewrite]
+          exporters: [prometheusremotewrite/local, prometheusremotewrite]
