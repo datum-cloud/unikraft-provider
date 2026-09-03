@@ -67,8 +67,8 @@ data:
           memory_gib_seconds = (memory_bytes / 1073741824.0) * duration_s
 
           # data.value is INT64 on the wire; a decimal string silently decodes
-          milli_vcpu_seconds = to_int(round(vcpu_seconds * 1000.0)) ?? 0
-          milli_gib_seconds = to_int(round(memory_gib_seconds * 1000.0)) ?? 0
+          milli_vcpu_seconds = to_int(round(vcpu_seconds * 1000.0))
+          milli_gib_seconds = to_int(round(memory_gib_seconds * 1000.0))
 
           # The gateway's validate.go requires `id` to parse as a ULID
           vcpu_ulid = "0" + upcase(slice(md5(window_id + "vcpu"), 1, 26) ?? "")
