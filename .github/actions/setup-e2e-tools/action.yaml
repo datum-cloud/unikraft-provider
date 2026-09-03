@@ -20,7 +20,7 @@ runs:
         version: 3.x
         repo-token: ${{ github.token }}
 
-    - uses: azure/setup-kubectl@v4
+    - uses: azure/setup-kubectl@v5
       with:
         version: ${{ inputs.kubectl-version }}
 
