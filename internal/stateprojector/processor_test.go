@@ -205,6 +205,48 @@ func TestUnresolvedAttribution(t *testing.T) {
 	}
 }
 
+func TestFlushSkipThreshold(t *testing.T) {
+	cases := []struct {
+		name     string
+		interval time.Duration
+		want     time.Duration
+	}{
+		{"production default", 5 * time.Minute, 5*time.Minute - time.Second},
+		{"e2e short interval", 10 * time.Second, 9 * time.Second},
+		// Below 10s, the flat 1s tolerance would reach or exceed the
+		// interval itself, degenerating into "flush on every tick
+		// regardless of elapsed time" -- capped to 10% of the interval
+		// instead so that can never happen.
+		{"sub-10s interval caps tolerance at 10%", 2 * time.Second, 2*time.Second - 200*time.Millisecond},
+		{"very short interval", 100 * time.Millisecond, 90 * time.Millisecond},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := flushSkipThreshold(c.interval)
+			if got != c.want {
+				t.Errorf("flushSkipThreshold(%s) = %s, want %s", c.interval, got, c.want)
+			}
+			if got <= 0 {
+				t.Errorf("flushSkipThreshold(%s) = %s, must stay positive", c.interval, got)
+			}
+		})
+	}
+}
+
+// Reproduces the actual bug: a tick landing microseconds short of a full
+// interval since the last report must still count as due, not get skipped
+// and deferred to double up on the next cycle.
+func TestFlushSkipThreshold_AbsorbsTickerJitter(t *testing.T) {
+	interval := 5 * time.Minute
+	threshold := flushSkipThreshold(interval)
+
+	jitter := 80 * time.Microsecond // observed drift in production logs
+	elapsed := interval - jitter
+	if elapsed < threshold {
+		t.Errorf("a %s ticker-jitter undershoot was not absorbed: elapsed=%s < threshold=%s", jitter, elapsed, threshold)
+	}
+}
+
 func readRecords(t *testing.T, path string) []record {
 	t.Helper()
 	b, err := os.ReadFile(path)

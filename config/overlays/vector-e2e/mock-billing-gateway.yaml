@@ -1,0 +1,122 @@
+# Mock billing gateway for the usage-billing e2e. In production the Vector
+# agent POSTs billing CloudEvents to the real, API-keyed billing ingestion
+# endpoint. That is intentionally not stood up in a hermetic kind e2e; instead
+# Vector's sink points at this throwaway HTTP endpoint, which captures whatever
+# Vector sends it and prints each request body to its own log line so the
+# chainsaw test can assert on it — the same capture-and-assert pattern the
+# network-services-operator billing e2e uses (`mock-billing-gateway`).
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-billing-gateway
+  labels:
+    app: mock-billing-gateway
+spec:
+  selector:
+    app: mock-billing-gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-billing-gateway
+  labels:
+    app: mock-billing-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-billing-gateway
+  template:
+    metadata:
+      labels:
+        app: mock-billing-gateway
+    spec:
+      # This is a plain container workload (python:3.11-alpine), NOT a unikraft
+      # guest. It must run on a real machine, never on the Kraftlet
+      # virtual-kubelet node — pods scheduled there are translated into microVMs
+      # by the provider, and a normal container cannot boot as one (it fails and
+      # burns instance quota). Use the same node affinity the ukp-runtime and
+      # kraftlet DaemonSets use to mean "a real runtime host": require the
+      # compute-node label and exclude the virtual node. In the single-node kind
+      # e2e this lands it on the one control-plane node.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: compute.datumapis.com/runtime
+                    operator: In
+                    values: ["unikraft"]
+                  - key: unikraft.com/virtual-kubelet
+                    operator: DoesNotExist
+      # Tolerate the control-plane taint so it can schedule on the single node.
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: mock-billing-gateway
+          image: python:3.11-alpine
+          command:
+            - python
+            - -c
+            # A tiny HTTP server that accepts a POST and prints the request
+            # body to stdout, then ACKs 200. Implemented with a raw socket so
+            # the body is read per Content-Length (not a fixed recv) and so the
+            # final JSON body lands on exactly one stdout line per request —
+            # which is what the chainsaw step parses from the Pod logs.
+            - |
+              import socket
+              s = socket.socket()
+              s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+              s.bind(('0.0.0.0', 8080))
+              s.listen(5)
+              print('mock-billing-gateway listening', flush=True)
+              while True:
+                  conn, addr = s.accept()
+                  try:
+                      data = b''
+                      conn.settimeout(2)
+                      while b'\r\n\r\n' not in data:
+                          chunk = conn.recv(4096)
+                          if not chunk:
+                              break
+                          data += chunk
+                      head, _, body = data.partition(b'\r\n\r\n')
+                      clen = 0
+                      for line in head.split(b'\r\n'):
+                          if line.lower().startswith(b'content-length:'):
+                              clen = int(line.split(b':', 1)[1].strip())
+                              break
+                      while len(body) < clen:
+                          chunk = conn.recv(4096)
+                          if not chunk:
+                              break
+                          body += chunk
+                      # Print the decoded body on its own line (idempotent if
+                      # body is empty) so the test can grep/parse it.
+                      print(body.decode('utf-8', errors='replace'), flush=True)
+                      # Connection: close tells the client not to reuse this
+                      # socket — this server always closes after one request
+                      # (see finally below), so a client that pooled it would
+                      # otherwise hit a reset on its next send.
+                      conn.sendall(b'HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+                  except Exception:
+                      # A stalled or malformed request (e.g. the 2s recv
+                      # timeout firing) must drop just this connection, not
+                      # crash the process — a crash restarts the container and
+                      # wipes the stdout log history the e2e test asserts on.
+                      pass
+                  finally:
+                      conn.close()
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false

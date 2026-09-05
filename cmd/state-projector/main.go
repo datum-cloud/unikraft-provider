@@ -21,7 +21,7 @@ func main() {
 		// /var/run/ukp, not /run/ukp: this ships on distroless/static, where
 		// the two are separate real directories rather than a symlink pair,
 		// and the ukp-run hostPath is mounted at /var/run/ukp.
-		socketPath    = flag.String("socket", "/var/run/ukp/vm-state.sock", "unix socket path to listen on; ukpd's vm.state_change sink connects here")
+		eventsPath    = flag.String("events-path", "/var/run/ukp/vm-state.events", "path to tail for vm.state_change events; ukpd's file-type log sink writes here")
 		outputPath    = flag.String("output", "/var/run/ukp/vm-state.usage", "path to append windowed usage JSONL (must be on a hostPath Vector can read)")
 		flushInterval = flag.Duration("flush-interval", 5*time.Minute, "how often open running windows are flushed as incremental records")
 		statsInterval = flag.Duration("stats-interval", time.Minute, "how often the stats heartbeat line is logged")
@@ -33,7 +33,7 @@ func main() {
 	flag.Parse()
 
 	svc, err := stateprojector.New(stateprojector.Config{
-		SocketPath:      *socketPath,
+		EventsPath:      *eventsPath,
 		OutputPath:      *outputPath,
 		FlushInterval:   *flushInterval,
 		StatsInterval:   *statsInterval,

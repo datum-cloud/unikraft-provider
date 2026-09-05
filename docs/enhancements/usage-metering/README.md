@@ -178,16 +178,15 @@ container inside the same per-node pod as the Unikraft runtime itself — one pe
 compute node, deployed and upgraded alongside the runtime rather than as a separate
 rollout.
 
-**Ingest.** It connects to the runtime's own local event stream on that node, so it
-learns about a lifecycle change essentially as it happens, not on a polling delay.
-Today that connection is a Unix socket the runtime pushes events over live. That has
-one real drawback: it requires an active connection at the exact moment an event
-fires, so a redeploy or brief crash of this component can miss an event a live socket
-would have delivered. The planned change is to instead have the runtime write its
-events to a plain file on disk, which this component tails — durable to its own
-restarts, since the runtime keeps appending regardless of whether anything is reading
-at that moment. This is a resilience improvement to *how events arrive*; it does not
-change anything about how usage is measured or attributed once they do.
+**Ingest.** It tails a plain file the runtime writes its lifecycle events to,
+resuming from a saved position across its own restarts. This replaced an earlier
+design where the runtime pushed events over a live Unix socket connection — that
+had one real drawback: it required an active connection at the exact moment an
+event fired, so a redeploy or brief crash of this component could miss an event a
+live socket would have delivered. A file has no such requirement: the runtime
+keeps appending regardless of whether anything is reading at that moment. This was
+purely a resilience improvement to *how events arrive*; it changed nothing about
+how usage is measured or attributed once they do.
 
 **Attribute.** It separately keeps track of which project and instance each running VM
 belongs to, by watching the cluster — the runtime itself has no notion of either.
@@ -234,8 +233,8 @@ pipeline.
 - The shipping step: **implemented and deployed** — a Vector agent tails the local
   usage record and forwards each window as a billing Cloudevent to the platform's
   billing pipeline.
-- Ingestion (runtime → metering component): **planned change** from a Unix socket to
-  a file the runtime writes and this component tails, for resilience to this
+- Ingestion (runtime → metering component): **migrated** from a Unix socket to a
+  file the runtime writes and this component tails, for resilience to this
   component's own restarts.
 
 ## Infrastructure Needed
@@ -246,5 +245,9 @@ pipeline.
 - A receiving side on the platform's billing pipeline able to accept what gets
   shipped — in place, since this reuses the same billing Cloudevent pipeline other
   usage sources already ship through.
-- A runtime configuration change to add the planned file-based event sink, once the
-  ingestion migration above is scheduled.
+- ~~A runtime configuration change to add a file-based event sink.~~ Done.
+- **Not yet automated:** the runtime's own event file has no built-in size cap
+  (vendor-confirmed), so something needs to periodically rotate it (an external
+  rename + a signal to the runtime to reopen the file) before it grows unbounded
+  on a shared volume. This is an operational gap, not a correctness one — the
+  metering component tolerates the file being rotated whenever this is wired up.

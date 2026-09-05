@@ -115,6 +115,16 @@ kubectl apply -k "$repo/config/overlays/test-infra" >/dev/null
 kubectl -n unikraft-system rollout status deployment/unikraft-provider --timeout=180s
 kubectl -n unikraft-system rollout status ds/kraftlet --timeout=180s
 
+log "usage billing meter: Vector agent + mock gateway (vector-e2e)"
+# The last leg of per-second usage billing: a Vector agent tails state-projector's
+# vm-state.usage and POSTs each window to a mock billing gateway (see
+# config/overlays/vector-e2e/). Must start before chainsaw runs so it catches the
+# usage records the run-instance test produces. The mock gateway must be ready
+# before Vector, or Vector's first flush could hit a not-yet-listening socket.
+kubectl apply -k "$repo/config/overlays/vector-e2e" >/dev/null
+kubectl -n unikraft-system rollout status deployment/mock-billing-gateway --timeout=120s
+kubectl -n unikraft-system rollout status deployment/vector --timeout=180s
+
 log "wait for the per-host Kraftlet virtual node to register"
 for i in $(seq 1 30); do kubectl get node "kraftlet-${NODE}" >/dev/null 2>&1 && break; sleep 4; done
 kubectl get nodes

@@ -1,0 +1,26 @@
+# Kind e2e overlay for the compute per-second usage billing leg (the part of
+# the pipeline the 02-run-instance chainsaw test does NOT already cover):
+#
+#   state-projector ──/var/run/ukp/vm-state.usage──▶ Vector ──▶ mock gateway
+#
+# state-projector (the ukp-runtime sidecar) appends windowed usage JSONL to
+# the node's /var/run/ukp/vm-state.usage. In production/staging/edge the edge
+# billing-usage-collector-unikraft Vector agent (a per-node DaemonSet in
+# datum-infra) tails that same hostPath and emits a billing CloudEvent for
+# each window. Reusing that Flux/Helm chain here isn't possible in a hermetic
+# kind e2e (it's an OCIRepository-published artifact with a real API-keyed
+# billing_gateway sink), so this overlay reproduces its Vector customConfig in
+# a small, self-contained manifest belonging to this repo, swapping only the
+# sink: instead of the real billing_gateway it POSTs to a throwaway mock
+# gateway (mock-billing-gateway.yaml) deployed in the same cluster so the e2e
+# test can assert on what Vector actually sends.
+#
+# A single-replica Deployment (not a DaemonSet) is enough for e2e: one node's
+# vm-state.usage is sufficient, and it schedules onto the single kind runtime
+# node (the same node state-projector writes to).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: unikraft-system
+resources:
+  - vector.yaml
+  - mock-billing-gateway.yaml

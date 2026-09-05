@@ -13,11 +13,11 @@
 // Files are split by responsibility: namespace_index.go and pod_index.go
 // build the attribution index off a Kubernetes watch (watch.go); window.go
 // and processor.go turn events into windowed records; writer.go appends
-// them and owns rotation; socket.go is today's event transport. It sits
-// behind two interfaces (eventSource, which this file declares, and
-// eventHandler, which socket.go declares), so a planned file-tailing
-// source is a second implementation of eventSource — a change to this
-// file's wiring in New only, nothing in processor.go or socket.go.
+// them and owns rotation; file_source.go tails ukpd's file-type log sink
+// for events. It sits behind two interfaces (eventSource, which this file
+// declares, and eventHandler, which file_source.go declares) — a different
+// transport is a second implementation of eventSource, a change to this
+// file's wiring in New only, nothing in processor.go.
 package stateprojector
 
 import (
@@ -35,9 +35,9 @@ import (
 )
 
 // eventSource drives an eventHandler with decoded events until ctx is done,
-// owning any setup its transport needs. Satisfied by *socketSource today; a
-// planned file-tailing source implements the same interface, so replacing
-// one with the other only changes which constructor New calls below.
+// owning any setup its transport needs. Satisfied by *fileSource; kept as an
+// interface so a different transport is a drop-in second implementation,
+// changing only which constructor New calls below.
 type eventSource interface {
 	Run(ctx context.Context) error
 }
@@ -45,7 +45,7 @@ type eventSource interface {
 // Config holds every user-facing setting; cmd/state-projector/main.go owns
 // flag parsing and passes the result in here.
 type Config struct {
-	SocketPath      string
+	EventsPath      string
 	OutputPath      string
 	FlushInterval   time.Duration
 	StatsInterval   time.Duration
@@ -56,7 +56,7 @@ type Config struct {
 }
 
 // Service is the running state-projector: a Kubernetes attribution watch, an
-// event processor, and a socket listener, wired together.
+// event processor, and a tailer of ukpd's events file, wired together.
 type Service struct {
 	cfg       Config
 	clientset kubernetes.Interface
@@ -84,7 +84,7 @@ func New(cfg Config) (*Service, error) {
 	pods := newPodIndex(namespaces, st, cfg.Debug)
 	out := newOutputWriter(cfg.OutputPath, cfg.RotateSizeBytes, cfg.RotateMaxAge, st)
 	proc := newProcessor(pods, out, st, cfg.Debug, cfg.FlushInterval)
-	source := newSocketSource(cfg.SocketPath, proc, st)
+	source := newFileSource(cfg.EventsPath, proc, st)
 
 	return &Service{
 		cfg:        cfg,
@@ -105,9 +105,9 @@ func k8sClientConfig(kubeconfig string) (*rest.Config, error) {
 }
 
 // Run starts the attribution watch, the periodic flush loop, the stats
-// heartbeat, and finally blocks running the event source until ctx is done
-// or it fails. The event source (socket today, a file-tailing one later)
-// owns its own transport-specific setup.
+// heartbeat, and finally blocks running the event source (the events-file
+// tailer) until ctx is done or it fails. The event source owns its own
+// transport-specific setup.
 func (s *Service) Run(ctx context.Context) error {
 	defer runtime.HandleCrash()
 
@@ -126,14 +126,14 @@ func (s *Service) Run(ctx context.Context) error {
 }
 
 // LogBoot logs the resolved configuration before anything can fail: a
-// projector pointed at the wrong socket looks exactly like an idle one, and
-// this line is what distinguishes them.
+// projector pointed at the wrong events path looks exactly like an idle
+// one, and this line is what distinguishes them.
 func (s *Service) LogBoot(hostname string) {
 	authMode := "in-cluster"
 	if s.cfg.KubeconfigPath != "" {
 		authMode = "kubeconfig=" + s.cfg.KubeconfigPath
 	}
-	log.Printf("boot node=%s socket=%s output=%s flush_interval=%s stats_interval=%s auth=%s debug=%t on_state=%q rotate_size_mb=%d rotate_max_age=%s",
-		hostname, s.cfg.SocketPath, s.cfg.OutputPath, s.cfg.FlushInterval, s.cfg.StatsInterval, authMode, s.cfg.Debug,
+	log.Printf("boot node=%s events_path=%s output=%s flush_interval=%s stats_interval=%s auth=%s debug=%t on_state=%q rotate_size_mb=%d rotate_max_age=%s",
+		hostname, s.cfg.EventsPath, s.cfg.OutputPath, s.cfg.FlushInterval, s.cfg.StatsInterval, authMode, s.cfg.Debug,
 		onState, s.cfg.RotateSizeBytes/(1024*1024), s.cfg.RotateMaxAge)
 }
