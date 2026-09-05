@@ -1,0 +1,12 @@
+# Registers the execution tiers this provider serves. Compute owns the
+# RuntimeClass kind and the contract; each provider registers its own classes,
+# the way a Gateway API implementation registers its own GatewayClasses.
+#
+# The catalog is cluster-scoped and lives in the management plane, while the
+# provider controller runs in a cell. Apply this component to the management
+# plane on its own. Do not add it to the cell controller overlay.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - unikernel.yaml
