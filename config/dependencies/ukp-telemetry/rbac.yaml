@@ -30,4 +30,3 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: ukp-telemetry
-    namespace: ukp-system

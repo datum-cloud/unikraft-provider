@@ -1,9 +1,10 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: ukp-system
+namespace: unikraft-system
 resources:
   - rbac.yaml
   - collector.yaml
+  - instance-resource-rules.yaml
 # The IP surfacer runs from a ConfigMap-mounted script. A stable name (no hash)
 # keeps the collector CR's volume reference valid; the OpenTelemetry Operator
 # does not know to rewrite a hashed name inside its CRD.
