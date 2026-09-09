@@ -32,21 +32,6 @@ spec:
               "resource_namespace", "$1",
               "label_meta_datumapis_com_upstream_namespace", "(.*)"
             )
-            * on (node) group_left(region, zone) max by (node, region, zone) (
-              label_replace(
-                label_replace(
-                  label_replace(
-                    kube_node_labels,
-                    "node", "kraftlet-$1",
-                    "node", "(.*)"
-                  ),
-                  "region", "$1",
-                  "label_topology_kubernetes_io_region", "(.*)"
-                ),
-                "zone", "$1",
-                "label_topology_kubernetes_io_zone", "(.*)"
-              )
-            )
             * on() group_left(resource_kind) label_replace(vector(1), "resource_kind", "Instance", "dummy", ".*")
         - record: datum_compute_instance_memory_working_set_bytes
           expr: |
@@ -70,20 +55,5 @@ spec:
               ),
               "resource_namespace", "$1",
               "label_meta_datumapis_com_upstream_namespace", "(.*)"
-            )
-            * on (node) group_left(region, zone) max by (node, region, zone) (
-              label_replace(
-                label_replace(
-                  label_replace(
-                    kube_node_labels,
-                    "node", "kraftlet-$1",
-                    "node", "(.*)"
-                  ),
-                  "region", "$1",
-                  "label_topology_kubernetes_io_region", "(.*)"
-                ),
-                "zone", "$1",
-                "label_topology_kubernetes_io_zone", "(.*)"
-              )
             )
             * on() group_left(resource_kind) label_replace(vector(1), "resource_kind", "Instance", "dummy", ".*")
