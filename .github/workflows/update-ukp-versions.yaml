@@ -1,10 +1,12 @@
 name: update-ukp-versions
 
 # Checks the vendor's cloud/stable apt channel for newer ukp-* package
-# versions than what build/ukp-runtime/Dockerfile pins, and opens a PR
-# bumping any that have moved. Renovate can't do this: the vendor's ProGet
-# package-listing API 403s for our apt-only credential, so this queries the
-# same apt metadata `apt-get` itself uses instead.
+# versions than what build/ukp-runtime/Dockerfile pins, and ghcr.io for a
+# newer kraftlet build, then opens one PR bumping whatever moved — so a
+# single e2e run (see the close/reopen caveat below) covers the whole
+# stack instead of one per dependency. Renovate can't do the apt side: the
+# vendor's ProGet package-listing API 403s for our apt-only credential, so
+# this queries the same apt metadata `apt-get` itself uses instead.
 #
 # Caveat: PRs opened with the default GITHUB_TOKEN don't trigger other
 # `pull_request` workflows (GitHub's anti-recursion rule), so e2e won't
@@ -13,6 +15,7 @@ name: update-ukp-versions
 #
 # Secrets:
 #   UNIKRAFT_APT_AUTH   apt auth.conf for pkg.unikraft.com (same as e2e.yaml)
+#   (kraftlet's ghcr.io package is public, no credential needed)
 
 on:
   workflow_dispatch:
@@ -46,8 +49,8 @@ jobs:
       - name: Check for newer ukp-* package versions
         run: |
           set -uo pipefail
+          : > /tmp/ukp-bumps.txt
           dockerfile=build/ukp-runtime/Dockerfile
-          bumps=()
           while IFS='=' read -r arg_name current; do
             name="${arg_name%_VERSION}"
             name="${name#UKP_}"
@@ -68,26 +71,57 @@ jobs:
             if [ "$latest" != "$current" ]; then
               echo "$pkg [$channel]: $current -> $latest"
               sed -i "s|^ARG ${arg_name}=.*|ARG ${arg_name}=${latest}|" "$dockerfile"
-              bumps+=("- \`$pkg\` (\`$channel\`): \`$current\` → \`$latest\`")
+              echo "- \`$pkg\` (\`$channel\`): \`$current\` → \`$latest\`" >> /tmp/ukp-bumps.txt
             fi
           done < <(grep -oP '^ARG \KUKP_\w+_VERSION=.*' "$dockerfile")
 
-          if [ "${#bumps[@]}" -eq 0 ]; then
-            echo "All ukp-* packages are up to date."
-            printf 'All ukp-* packages are already up to date.\n' > /tmp/ukp-bump-body.md
-          else
-            { printf 'Vendor released newer versions of the following ukp-* packages:\n\n'
-              printf '%s\n' "${bumps[@]}"
+      - name: Check for a newer kraftlet image
+        run: |
+          set -uo pipefail
+          daemonset=config/dependencies/kraftlet/daemonset.yaml
+          current="$(grep -oP 'ghcr\.io/unikraft-cloud/kraftlet:\K\S+' "$daemonset")"
+          if [ -z "$current" ]; then
+            echo "::warning::couldn't find the current kraftlet tag in $daemonset, skipping"
+            exit 0
+          fi
+
+          # Only released up to 0.2 (see the image comment in daemonset.yaml);
+          # the -staging.N track is what's actually deployed.
+          all_tags="$(skopeo list-tags docker://ghcr.io/unikraft-cloud/kraftlet | jq -r '.Tags[]')"
+          staging_tags="$(echo "$all_tags" | grep -P '^[0-9]+\.[0-9]+\.[0-9]+-staging\.[0-9]+$')"
+          latest="$(echo "$staging_tags" | sort -V | tail -1)"
+
+          if [ -z "$latest" ]; then
+            echo "::warning::no kraftlet staging tag found, skipping"
+            exit 0
+          fi
+          if [ "$latest" != "$current" ]; then
+            echo "kraftlet: $current -> $latest"
+            sed -i "s|ghcr\.io/unikraft-cloud/kraftlet:${current}|ghcr.io/unikraft-cloud/kraftlet:${latest}|" "$daemonset"
+            echo "- \`kraftlet\`: \`$current\` → \`$latest\`" >> /tmp/ukp-bumps.txt
+          fi
+
+      - name: Compose pull request body
+        run: |
+          set -uo pipefail
+          if [ -s /tmp/ukp-bumps.txt ]; then
+            { printf 'Vendor released newer versions of the following:\n\n'
+              cat /tmp/ukp-bumps.txt
             } > /tmp/ukp-bump-body.md
+          else
+            echo "All ukp-runtime dependencies are up to date."
+            printf 'All ukp-runtime dependencies are already up to date.\n' > /tmp/ukp-bump-body.md
           fi
           cat /tmp/ukp-bump-body.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Open pull request
         uses: peter-evans/create-pull-request@v8
         with:
-          add-paths: build/ukp-runtime/Dockerfile
-          commit-message: "build(runtime): bump ukp package versions"
-          title: "build(runtime): bump ukp package versions"
+          add-paths: |
+            build/ukp-runtime/Dockerfile
+            config/dependencies/kraftlet/daemonset.yaml
+          commit-message: "build(runtime): bump ukp-runtime dependencies"
+          title: "build(runtime): bump ukp-runtime dependencies"
           body-path: /tmp/ukp-bump-body.md
           branch: chore/bump-ukp-versions
           delete-branch: true
