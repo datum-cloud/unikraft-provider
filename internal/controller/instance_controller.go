@@ -328,11 +328,10 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 // by kraftlet using its own node/kubelet identity. The provider only references
 // them by name in the Pod spec; no data is read or mirrored by the provider.
 //
-// TODO(Phase 3b): EnvFrom mapping is deferred. compute's SandboxContainer does
-// not yet expose an EnvFrom field. When it is added (planned for v1 API), the
-// mapping here will require field-by-field translation from
-// computev1alpha.EnvFromSource to core.EnvFromSource — it is NOT a simple
-// ValueFrom-style passthrough because the two types are not identical.
+// SandboxContainer.EnvFrom is not translated, so the unikernel runtime class
+// does not declare the envFrom feature. Admission rejects an instance that asks
+// for it, which is a clearer answer than a guest that boots without the
+// environment it expects.
 func (r *InstanceReconciler) buildPodSpecFromContainers(
 	ctx context.Context,
 	instance *computev1alpha.Instance,
