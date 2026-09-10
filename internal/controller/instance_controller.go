@@ -328,10 +328,9 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 // by kraftlet using its own node/kubelet identity. The provider only references
 // them by name in the Pod spec; no data is read or mirrored by the provider.
 //
-// SandboxContainer.EnvFrom is not translated, so the unikernel runtime class
-// does not declare the envFrom feature. Admission rejects an instance that asks
-// for it, which is a clearer answer than a guest that boots without the
-// environment it expects.
+// SandboxContainer.EnvFrom is not translated. The unikernel runtime class must
+// not declare the envFrom feature until it is, or admission accepts an instance
+// whose guest then boots without the environment it expects.
 func (r *InstanceReconciler) buildPodSpecFromContainers(
 	ctx context.Context,
 	instance *computev1alpha.Instance,
