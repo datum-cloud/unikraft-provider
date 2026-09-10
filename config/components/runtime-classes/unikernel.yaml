@@ -26,12 +26,13 @@ spec:
       - configMapVolumes
       - secretVolumes
       - envFrom
+      - imagePullSecrets
     compatibility: >-
       Runs images whose application binary is position-independent. The root
       filesystem is held in memory, so image size counts against the instance's
-      memory and disk-backed volumes are not available. Images must be pulled
-      from a registry the platform can reach without customer-supplied
-      credentials.
+      memory and disk-backed volumes are not available. Images in a private
+      registry are pulled with the credentials the instance names in its image
+      pull secrets.
   lifecycle:
     description: >-
       Instances start in a small fraction of a second. Suspend, resume, and
