@@ -90,8 +90,12 @@ func main() {
 	cfg := ctrl.GetConfigOrDie()
 	ctx := ctrl.SetupSignalHandler()
 
+	runtimeClass := controller.ServedRuntimeClass(&serverConfig)
+	setupLog.Info("serving runtime class", "runtimeClass", runtimeClass)
+
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                  scheme,
+		Cache:                   controller.CacheOptions(runtimeClass),
 		Metrics:                 serverConfig.MetricsServer.Options(ctx, nil),
 		WebhookServer:           webhook.NewServer(serverConfig.WebhookServer.Options(ctx, nil)),
 		HealthProbeBindAddress:  probeAddr,
