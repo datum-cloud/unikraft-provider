@@ -70,7 +70,10 @@ type InstanceReconciler struct {
 	LocationClassName string
 }
 
-// Reconcile implements the reconciliation logic
+// Reconcile implements the reconciliation logic.
+//
+// Which Instances reach here is decided by the cache's runtime class field
+// selector, so the API server never delivers another provider's Instance.
 func (r *InstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 

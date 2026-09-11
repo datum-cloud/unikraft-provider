@@ -30,4 +30,7 @@ func SetObjectDefaults_UnikraftProvider(in *UnikraftProvider) {
 	if in.LocationClassName == "" {
 		in.LocationClassName = "self-managed"
 	}
+	if in.RuntimeClassName == "" {
+		in.RuntimeClassName = "unikernel"
+	}
 }

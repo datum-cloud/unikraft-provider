@@ -30,6 +30,18 @@ type UnikraftProvider struct {
 	// attached to locations with the specified location class.
 	// +default="self-managed"
 	LocationClassName string `json:"locationClassName"`
+
+	// RuntimeClassName is the Datum runtime class this provider serves. A cell
+	// can run several providers, and each one claims only the Instances of its
+	// own class. The name is deliberately configuration rather than a compiled
+	// constant, because the catalog owns the class names and can retire one
+	// without a provider release.
+	//
+	// The provider also claims Instances that carry no class at all, which is
+	// how the platform routes a workload that did not choose a class.
+	//
+	// +default="unikernel"
+	RuntimeClassName string `json:"runtimeClassName"`
 }
 
 // +k8s:deepcopy-gen=true
