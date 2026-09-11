@@ -147,10 +147,11 @@ spec:
     processors:
       # Enriches guest logs with the Datum identity of the owning compute
       # Instance, keyed on container.id (== the ukpd instance uuid Kraftlet
-      # assigns as the provider Pod container's containerID). Pod annotations
-      # give the instance name/namespace; the namespace label gives the
-      # project. Watches pods cluster-wide (the provider Pods live on the
-      # Kraftlet virtual node, so node-scoping cannot apply).
+      # assigns as the provider Pod container's containerID). Instance/workload
+      # identity comes from provider Pod labels; the namespace labels give the
+      # upstream namespace and project. Watches pods cluster-wide (the
+      # provider Pods live on the Kraftlet virtual node, so node-scoping
+      # cannot apply).
       k8sattributes:
         auth_type: serviceAccount
         pod_association:
@@ -162,14 +163,16 @@ spec:
             - k8s.namespace.name
             - k8s.pod.name
             - container.id
-          annotations:
+          labels:
             - tag_name: datum.instance.name
-              key: meta.datumapis.com/upstream-name
+              key: upstream.instance
+              from: pod
+            - tag_name: datum.workload.name
+              key: compute.datumapis.com/workload-name
               from: pod
             - tag_name: datum.instance.namespace
               key: meta.datumapis.com/upstream-namespace
-              from: pod
-          labels:
+              from: namespace
             - tag_name: datum.project.name
               key: resourcemanager.miloapis.com/project-name
               from: namespace

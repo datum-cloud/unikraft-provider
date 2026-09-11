@@ -17,9 +17,10 @@ Guest logs are enriched with the **Datum** identity of the owning compute
 
 | Attribute | Source |
 | --- | --- |
-| `datum.project.name` | project label on the Instance's Namespace |
-| `datum.instance.namespace` | provider Pod (`meta.datumapis.com/upstream-namespace`) |
-| `datum.instance.name` | provider Pod (`meta.datumapis.com/upstream-name`) |
+| `datum.project.name` | project label on the Instance's Namespace (`resourcemanager.miloapis.com/project-name`) |
+| `datum.instance.namespace` | Instance's Namespace label (`meta.datumapis.com/upstream-namespace`) |
+| `datum.instance.name` | provider Pod label (`upstream.instance`) |
+| `datum.workload.name` | provider Pod label (`compute.datumapis.com/workload-name`) |
 | `ukp.instance.uuid` | ukpd instance uuid (the `vm.log` directory) |
 | `k8s.node.name` | the runtime node |
 
