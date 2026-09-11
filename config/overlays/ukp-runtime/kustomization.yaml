@@ -28,6 +28,14 @@ patches:
     target:
       kind: DaemonSet
       name: ukp-runtime
+# The patches above add containers that run the runtime image, and an images
+# transformer only reaches resources its own kustomization produces. Repeat the
+# base digest here so every container in the DaemonSet runs the same runtime.
+# Keep it in step with config/dependencies/ukp-runtime.
+images:
+  - name: ghcr.io/datum-cloud/ukp-runtime
+    digest: sha256:aea3b6dfa2abc8dc13505c8649d91c1716639a85ed9a8b4ede9eafa47525e065
+
 # ukp-remote-cni: independent DaemonSet, see config/components/ukp-remote-cni.
 components:
   - ../../components/ukp-remote-cni

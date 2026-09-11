@@ -5,11 +5,18 @@ resources:
   - daemonset.yaml
   - serviceaccount.yaml
   - state-projector-rbac.yaml
-# CI stamps the commit-pinned tag here at bundle-publish time; the :latest default
-# keeps `kustomize build` and local e2e working (e2e overrides with ukp-runtime:e2e).
+# The runtime is pinned by digest so that rolling it is a deliberate act.
+# Restarting this DaemonSet kills every instance on the node, and the runtime
+# is not built from this repository, so nothing here justifies rolling it.
+# Bump the digest in the same change that bumps build/ukp-runtime, and record
+# what was validated.
+#
+# The state-projector is built from this repository, so CI stamps the
+# commit-pinned tag here at bundle-publish time; the :latest default keeps
+# `kustomize build` and local e2e working (e2e overrides with :e2e).
 images:
   - name: ghcr.io/datum-cloud/ukp-runtime
-    newTag: latest
+    digest: sha256:aea3b6dfa2abc8dc13505c8649d91c1716639a85ed9a8b4ede9eafa47525e065
   - name: ghcr.io/datum-cloud/ukp-state-projector
     newTag: latest
 # The runtime configuration is injected as a ConfigMap. The generated

@@ -5,11 +5,32 @@ on:
   release:
     types: ["published"]
 
-# All jobs derive the same commit-pinned tag, so the images and bundle stay in lockstep.
+# The images built from this repository derive the same commit-pinned tag, so
+# they and the bundle stay in lockstep. The runtime image is the exception: the
+# config tree pins it by digest, for the reasons in
+# config/dependencies/ukp-runtime/kustomization.yaml.
 
 jobs:
   validate-kustomize:
     uses: datum-cloud/actions/.github/workflows/validate-kustomize.yaml@v1.21.0
+
+  # Publishing the runtime image rolls the DaemonSet that owns every running
+  # instance on a node, so build it only when its own build context moves.
+  # Nothing else in this repository is a reason to restart the runtime.
+  runtime-context-changed:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.filter.outputs.runtime }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          filters: |
+            runtime:
+              - 'build/ukp-runtime/**'
 
   publish-container-image:
     needs:
@@ -30,6 +51,8 @@ jobs:
   publish-runtime-image:
     needs:
       - validate-kustomize
+      - runtime-context-changed
+    if: needs.runtime-context-changed.outputs.changed == 'true'
     permissions:
       id-token: write
       contents: read
@@ -64,11 +87,14 @@ jobs:
       platforms: linux/amd64
     secrets: inherit
 
-  # Pin every image to the tag its job published, then push the config tree as the bundle.
+  # Pin the images built from this repository to the tag their job published,
+  # then push the config tree as the bundle. The runtime image is deliberately
+  # absent: the config tree already carries its digest, so the bundle resolves
+  # the same runtime whether or not this run rebuilt it, and a skipped runtime
+  # build cannot leave the bundle pointing at a tag nobody published.
   publish-kustomize-bundle:
     needs:
       - publish-container-image
-      - publish-runtime-image
       - publish-state-projector-image
     uses: datum-cloud/actions/.github/workflows/publish-kustomize-bundle.yaml@v1.21.0
     with:
@@ -80,7 +106,5 @@ jobs:
       # with the same tag as the base so seed-users matches netsetup/ukpd/agent.
       images: |
         - { path: config/default, name: ghcr.io/datum-cloud/unikraft-provider, tag: "${{ needs.publish-container-image.outputs.tag }}" }
-        - { path: config/dependencies/ukp-runtime, name: ghcr.io/datum-cloud/ukp-runtime, tag: "${{ needs.publish-runtime-image.outputs.tag }}" }
-        - { path: config/overlays/ukp-runtime, name: ghcr.io/datum-cloud/ukp-runtime, tag: "${{ needs.publish-runtime-image.outputs.tag }}" }
         - { path: config/dependencies/ukp-runtime, name: ghcr.io/datum-cloud/ukp-state-projector, tag: "${{ needs.publish-state-projector-image.outputs.tag }}" }
     secrets: inherit
