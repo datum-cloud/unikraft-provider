@@ -68,6 +68,9 @@ type InstanceReconciler struct {
 	Scheme            *runtime.Scheme
 	Config            *config.UnikraftProvider
 	LocationClassName string
+
+	// podRecreates rate limits replacement of backing Pods that keep dying.
+	podRecreates podRecreateTracker
 }
 
 // Reconcile implements the reconciliation logic
@@ -174,6 +177,7 @@ func (r *InstanceReconciler) handleDeletion(ctx context.Context, instance *compu
 	if err := r.Update(ctx, instance); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to remove finalizer from instance %s: %w", instance.Name, err)
 	}
+	r.podRecreates.forget(instance.UID)
 	logger.Info("backing resources gone; removed finalizer, instance may be deleted", "name", instance.Name)
 	return ctrl.Result{}, nil
 }
@@ -212,6 +216,10 @@ func (r *InstanceReconciler) reconcileSuspended(ctx context.Context, instance *c
 		return ctrl.Result{}, fmt.Errorf("failed to delete pod for suspended instance %s: %w", instance.Name, err)
 	}
 
+	// Suspension is a deliberate stop, not a failure, so it does not count
+	// against the recreate budget a resumed instance starts with.
+	r.podRecreates.forget(instance.UID)
+
 	logger.Info("instance suspended (pod deleted)", "name", instance.Name)
 	return ctrl.Result{}, nil
 }
@@ -224,6 +232,14 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 
 	if instance.Spec.Runtime.Sandbox == nil {
 		return ctrl.Result{}, fmt.Errorf("sandbox runtime is nil")
+	}
+
+	// A backing Pod whose container has terminated never comes back on its own:
+	// the VMM behind it is gone and the Pod spec is only built on create, so the
+	// instance stays down until the Pod is replaced. Replace it here, with
+	// backoff, so an instance recovers without an operator deleting anything.
+	if result, handled, err := r.recoverTerminatedPod(ctx, instance); err != nil || handled {
+		return result, err
 	}
 
 	instancePod := &core.Pod{
