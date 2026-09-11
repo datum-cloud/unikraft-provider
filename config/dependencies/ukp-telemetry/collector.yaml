@@ -2,9 +2,9 @@
 # OpenTelemetry Operator) collects ALL runtime + guest telemetry on each compute
 # node — no custom collector, no Vector:
 #   logs    — guest app logs (vm.log). The stock k8sattributes processor stamps
-#             the Datum identity of the owning compute Instance, keyed on the
-#             guest IP; a tiny busybox sidecar just surfaces that IP onto the
-#             log path (it holds no Kubernetes logic).
+#             the Datum identity of the owning compute Instance, keyed on
+#             container.id (the ukpd instance uuid Kraftlet assigns as the
+#             provider Pod's containerID).
 #   metrics — ukpd's Prometheus endpoints and platform API instance metrics,
 #             scraped directly.
 #
@@ -65,7 +65,7 @@ spec:
     # the edge vmagent, which relays to both local edge VictoriaMetrics (HPA)
     # and hub VictoriaMetrics (observability). Override per environment.
     - name: LOGS_OTLP_ENDPOINT
-      value: edge-logs-collector-collector.edge-logs-system.svc.cluster.local:4317
+      value: gateway-collector-collector.o11y-system.svc.cluster.local:4317
     - name: METRICS_RW_ENDPOINT
       value: http://vmagent-gke-remote-write.telemetry-system.svc.cluster.local:8429/api/v1/write
   volumes:
@@ -73,70 +73,41 @@ spec:
       hostPath:
         path: /var/mnt/ukp
         type: Directory
-    - name: ukp-logs-tree
-      emptyDir: {}
     - name: ukp-logs-storage
       hostPath:
         path: /var/lib/ukp-logs-otel
         type: DirectoryOrCreate
-    - name: surfacer-script
-      configMap:
-        name: ukp-telemetry-surfacer
-        defaultMode: 0755
   volumeMounts:
     - name: ukp-data
       mountPath: /var/lib/ukp
       readOnly: true
-    - name: ukp-logs-tree
-      mountPath: /var/log/ukp-logs
-      readOnly: true
     - name: ukp-logs-storage
       mountPath: /var/lib/otelcol/storage
-  additionalContainers:
-    # Surfaces each instance's guest IP onto its vm.log path so k8sattributes
-    # can enrich by pod IP. Filesystem only — no Kubernetes client.
-    - name: ip-surfacer
-      image: busybox:1.36
-      command: ["sh", "/scripts/ip-surfacer.sh"]
-      securityContext:
-        runAsUser: 0
-      env:
-        - name: UKP_PLATFORM_DIR
-          value: /var/lib/ukp/data/platform
-        - name: UKP_LOG_TREE
-          value: /var/log/ukp-logs
-      volumeMounts:
-        - name: ukp-data
-          mountPath: /var/lib/ukp
-          readOnly: true
-        - name: ukp-logs-tree
-          mountPath: /var/log/ukp-logs
-        - name: surfacer-script
-          mountPath: /scripts
-          readOnly: true
   config:
     extensions:
       file_storage:
         directory: /var/lib/otelcol/storage
     receivers:
-      # Guest application logs — one file per instance. The surfacer encodes the
-      # guest IP + ukpd uuid in the path; k8sattributes does the rest.
+      # Guest application logs — one file per instance, read straight from
+      # ukpd's own platform dir. k8sattributes resolves the owning Pod by
+      # container ID, since Kraftlet sets each provider Pod container's
+      # containerID to the ukpd instance uuid.
       filelog:
         include:
-          - /var/log/ukp-logs/**/vm.log
+          - /var/lib/ukp/data/platform/*/vm.log
         include_file_path: true
         start_at: beginning
         storage: file_storage
         operators:
           - type: regex_parser
             parse_from: 'attributes["log.file.path"]'
-            regex: '/ip=(?P<ip>[^/]+)/uuid=(?P<uuid>[^/]+)/vm\.log$'
-          - type: move
-            from: attributes.ip
-            to: 'resource["k8s.pod.ip"]'
-          - type: move
+            regex: '/var/lib/ukp/data/platform/(?P<uuid>[^/]+)/vm\.log$'
+          - type: copy
             from: attributes.uuid
             to: 'resource["ukp.instance.uuid"]'
+          - type: move
+            from: attributes.uuid
+            to: 'resource["container.id"]'
       # Runtime + host metrics plus per-instance resource metrics.
       prometheus:
         config:
@@ -175,20 +146,22 @@ spec:
                 - targets: ['${env:HOST_IP}:45233']
     processors:
       # Enriches guest logs with the Datum identity of the owning compute
-      # Instance, keyed on the guest IP (== the provider Pod's podIP). Pod
-      # annotations give the instance name/namespace; the namespace label gives
-      # the project. Watches pods cluster-wide (the provider Pods live on the
+      # Instance, keyed on container.id (== the ukpd instance uuid Kraftlet
+      # assigns as the provider Pod container's containerID). Pod annotations
+      # give the instance name/namespace; the namespace label gives the
+      # project. Watches pods cluster-wide (the provider Pods live on the
       # Kraftlet virtual node, so node-scoping cannot apply).
       k8sattributes:
         auth_type: serviceAccount
         pod_association:
           - sources:
               - from: resource_attribute
-                name: k8s.pod.ip
+                name: container.id
         extract:
           metadata:
             - k8s.namespace.name
             - k8s.pod.name
+            - container.id
           annotations:
             - tag_name: datum.instance.name
               key: meta.datumapis.com/upstream-name

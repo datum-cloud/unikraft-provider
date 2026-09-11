@@ -23,19 +23,15 @@ Guest logs are enriched with the **Datum** identity of the owning compute
 | `ukp.instance.uuid` | ukpd instance uuid (the `vm.log` directory) |
 | `k8s.node.name` | the runtime node |
 
-The enrichment is done by the stock **`k8sattributes`** processor, keyed on the
-guest IP: the provider Pod's `podIP` equals the guest IP, so `k8sattributes`
-finds the Pod by IP and stamps `datum.instance.{name,namespace}` from its
-annotations and `datum.project.name` from the Namespace label — no custom code.
-
-The only node-side piece is a **filesystem-only IP surfacer** (`ip-surfacer.sh`,
-a busybox sidecar): `filelog` can only read a log's path, and ukpd's `vm.log`
-path carries just the uuid, so the surfacer reads the guest IP from `vmm.json`
-and symlinks each log into `/var/log/ukp-logs/ip=<ip>/uuid=<uuid>/vm.log`. The
-`filelog` regex lifts `k8s.pod.ip` + `ukp.instance.uuid` from that path;
-`k8sattributes` does the rest. The surfacer holds **no Kubernetes logic** — it
-only manages symlinks. (To drop even the surfacer, the runtime/provider would
-need to put the guest IP on the log record directly — an upstream ask.)
+The enrichment is done by the stock **`k8sattributes`** processor, keyed on
+`container.id`: Kraftlet sets each provider Pod container's `containerID` to
+the ukpd instance uuid itself, so `filelog` reads that uuid straight off the
+`vm.log` path (`/var/lib/ukp/data/platform/<uuid>/vm.log`) and stamps it as
+`container.id`; `k8sattributes` finds the Pod by that container ID and stamps
+`datum.instance.{name,namespace}` from its annotations and `datum.project.name`
+from the Namespace label — no custom code, no sidecar. This is the same
+uuid-to-containerID join the metrics section below uses for its Pod-shaped
+recording rules.
 
 ## Metrics
 
@@ -79,8 +75,8 @@ annotations are intentionally absent from the runtime DaemonSet.
 
 ## Configuration (env in `collector.yaml`)
 
-- `LOGS_OTLP_ENDPOINT` — logs destination; defaults to the `edge-logs-system`
-  collector. Add TLS/auth via an overlay for cross-cluster paths.
+- `LOGS_OTLP_ENDPOINT` — logs destination; defaults to o11y-system's
+  `gateway-collector`. Add TLS/auth via an overlay for cross-cluster paths.
 - `LOCAL_METRICS_RW_ENDPOINT` — edge-local VictoriaMetrics remote-write
   destination. This is where edge `VMAlert` records the Pod-shaped
   `datum_compute_instance_*` metrics consumed by the compute Prometheus Adapter.
