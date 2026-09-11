@@ -12,4 +12,7 @@ spec:
   sourceRef:
     kind: OCIRepository
     name: compute
-  path: overlays/single-cluster
+  # The e2e creates Instances directly, and compute admits only Workloads, so
+  # only the API is needed here. The production overlay also pulls in
+  # dependencies a single-node kind cluster cannot provide.
+  path: base/crd

@@ -17,12 +17,9 @@ func GetLocation(
 	locationRef networkingv1alpha.LocationReference,
 	locationClassName string,
 ) (*networkingv1alpha.Location, bool, error) {
+	// Location is cluster scoped, so the reference carries only a name.
 	var location networkingv1alpha.Location
-	locationObjectKey := client.ObjectKey{
-		Namespace: locationRef.Namespace,
-		Name:      locationRef.Name,
-	}
-	if err := c.Get(ctx, locationObjectKey, &location); err != nil {
+	if err := c.Get(ctx, client.ObjectKey{Name: locationRef.Name}, &location); err != nil {
 		return nil, false, fmt.Errorf("failed fetching location: %w", err)
 	}
 

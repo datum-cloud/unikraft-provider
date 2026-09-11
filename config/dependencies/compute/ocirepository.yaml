@@ -7,4 +7,8 @@ spec:
   interval: 1h
   url: oci://ghcr.io/datum-cloud/compute-kustomize
   ref:
-    tag: v0.6.0
+    # Matches the compute revision this provider builds against, so the Instance
+    # CRD serving the e2e declares every field the provider selects on. An API
+    # server rejects a field selector naming a field its CRD does not declare
+    # selectable.
+    tag: v0.0.0-main-20260911-191109
