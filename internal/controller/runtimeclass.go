@@ -12,13 +12,6 @@ import (
 )
 
 const (
-	// RuntimeClassField is the selectable Instance field the API server matches
-	// a runtime class selector against.
-	//
-	// The path is spelled out here because the compute module this provider
-	// pins predates runtime classes. See datum-cloud/unikraft-provider#168.
-	RuntimeClassField = "spec.runtime.class"
-
 	// DefaultRuntimeClassName is the class this provider serves unless
 	// configuration names another one.
 	DefaultRuntimeClassName = "unikernel"
@@ -55,14 +48,14 @@ func ServedRuntimeClass(cfg *config.UnikraftProvider) string {
 // every Instance in the cell, and that memory cost has crash-looped a provider
 // in this system.
 func InstanceCacheSelector(servedClass string) fields.Selector {
-	var terms []fields.Selector
+	excluded := make([]string, 0, len(otherRuntimeClasses))
 	for _, class := range otherRuntimeClasses {
 		if class == servedClass {
 			continue
 		}
-		terms = append(terms, fields.OneTermNotEqualSelector(RuntimeClassField, class))
+		excluded = append(excluded, class)
 	}
-	return fields.AndSelectors(terms...)
+	return computev1alpha.InstanceExcludingRuntimeClassFieldSelector(excluded...)
 }
 
 // CacheOptions scopes the manager's cache to the Instances this provider

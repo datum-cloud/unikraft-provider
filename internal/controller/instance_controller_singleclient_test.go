@@ -462,7 +462,7 @@ func TestPodSyncsAllowedComputeLabels(t *testing.T) {
 				computev1alpha.WorkloadDeploymentNameLabel: "test-default-dfw",
 				computev1alpha.WorkloadNameLabel:           "test",
 				computev1alpha.PlacementNameLabel:          "default",
-				computev1alpha.CityCodeLabel:               "DFW",
+				computev1alpha.LocationLabel:               "dfw",
 				computev1alpha.InstanceIndexLabel:          "0",
 				"tenant.example.com/not-propagated":        "true",
 				"compute.datumapis.com/not-in-allowlist":   "true",
@@ -473,7 +473,7 @@ func TestPodSyncsAllowedComputeLabels(t *testing.T) {
 				computev1alpha.WorkloadDeploymentNameLabel: "test-default-dfw",
 				computev1alpha.WorkloadNameLabel:           "test",
 				computev1alpha.PlacementNameLabel:          "default",
-				computev1alpha.CityCodeLabel:               "DFW",
+				computev1alpha.LocationLabel:               "dfw",
 				computev1alpha.InstanceIndexLabel:          "0",
 			},
 			wantAbsent: []string{

@@ -1,6 +1,6 @@
 #!/bin/bash -e
 # Bring up the full control-plane e2e environment in a single KVM-capable
-# kind cluster: cert-manager, Flux, the compute control plane, Kraftlet,
+# kind cluster: cert-manager, Flux, the compute API, Kraftlet,
 # the unikraft-provider, and the containerized Unikraft runtime — all in
 # one cluster, so a compute Instance is driven end to end to a running
 # microVM on the local runtime.
@@ -95,7 +95,7 @@ kubectl label node "$NODE" compute.datumapis.com/runtime=unikraft --overwrite >/
 kubectl apply -k "$repo/config/overlays/ukp-runtime-e2e" >/dev/null
 kubectl -n unikraft-system rollout status ds/ukp-runtime --timeout=180s
 
-log "compute control plane (Flux OCIRepository is v1 in current Flux)"
+log "compute API (Flux OCIRepository is v1 in current Flux)"
 tmp=$(mktemp -d); cp -r "$repo/config/dependencies/compute" "$tmp/"
 sed -i 's#source.toolkit.fluxcd.io/v1beta2#source.toolkit.fluxcd.io/v1#' "$tmp/compute/ocirepository.yaml"
 kubectl apply -k "$tmp/compute" >/dev/null

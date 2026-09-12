@@ -36,7 +36,7 @@ func TestInstanceCacheSelector(t *testing.T) {
 		{name: "another provider's class", class: "general-purpose", want: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := selector.Matches(fields.Set{RuntimeClassField: tc.class})
+			got := selector.Matches(fields.Set{computev1alpha.InstanceRuntimeClassField: tc.class})
 			if got != tc.want {
 				t.Errorf("selector.Matches(class=%q) = %v, want %v", tc.class, got, tc.want)
 			}
@@ -51,7 +51,7 @@ func TestInstanceCacheSelectorExcludesEveryOtherClass(t *testing.T) {
 	selector := InstanceCacheSelector(DefaultRuntimeClassName)
 
 	for _, class := range otherRuntimeClasses {
-		if selector.Matches(fields.Set{RuntimeClassField: class}) {
+		if selector.Matches(fields.Set{computev1alpha.InstanceRuntimeClassField: class}) {
 			t.Errorf("selector matches class %q, which this provider does not serve", class)
 		}
 	}
@@ -62,7 +62,7 @@ func TestInstanceCacheSelectorExcludesEveryOtherClass(t *testing.T) {
 func TestInstanceCacheSelectorForOtherServedClass(t *testing.T) {
 	selector := InstanceCacheSelector("general-purpose")
 
-	if !selector.Matches(fields.Set{RuntimeClassField: "general-purpose"}) {
+	if !selector.Matches(fields.Set{computev1alpha.InstanceRuntimeClassField: "general-purpose"}) {
 		t.Error("selector excludes the class the provider was configured to serve")
 	}
 }
