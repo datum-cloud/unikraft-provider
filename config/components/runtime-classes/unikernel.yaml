@@ -18,14 +18,12 @@ spec:
     boundary: unikernel
     description: >-
       Each instance runs as its own unikernel in its own virtual machine. There
-      is no kernel shared with another tenant, and the instance carries only the
-      operating system code its own application uses.
+      is no kernel shared with another tenant.
   capabilities:
     features:
       - sandboxRuntime
       - configMapVolumes
       - secretVolumes
-      - envFrom
       - imagePullSecrets
     compatibility: >-
       Runs images whose application binary is position-independent. The root
@@ -34,6 +32,11 @@ spec:
       registry are pulled with the credentials the instance names in its image
       pull secrets.
   lifecycle:
+    typicalStartupTime: 7s
     description: >-
-      Instances start in a small fraction of a second. Suspend, resume, and
-      snapshot are not offered yet.
+      A first start pulls the image and takes a few seconds. Once the image is
+      present on the host, an instance boots in tens of milliseconds. The
+      platform parks an idle instance into a snapshot and restores it on the
+      next request, so an idle instance keeps its state without holding the
+      host's memory. Suspend and resume run on the platform's own schedule and
+      cannot be invoked directly.
