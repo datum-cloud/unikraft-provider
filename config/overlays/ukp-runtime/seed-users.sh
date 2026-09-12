@@ -9,13 +9,18 @@
 # Talos, so nproc and /proc/meminfo report the host, not a cgroup view).
 # Knobs come from /etc/ukp.conf (UKP_QUOTA_*).
 #
-# Failure semantics:
-#   - Missing/invalid Secret-provided users.json: lenient by design (the
-#     secret volume is optional) — keep the existing/vendor-seeded file
-#     rather than writing a bad one (a broken users.json crash-loops ukpd).
+# Fail closed, like activate-node: a node that cannot seed its credential must
+# not serve guests. ukpd authenticates image and platform-kernel resolution as
+# this user, so a user with no auth_token leaves every instance unable to
+# resolve any image, long after this container has exited.
+#
+# Failure semantics — all FAIL the initContainer:
+#   - No Secret-provided users.json, or one that does not parse.
+#   - A user record with no auth_token. A structurally valid file is not
+#     enough; the token is the whole point of seeding.
 #   - Quota computation failure (unreadable host facts, non-numeric knobs,
-#     or a reserve that meets/exceeds the host): FAIL the initContainer.
-#     We never assume what a node's capacity should be.
+#     or a reserve that meets/exceeds the host). We never assume what a
+#     node's capacity should be.
 set -eu
 
 src=/etc/ukp-auth/users.json
@@ -24,9 +29,22 @@ tmp=/tmp/users.json.seed
 
 mkdir -p /var/lib/ukp/data
 
-if [ ! -f "$src" ] || ! python3 -m json.tool "$src" >/dev/null 2>&1; then
-  echo "seed-users: no valid generated users.json at $src; leaving existing $dst"
-  exit 0
+# An absent file means the Secret is missing, or present without the key the
+# volume selects. Both are configuration errors, not a reason to start ukpd on
+# whatever happens to be on the data volume.
+if [ ! -f "$src" ]; then
+  echo "seed-users: FATAL: no $src" >&2
+  echo "seed-users: the ukp-auth volume selects key 'users.json' from Secret" >&2
+  echo "seed-users: kraftlet-ukc-token; check that the Secret exists and has" >&2
+  echo "seed-users: that key, and that its ExternalSecret is synced." >&2
+  exit 1
+fi
+
+if ! python3 -m json.tool "$src" >/dev/null 2>&1; then
+  echo "seed-users: FATAL: $src does not parse as JSON" >&2
+  echo "seed-users: check the users.json template on ExternalSecret" >&2
+  echo "seed-users: kraftlet-ukc-token." >&2
+  exit 1
 fi
 
 # Load the UKP_QUOTA_* knobs. ukp.conf is bash-syntax (arrays), so /bin/sh
@@ -104,6 +122,24 @@ def compute():
     }
     return vmm, vmdb
 
+with open(src) as f:
+    users = json.load(f)
+
+# ukpd authenticates every image and platform-kernel resolution as the user,
+# so a record without a token yields a runtime that starts and then fails to
+# resolve anything. Catch it here rather than hours later at instance start.
+if not users:
+    print("seed-users: ERROR: %s contains no users" % src, file=sys.stderr)
+    sys.exit(1)
+for user in users:
+    if not str(user.get("auth_token") or "").strip():
+        print("seed-users: ERROR: user %s (%s) in %s has no auth_token; check "
+              "the users.json template on ExternalSecret kraftlet-ukc-token "
+              "and that its generated password resolved"
+              % (user.get("uuid", "?"), user.get("name", "?"), src),
+              file=sys.stderr)
+        sys.exit(1)
+
 try:
     vmm, vmdb = compute()
 except Exception as exc:
@@ -114,8 +150,6 @@ except Exception as exc:
 print("seed-users: computed node quotas: vmm=%s vmdb.max_instances=%d"
       % (vmm, vmdb["max_instances"]))
 
-with open(src) as f:
-    users = json.load(f)
 for user in users:
     user["vmm"] = vmm
     user["vmdb"] = vmdb
