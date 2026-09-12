@@ -606,8 +606,9 @@ func (r *InstanceReconciler) syncInstancePowerState(
 
 	// Take the base snapshot BEFORE any status mutation so the patch only
 	// includes fields this controller owns (Programmed, Available,
-	// ObservedTemplateHash, NetworkInterfaces). QuotaGranted/Ready are owned
-	// by the compute quota controller and must not be overwritten.
+	// ObservedTemplateHash, and the network interface status in a cell that
+	// allocates the Instance no tenant network address). QuotaGranted/Ready are
+	// owned by the compute quota controller and must not be overwritten.
 	base := instance.DeepCopy()
 
 	availableCondition := metav1.Condition{
@@ -718,17 +719,19 @@ func (r *InstanceReconciler) syncInstancePowerState(
 	statusChanged = meta.SetStatusCondition(&instance.Status.Conditions, availableCondition) || statusChanged
 	statusChanged = meta.SetStatusCondition(&instance.Status.Conditions, programmedCondition) || statusChanged
 
-	var networkIP string
-	if len(instancePod.Status.PodIPs) > 0 {
-		networkIP = instancePod.Status.PodIPs[0].IP
-	}
+	if r.providerOwnsInterfaceStatus(instance) {
+		var networkIP string
+		if len(instancePod.Status.PodIPs) > 0 {
+			networkIP = instancePod.Status.PodIPs[0].IP
+		}
 
-	serviceFqdns := extractServiceFqdnsFromPod(instance, instancePod)
+		serviceFqdns := extractServiceFqdnsFromPod(instance, instancePod)
 
-	desiredInterfaces := buildNetworkInterfaceStatus(networkIP, serviceFqdns)
-	if !networkInterfacesEqual(instance.Status.NetworkInterfaces, desiredInterfaces) {
-		instance.Status.NetworkInterfaces = desiredInterfaces
-		statusChanged = true
+		desiredInterfaces := buildNetworkInterfaceStatus(networkIP, serviceFqdns)
+		if !networkInterfacesEqual(instance.Status.NetworkInterfaces, desiredInterfaces) {
+			instance.Status.NetworkInterfaces = desiredInterfaces
+			statusChanged = true
+		}
 	}
 
 	if statusChanged {
@@ -824,6 +827,9 @@ func extractServiceFqdnsFromPod(instance *computev1alpha.Instance, pod *core.Pod
 	return out
 }
 
+// buildNetworkInterfaceStatus reports the addresses an Instance is reachable at
+// in a cell with no tenant networking, where the Pod's addresses are the only
+// addresses the Instance has.
 func buildNetworkInterfaceStatus(networkIP string, serviceFqdns []string) []computev1alpha.InstanceNetworkInterfaceStatus {
 	if networkIP == "" && len(serviceFqdns) == 0 {
 		return nil
