@@ -1,0 +1,22 @@
+apiVersion: compute.datumapis.com/v1alpha
+kind: Instance
+metadata:
+  name: hello-world
+spec:
+  runtime:
+    resources:
+      instanceType: datumcloud/d1-standard-2
+    sandbox:
+      containers:
+        - name: app
+          image: ghcr.io/datum-cloud/hello-world:latest
+          ports:
+            - name: http
+              port: 8080
+              protocol: TCP
+          resources:
+            limits:
+              memory: 128Mi
+  networkInterfaces:
+    - network:
+        name: default

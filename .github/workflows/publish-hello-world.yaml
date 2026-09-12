@@ -1,0 +1,42 @@
+name: publish-hello-world
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - examples/hello-world/**
+  workflow_dispatch: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install kraft
+        run: curl --proto '=https' --tlsv1.2 -sSf https://get.kraftkit.sh | sh
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push hello-world unikernel
+        working-directory: examples/hello-world
+        run: |
+          kraft pkg \
+            --as oci \
+            --name ghcr.io/datum-cloud/hello-world:latest \
+            --push \
+            --plat qemu \
+            --arch x86_64 \
+            .
