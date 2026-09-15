@@ -8,6 +8,11 @@ metadata:
   name: unikernel
 spec:
   controllerName: compute.datumapis.com/unikraft-provider
+  # A unikernel guest is a microVM, so the interface is handed to the
+  # hypervisor as a device the node publishes rather than moved into a network
+  # namespace. Without this the class takes the Netns default and the guest is
+  # given a veth it cannot consume.
+  networkAttachment: Hypervisor
   displayName: Unikernel fast path
   description: >-
     Starts in a fraction of the time a container platform takes and carries very
