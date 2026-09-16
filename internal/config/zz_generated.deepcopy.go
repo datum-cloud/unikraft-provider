@@ -21,7 +21,7 @@ limitations under the License.
 package config
 
 import (
-	v1core "k8s.io/api/core/v1"
+	"k8s.io/api/core/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -37,10 +37,15 @@ func (in *DownstreamResourceManagementConfig) DeepCopyInto(out *DownstreamResour
 	}
 	if in.Tolerations != nil {
 		in, out := &in.Tolerations, &out.Tolerations
-		*out = make([]v1core.Toleration, len(*in))
+		*out = make([]v1.Toleration, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
+	}
+	if in.ScaleToZeroCooldownMS != nil {
+		in, out := &in.ScaleToZeroCooldownMS, &out.ScaleToZeroCooldownMS
+		*out = new(int64)
+		**out = **in
 	}
 }
 
