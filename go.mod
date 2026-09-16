@@ -3,12 +3,8 @@ module go.datum.net/unikraft-provider
 go 1.26.4
 
 require (
-	// Pinned to the compute revision that declares the Instance runtime class
-	// field selectable. An earlier revision has no runtime class field, so the
-	// provider erases the class from every Instance it writes. Repin to a tag
-	// once one carries the field.
-	go.datum.net/compute v0.8.0-dev.12.0.20260911191109-799dd93665f8
-	go.datum.net/network-services-operator v0.26.5-0.20260909170421-bcd1965a821c
+	go.datum.net/compute v0.8.0
+	go.datum.net/network-services-operator v0.27.0
 	golang.org/x/sync v0.22.0 // indirect
 	k8s.io/api v0.36.2
 	k8s.io/apimachinery v0.36.2
@@ -65,7 +61,7 @@ require (
 	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	go.miloapis.com/locations v0.0.0-20260825185141-507ac2cbd48c // indirect
+	go.miloapis.com/locations v0.0.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0 // indirect
 	go.opentelemetry.io/otel v1.44.0 // indirect
