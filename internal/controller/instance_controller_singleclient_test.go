@@ -734,6 +734,224 @@ func TestReconcileSandboxContainers_CNIEnabledByConfig(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Scale-to-zero stateful annotation is platform-controlled, not tenant-controlled
+// ---------------------------------------------------------------------------
+
+// TestReconcileSandboxContainers_ScaleToZeroStatefulOffWithoutConfig verifies
+// that without EnableScaleToZeroStateful explicitly configured true, the Pod
+// never carries the scale_to_zero.stateful annotation, even if the tenant
+// tried to set it on the Instance themselves.
+func TestReconcileSandboxContainers_ScaleToZeroStatefulOffWithoutConfig(t *testing.T) {
+	ctx := context.Background()
+	s := testScheme(t)
+
+	instance := instanceWithUID("scale-to-zero-default-uid")
+	instance.Annotations = map[string]string{ukcScaleToZeroStatefulAnnotation: "true"}
+
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(instance).
+		WithStatusSubresource(&computev1alpha.Instance{}).
+		Build()
+
+	r := &InstanceReconciler{Client: cl, Scheme: s}
+
+	if _, err := r.reconcileSandboxContainers(ctx, instance); err != nil {
+		t.Fatalf("reconcileSandboxContainers returned error: %v", err)
+	}
+
+	var pod core.Pod
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(instance), &pod); err != nil {
+		t.Fatalf("failed to get pod after reconcile: %v", err)
+	}
+	if v, ok := pod.Annotations[ukcScaleToZeroStatefulAnnotation]; ok {
+		t.Errorf("pod carries %s=%q with scale-to-zero-stateful disabled in config; tenant-set annotation must not pass through", ukcScaleToZeroStatefulAnnotation, v)
+	}
+}
+
+// TestReconcileSandboxContainers_ScaleToZeroStatefulEnabledByConfig verifies
+// that the provider sets the scale_to_zero.stateful annotation itself once
+// the platform turns on EnableScaleToZeroStateful, regardless of what the
+// tenant put on the Instance.
+func TestReconcileSandboxContainers_ScaleToZeroStatefulEnabledByConfig(t *testing.T) {
+	ctx := context.Background()
+	s := testScheme(t)
+
+	instance := instanceWithUID("scale-to-zero-enabled-uid")
+	// A tenant explicitly trying to opt out must not be able to override the
+	// platform's decision.
+	instance.Annotations = map[string]string{ukcScaleToZeroStatefulAnnotation: "false"}
+
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(instance).
+		WithStatusSubresource(&computev1alpha.Instance{}).
+		Build()
+
+	r := &InstanceReconciler{
+		Client: cl,
+		Scheme: s,
+		Config: &config.UnikraftProvider{
+			DownstreamResourceManagement: config.DownstreamResourceManagementConfig{EnableScaleToZeroStateful: true},
+		},
+	}
+
+	if _, err := r.reconcileSandboxContainers(ctx, instance); err != nil {
+		t.Fatalf("reconcileSandboxContainers returned error: %v", err)
+	}
+
+	var pod core.Pod
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(instance), &pod); err != nil {
+		t.Fatalf("failed to get pod after reconcile: %v", err)
+	}
+	if got := pod.Annotations[ukcScaleToZeroStatefulAnnotation]; got != "true" {
+		t.Errorf("pod annotation %s = %q, want %q (platform-controlled, tenant value must be ignored)", ukcScaleToZeroStatefulAnnotation, got, "true")
+	}
+}
+
+// TestReconcileSandboxContainers_ScaleToZeroPolicyUnsetLeavesAnnotationAbsent
+// verifies that without ScaleToZeroPolicy configured, the Pod never carries
+// the scale_to_zero.policy annotation, even if the tenant tried to set it on
+// the Instance themselves — so kraftlet's own default ("on") governs.
+func TestReconcileSandboxContainers_ScaleToZeroPolicyUnsetLeavesAnnotationAbsent(t *testing.T) {
+	ctx := context.Background()
+	s := testScheme(t)
+
+	instance := instanceWithUID("scale-to-zero-policy-unset-uid")
+	instance.Annotations = map[string]string{ukcScaleToZeroPolicyAnnotation: "off"}
+
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(instance).
+		WithStatusSubresource(&computev1alpha.Instance{}).
+		Build()
+
+	r := &InstanceReconciler{Client: cl, Scheme: s}
+
+	if _, err := r.reconcileSandboxContainers(ctx, instance); err != nil {
+		t.Fatalf("reconcileSandboxContainers returned error: %v", err)
+	}
+
+	var pod core.Pod
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(instance), &pod); err != nil {
+		t.Fatalf("failed to get pod after reconcile: %v", err)
+	}
+	if v, ok := pod.Annotations[ukcScaleToZeroPolicyAnnotation]; ok {
+		t.Errorf("pod carries %s=%q with policy unset in config; tenant-set annotation must not pass through", ukcScaleToZeroPolicyAnnotation, v)
+	}
+}
+
+// TestReconcileSandboxContainers_ScaleToZeroPolicySetByConfig verifies that
+// the provider sets the scale_to_zero.policy annotation from
+// ScaleToZeroPolicy, regardless of what the tenant put on the Instance.
+func TestReconcileSandboxContainers_ScaleToZeroPolicySetByConfig(t *testing.T) {
+	ctx := context.Background()
+	s := testScheme(t)
+
+	instance := instanceWithUID("scale-to-zero-policy-set-uid")
+	// A tenant explicitly trying to override must not be able to.
+	instance.Annotations = map[string]string{ukcScaleToZeroPolicyAnnotation: "off"}
+
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(instance).
+		WithStatusSubresource(&computev1alpha.Instance{}).
+		Build()
+
+	r := &InstanceReconciler{
+		Client: cl,
+		Scheme: s,
+		Config: &config.UnikraftProvider{
+			DownstreamResourceManagement: config.DownstreamResourceManagementConfig{ScaleToZeroPolicy: "idle"},
+		},
+	}
+
+	if _, err := r.reconcileSandboxContainers(ctx, instance); err != nil {
+		t.Fatalf("reconcileSandboxContainers returned error: %v", err)
+	}
+
+	var pod core.Pod
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(instance), &pod); err != nil {
+		t.Fatalf("failed to get pod after reconcile: %v", err)
+	}
+	if got := pod.Annotations[ukcScaleToZeroPolicyAnnotation]; got != "idle" {
+		t.Errorf("pod annotation %s = %q, want %q (platform-controlled, tenant value must be ignored)", ukcScaleToZeroPolicyAnnotation, got, "idle")
+	}
+}
+
+// TestReconcileSandboxContainers_ScaleToZeroCooldownUnsetLeavesAnnotationAbsent
+// verifies that without ScaleToZeroCooldownMS configured, the Pod never
+// carries the scale_to_zero.cooldown_time_ms annotation, even if the tenant
+// tried to set it on the Instance themselves — so kraftlet's own default
+// (1000ms) governs.
+func TestReconcileSandboxContainers_ScaleToZeroCooldownUnsetLeavesAnnotationAbsent(t *testing.T) {
+	ctx := context.Background()
+	s := testScheme(t)
+
+	instance := instanceWithUID("scale-to-zero-cooldown-unset-uid")
+	instance.Annotations = map[string]string{ukcScaleToZeroCooldownMsAnnotation: "500"}
+
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(instance).
+		WithStatusSubresource(&computev1alpha.Instance{}).
+		Build()
+
+	r := &InstanceReconciler{Client: cl, Scheme: s}
+
+	if _, err := r.reconcileSandboxContainers(ctx, instance); err != nil {
+		t.Fatalf("reconcileSandboxContainers returned error: %v", err)
+	}
+
+	var pod core.Pod
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(instance), &pod); err != nil {
+		t.Fatalf("failed to get pod after reconcile: %v", err)
+	}
+	if v, ok := pod.Annotations[ukcScaleToZeroCooldownMsAnnotation]; ok {
+		t.Errorf("pod carries %s=%q with cooldown unset in config; tenant-set annotation must not pass through", ukcScaleToZeroCooldownMsAnnotation, v)
+	}
+}
+
+// TestReconcileSandboxContainers_ScaleToZeroCooldownSetByConfig verifies that
+// the provider sets the scale_to_zero.cooldown_time_ms annotation from
+// ScaleToZeroCooldownMS, regardless of what the tenant put on the Instance.
+func TestReconcileSandboxContainers_ScaleToZeroCooldownSetByConfig(t *testing.T) {
+	ctx := context.Background()
+	s := testScheme(t)
+
+	instance := instanceWithUID("scale-to-zero-cooldown-set-uid")
+	// A tenant explicitly trying to override must not be able to.
+	instance.Annotations = map[string]string{ukcScaleToZeroCooldownMsAnnotation: "500"}
+
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(instance).
+		WithStatusSubresource(&computev1alpha.Instance{}).
+		Build()
+
+	cooldownMs := int64(5000)
+	r := &InstanceReconciler{
+		Client: cl,
+		Scheme: s,
+		Config: &config.UnikraftProvider{
+			DownstreamResourceManagement: config.DownstreamResourceManagementConfig{ScaleToZeroCooldownMS: &cooldownMs},
+		},
+	}
+
+	if _, err := r.reconcileSandboxContainers(ctx, instance); err != nil {
+		t.Fatalf("reconcileSandboxContainers returned error: %v", err)
+	}
+
+	var pod core.Pod
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(instance), &pod); err != nil {
+		t.Fatalf("failed to get pod after reconcile: %v", err)
+	}
+	if got := pod.Annotations[ukcScaleToZeroCooldownMsAnnotation]; got != "5000" {
+		t.Errorf("pod annotation %s = %q, want %q (platform-controlled, tenant value must be ignored)", ukcScaleToZeroCooldownMsAnnotation, got, "5000")
+	}
+}
+
 // TestReconcile_DeletedInstance_Noop verifies that reconciliation of a deleting
 // instance that does NOT carry the provider finalizer (e.g. it never had a
 // backing Pod — non-sandbox or still scheduling-gated — or was already

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,6 +42,23 @@ const (
 	// Instance->Pod annotation passthrough below and set by the controller
 	// instead.
 	ukcCniEnabledAnnotation = "cloud.unikraft.v1.instances/cni-enabled"
+
+	// ukcScaleToZeroStatefulAnnotation opts an Instance's Pod into kraftlet's
+	// stateful scale-to-zero handling. Like CNI, it is a platform decision
+	// (config.EnableScaleToZeroStateful), not a tenant-facing knob, so it is
+	// excluded from the generic Instance->Pod annotation passthrough below and
+	// set by the controller instead.
+	ukcScaleToZeroStatefulAnnotation = "cloud.unikraft.v1.instances/scale_to_zero.stateful"
+
+	// ukcScaleToZeroPolicyAnnotation is kraftlet's scale-to-zero master switch
+	// ("on"/"off"/"idle"). Like the other scale-to-zero settings, it is a
+	// platform decision (config.ScaleToZeroPolicy), not a tenant-facing knob.
+	ukcScaleToZeroPolicyAnnotation = "cloud.unikraft.v1.instances/scale_to_zero.policy"
+
+	// ukcScaleToZeroCooldownMsAnnotation is kraftlet's scale-to-zero idle
+	// cooldown, in milliseconds (config.ScaleToZeroCooldownMS). Also a
+	// platform decision, not a tenant-facing knob.
+	ukcScaleToZeroCooldownMsAnnotation = "cloud.unikraft.v1.instances/scale_to_zero.cooldown_time_ms"
 
 	// instanceFinalizer gates Instance deletion on teardown of the backing Pod
 	// (and Service). The provider holds this finalizer until it has deleted the
@@ -270,6 +288,28 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 			instancePod.Annotations[ukcCniEnabledAnnotation] = "true"
 		} else {
 			delete(instancePod.Annotations, ukcCniEnabledAnnotation)
+		}
+
+		// Scale-to-zero stateful handling is likewise a platform decision, set
+		// from provider config rather than the tenant-facing Instance.
+		if r.Config != nil && r.Config.DownstreamResourceManagement.EnableScaleToZeroStateful {
+			instancePod.Annotations[ukcScaleToZeroStatefulAnnotation] = "true"
+		} else {
+			delete(instancePod.Annotations, ukcScaleToZeroStatefulAnnotation)
+		}
+
+		// Scale-to-zero policy and cooldown are likewise platform decisions.
+		// Unset config leaves the annotation absent, so kraftlet's own
+		// defaults ("on" policy, 1000ms cooldown) govern.
+		if r.Config != nil && r.Config.DownstreamResourceManagement.ScaleToZeroPolicy != "" {
+			instancePod.Annotations[ukcScaleToZeroPolicyAnnotation] = r.Config.DownstreamResourceManagement.ScaleToZeroPolicy
+		} else {
+			delete(instancePod.Annotations, ukcScaleToZeroPolicyAnnotation)
+		}
+		if r.Config != nil && r.Config.DownstreamResourceManagement.ScaleToZeroCooldownMS != nil {
+			instancePod.Annotations[ukcScaleToZeroCooldownMsAnnotation] = strconv.FormatInt(*r.Config.DownstreamResourceManagement.ScaleToZeroCooldownMS, 10)
+		} else {
+			delete(instancePod.Annotations, ukcScaleToZeroCooldownMsAnnotation)
 		}
 
 		if instancePod.CreationTimestamp.IsZero() {
@@ -761,7 +801,10 @@ func copyInstancePodLabels(instanceLabels, podLabels map[string]string) {
 
 func copyUnikraftAnnotations(src, dst map[string]string) {
 	for k, v := range src {
-		if k == ukcCniEnabledAnnotation {
+		if k == ukcCniEnabledAnnotation ||
+			k == ukcScaleToZeroStatefulAnnotation ||
+			k == ukcScaleToZeroPolicyAnnotation ||
+			k == ukcScaleToZeroCooldownMsAnnotation {
 			// Platform-controlled; set by the caller from provider config, not
 			// copied from the tenant-facing Instance.
 			continue

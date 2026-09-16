@@ -163,4 +163,32 @@ type DownstreamResourceManagementConfig struct {
 	// +optional
 	// +default=false
 	EnableVPCNetworking bool `json:"enableVPCNetworking,omitempty"`
+
+	// EnableScaleToZeroStateful marks every Instance Pod for kraftlet's
+	// stateful scale-to-zero handling. Like EnableCNI this is a platform-wide
+	// setting, not something a tenant can opt in or out of per Instance.
+	// Defaults to disabled; set to true only in cells whose kraftlet supports
+	// stateful scale-to-zero.
+	//
+	// +optional
+	// +default=false
+	EnableScaleToZeroStateful bool `json:"enableScaleToZeroStateful,omitempty"`
+
+	// ScaleToZeroPolicy sets kraftlet's scale-to-zero master switch: "on"
+	// suspends an idle Instance, "idle" also suspends one with established but
+	// inactive connections, and "off" disables suspension entirely. Unset
+	// leaves the annotation unset, so kraftlet's own default ("on") governs.
+	//
+	// +optional
+	// +kubebuilder:validation:Enum=on;off;idle
+	ScaleToZeroPolicy string `json:"scaleToZeroPolicy,omitempty"`
+
+	// ScaleToZeroCooldownMS sets kraftlet's scale-to-zero idle cooldown, in
+	// milliseconds: how long an Instance sits idle before kraftlet suspends
+	// it. Independent of EnableScaleToZeroStateful, which only controls
+	// whether a suspended Instance's state is snapshotted, not whether or when
+	// it suspends. Unset leaves kraftlet's own default (1000ms) in place.
+	//
+	// +optional
+	ScaleToZeroCooldownMS *int64 `json:"scaleToZeroCooldownMS,omitempty"`
 }
