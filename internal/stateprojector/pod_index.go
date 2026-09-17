@@ -220,7 +220,3 @@ func max64(a, b int64) int64 {
 	}
 	return b
 }
-
-func coresFromMilli(milli int64) int64 {
-	return milli / 1000
-}

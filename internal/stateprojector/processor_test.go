@@ -73,8 +73,8 @@ func TestWindowOnOffSingleRecord(t *testing.T) {
 	if r.Project != "my-project" || r.Instance != "web-1" {
 		t.Errorf("attribution wrong: %+v", r)
 	}
-	if r.VCPU != 1 { // 1000 millicores
-		t.Errorf("vcpu = %d, want 1", r.VCPU)
+	if r.VcpuMilli != 1000 { // 1000 millicores
+		t.Errorf("vcpu_milli = %d, want 1000", r.VcpuMilli)
 	}
 	if r.MemoryBytes != 2*1024*1024*1024 {
 		t.Errorf("memory_bytes = %d", r.MemoryBytes)

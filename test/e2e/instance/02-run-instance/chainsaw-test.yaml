@@ -178,14 +178,14 @@ spec:
                     if r.get('instance') != instance or r.get('project') != project:
                         continue
                     dur = float(r.get('duration_s') or 0)
-                    vcpu_seconds = float(r.get('vcpu') or 0) * dur
-                    memory_gib_seconds = (float(r.get('memory_bytes') or 0) / 1073741824.0) * dur
+                    vcpu_milli_seconds = float(r.get('vcpu_milli') or 0) * dur
+                    memory_byte_seconds = float(r.get('memory_bytes') or 0) * dur
                     # data.value is INT64 on the wire, so the VRL bills in
                     # milli-units (round then truncate to int) instead of the
                     # fractional value directly.
                     expected[r.get('id')] = {
-                        'milli_vcpu_seconds': round(vcpu_seconds * 1000),
-                        'milli_gib_seconds': round(memory_gib_seconds * 1000),
+                        'milli_vcpu_seconds': round(vcpu_milli_seconds),
+                        'memory_byte_seconds': round(memory_byte_seconds),
                     }
                 if not expected:
                     raise SystemExit(1)
@@ -218,7 +218,7 @@ spec:
                     h = hashlib.md5((window_id + suffix).encode()).hexdigest()
                     return '0' + h[1:26].upper()
 
-                VCU_TYPE = 'compute.datumapis.com/instance/cpu-seconds'
+                VCU_TYPE = 'compute.datumapis.com/instance/milli-cpu-seconds'
                 MEM_TYPE = 'compute.datumapis.com/instance/memory-seconds'
                 def close(a, b):
                     return a is not None and abs(float(a) - b) <= max(1e-3, 1e-6 * abs(b))
@@ -239,12 +239,12 @@ spec:
                     md = mem.get('data') or {}
                     if not close(vd.get('value'), want['milli_vcpu_seconds']):
                         continue
-                    if not close(md.get('value'), want['milli_gib_seconds']):
+                    if not close(md.get('value'), want['memory_byte_seconds']):
                         continue
                     # No dimensions on these events (see the VRL transform).
                     if vd.get('dimensions') or md.get('dimensions'):
                         continue
-                    print('SUCCESS: usage CloudEvents id=%s milli_vcpu_seconds=%s milli_gib_seconds=%s' % (rid, vd['value'], md['value']))
+                    print('SUCCESS: usage CloudEvents id=%s milli_vcpu_seconds=%s memory_byte_seconds=%s' % (rid, vd['value'], md['value']))
                     raise SystemExit(0)
                 # Not found yet — let the shell loop retry.
                 raise SystemExit(1)
