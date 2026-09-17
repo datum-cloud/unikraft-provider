@@ -22,7 +22,7 @@ type record struct {
 	Project     string  `json:"project"`
 	Instance    string  `json:"instance"`
 	UUID        string  `json:"uuid"`
-	VCPU        int64   `json:"vcpu"`
+	VcpuMilli   int64   `json:"vcpu_milli"`
 	MemoryBytes int64   `json:"memory_bytes"`
 	Start       string  `json:"start"`
 	End         string  `json:"end"`

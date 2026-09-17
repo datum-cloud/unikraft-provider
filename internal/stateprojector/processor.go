@@ -221,8 +221,8 @@ func (p *processor) emitWindow(w *window, end time.Time, cause string) {
 	p.stats.recordsWritten.Add(1)
 	// The emitted record is the billing artifact, so log it in full: this
 	// is the line to compare against what Vector shipped.
-	log.Printf("record written cause=%s id=%s uuid=%s project=%s instance=%s vcpu=%d memory_bytes=%d start=%s end=%s duration_s=%.1f",
-		cause, rec.ID, rec.UUID, rec.Project, rec.Instance, rec.VCPU, rec.MemoryBytes, rec.Start, rec.End, rec.DurationS)
+	log.Printf("record written cause=%s id=%s uuid=%s project=%s instance=%s vcpu_milli=%d memory_bytes=%d start=%s end=%s duration_s=%.1f",
+		cause, rec.ID, rec.UUID, rec.Project, rec.Instance, rec.VcpuMilli, rec.MemoryBytes, rec.Start, rec.End, rec.DurationS)
 	p.out.rotateIfNeeded()
 }
 
@@ -279,7 +279,7 @@ func (p *processor) recordFor(w *window, end time.Time) record {
 			out.Project = rec.project
 		}
 		out.Instance = rec.instance
-		out.VCPU = coresFromMilli(rec.vcpuMilli)
+		out.VcpuMilli = rec.vcpuMilli
 		out.MemoryBytes = rec.memoryBytes
 	}
 	return out

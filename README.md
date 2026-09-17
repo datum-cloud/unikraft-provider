@@ -92,3 +92,29 @@ task test:setup    # kind up, install CRDs, build + load image, deploy provider
 task e2e           # run chainsaw tests
 task test:teardown # delete kind cluster
 ```
+
+
+# 1. Find the current ukp-runtime pod(s)
+kubectl -n unikraft-system get pods -l app=ukp-runtime -o wide
+
+# 2. state-projector's boot line — confirms it picked up -events-path correctly,
+# and its early "conn tailing path=..." line — confirms the tailer actually started
+kubectl -n unikraft-system logs ukp-runtime-7gmc9 -c state-projector --since=30m \
+  | grep -E 'boot node=|conn tailing|conn open_error|conn rotated'
+
+# 3. Does the events file actually exist on disk yet, and is it non-empty?
+# (ukpd may not create it until the first vm.state_change fires — with no
+# workloads running, an absent/empty file here is expected, not broken)
+kubectl -n unikraft-system exec ukp-runtime-7gmc9 -c ukpd -- \
+  sh -c 'ls -la /run/ukp/vm-state.events 2>&1; wc -l /run/ukp/vm-state.events 2>&1'
+
+# 4. ukpd's own boot logs — confirm it loaded log-sinks.json without error and
+# registered the new file sink (compare against how it used to log the old
+# socket sink: "Connected to socket '...' for log sink 'vm-state-sink'")
+kubectl -n unikraft-system logs ukp-runtime-7gmc9 -c ukpd --since=30m \
+  | grep -iE 'log.sink|log-sinks|vm-state|sink'
+
+# 5. state-projector's stats heartbeat — sanity-check indexing/attribution
+# machinery is alive even with events_received=0 expected right now
+kubectl -n unikraft-system logs ukp-runtime-7gmc9 -c state-projector --since=30m \
+  | grep -E 'podwatch synced|^.*stats '
