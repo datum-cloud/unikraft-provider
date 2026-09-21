@@ -60,6 +60,10 @@ const (
 	// platform decision, not a tenant-facing knob.
 	ukcScaleToZeroCooldownMsAnnotation = "cloud.unikraft.v1.instances/scale_to_zero.cooldown_time_ms"
 
+	// ukcExecEnabledAnnotation opts an Instance's Pod into kraftlet's exec
+	// plugin. Governed by config.ExecPolicy, not the generic passthrough.
+	ukcExecEnabledAnnotation = "cloud.unikraft.v1.instances/enable-exec"
+
 	// instanceFinalizer gates Instance deletion on teardown of the backing Pod
 	// (and Service). The provider holds this finalizer until it has deleted the
 	// Pod and observed it fully removed, so the Instance — and the upstream
@@ -310,6 +314,17 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 			instancePod.Annotations[ukcScaleToZeroCooldownMsAnnotation] = strconv.FormatInt(*r.Config.DownstreamResourceManagement.ScaleToZeroCooldownMS, 10)
 		} else {
 			delete(instancePod.Annotations, ukcScaleToZeroCooldownMsAnnotation)
+		}
+
+		// "always" forces the annotation on; "allowed" leaves the tenant's
+		// value (already copied above by copyUnikraftAnnotations); anything
+		// else strips it.
+		switch {
+		case r.Config != nil && r.Config.DownstreamResourceManagement.ExecPolicy == "always":
+			instancePod.Annotations[ukcExecEnabledAnnotation] = "true"
+		case r.Config != nil && r.Config.DownstreamResourceManagement.ExecPolicy == "allowed":
+		default:
+			delete(instancePod.Annotations, ukcExecEnabledAnnotation)
 		}
 
 		if instancePod.CreationTimestamp.IsZero() {
