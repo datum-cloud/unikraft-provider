@@ -191,4 +191,14 @@ type DownstreamResourceManagementConfig struct {
 	//
 	// +optional
 	ScaleToZeroCooldownMS *int64 `json:"scaleToZeroCooldownMS,omitempty"`
+
+	// ExecPolicy controls kraftlet's enable-exec annotation
+	// (cloud.unikraft.v1.instances/enable-exec): "disabled" strips it even if
+	// the tenant set it themselves, "allowed" lets the tenant's value
+	// through, and "always" forces it on for every Instance. Defaults to
+	// "disabled".
+	//
+	// +optional
+	// +kubebuilder:validation:Enum=disabled;allowed;always
+	ExecPolicy string `json:"execPolicy,omitempty"`
 }
