@@ -2,6 +2,10 @@
 
 This operator watches for Instance CRDs and creates corresponding Kubernetes Pods scheduled to a Kraftlet node.
 
+Namespace creation is opt-in through `config/components/namespace`; deployment
+bundles leave it to infra. The compute dependency installs CRDs only and uses
+the existing `flux-system` namespace.
+
 ## Kraftlet
 
 Unikraft Cloud integrates seamlessly with any Kubernetes cluster through a virtual kubelet known as Kraftlet. More information in [Unikraft docs](https://unikraft.com/docs/integrations/kubernetes).
