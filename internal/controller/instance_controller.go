@@ -366,16 +366,13 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 //   - Disk sources are skipped — kraftlet does not support them at this time.
 //   - Per-container VolumeAttachments with a non-nil MountPath → VolumeMounts.
 //   - Container env vars carry both Value and ValueFrom through faithfully.
+//   - Container EnvFrom sources → core.EnvFromSource, translated field by field
+//     because compute's ConfigMapEnvSource/SecretEnvSource carry a flat Name
+//     while the corev1 types embed it in a LocalObjectReference.
 //
 // Volume and env references (ConfigMap/Secret names) are resolved at mount time
 // by kraftlet using its own node/kubelet identity. The provider only references
 // them by name in the Pod spec; no data is read or mirrored by the provider.
-//
-// TODO(Phase 3b): EnvFrom mapping is deferred. compute's SandboxContainer does
-// not yet expose an EnvFrom field. When it is added (planned for v1 API), the
-// mapping here will require field-by-field translation from
-// computev1alpha.EnvFromSource to core.EnvFromSource — it is NOT a simple
-// ValueFrom-style passthrough because the two types are not identical.
 func (r *InstanceReconciler) buildPodSpecFromContainers(
 	ctx context.Context,
 	instance *computev1alpha.Instance,
@@ -438,6 +435,32 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 			})
 		}
 
+		// Map whole-ConfigMap/Secret env sources. Input order is preserved
+		// because later sources override earlier ones on key collision. An entry
+		// naming neither a ConfigMap nor a Secret is dropped: an empty
+		// EnvFromSource contributes nothing and only obscures the Pod spec.
+		envFrom := make([]core.EnvFromSource, 0, len(sc.EnvFrom))
+		for _, src := range sc.EnvFrom {
+			switch {
+			case src.ConfigMapRef != nil:
+				envFrom = append(envFrom, core.EnvFromSource{
+					Prefix: src.Prefix,
+					ConfigMapRef: &core.ConfigMapEnvSource{
+						LocalObjectReference: core.LocalObjectReference{Name: src.ConfigMapRef.Name},
+						Optional:             src.ConfigMapRef.Optional,
+					},
+				})
+			case src.SecretRef != nil:
+				envFrom = append(envFrom, core.EnvFromSource{
+					Prefix: src.Prefix,
+					SecretRef: &core.SecretEnvSource{
+						LocalObjectReference: core.LocalObjectReference{Name: src.SecretRef.Name},
+						Optional:             src.SecretRef.Optional,
+					},
+				})
+			}
+		}
+
 		// Map ports from container
 		ports := make([]core.ContainerPort, 0, len(sc.Ports))
 		for _, p := range sc.Ports {
@@ -483,6 +506,7 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 			Command:      sc.Command,
 			Args:         sc.Args,
 			Env:          envVars,
+			EnvFrom:      envFrom,
 			Ports:        ports,
 			Resources:    resources,
 			VolumeMounts: volumeMounts,
