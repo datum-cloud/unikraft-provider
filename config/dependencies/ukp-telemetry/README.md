@@ -7,7 +7,8 @@ onward. No custom collector build, no Vector — one agent, one config.
 | Signal | Source | Receiver | Destination |
 | --- | --- | --- | --- |
 | Guest app logs | `vm.log` per instance | `filelog` | OTLP → edge logs collector → ClickHouse |
-| Runtime + host metrics | ukpd `:45233` (`/metrics/{controller,host,agent}`) | `prometheus` | remote-write → edge + hub VictoriaMetrics |
+| Runtime metrics | ukpd `:45233/metrics/controller` | `prometheus` | remote-write → edge + hub VictoriaMetrics |
+| Host metrics | node-exporter | `prometheus` | remote-write → edge + hub VictoriaMetrics |
 | Instance resource metrics | ukpd `:45232` (`/v1/instances/metrics`) | `prometheus` | remote-write → edge + hub VictoriaMetrics |
 
 ## Logs — Datum-enriched
@@ -36,9 +37,9 @@ recording rules.
 
 ## Metrics
 
-The `prometheus` receiver scrapes ukpd's metrics API on `${HOST_IP}:45233` —
-controller counters + per-user gauges, the embedded node_exporter, and agent
-metrics — and remote-writes them to edge-local and hub VictoriaMetrics. It also
+The `prometheus` receiver scrapes ukpd's controller metrics API on
+`${HOST_IP}:45233/metrics/controller` and remote-writes them to edge-local and
+hub VictoriaMetrics. Host metrics come from the node-exporter deployment. It also
 scrapes ukpd's platform API on `127.0.0.1:45232` at `/v1/instances/metrics` for
 per-instance metrics such as `instance_cpu_time_s` and `instance_rss_bytes`. The
 platform API scrape uses a ukpd user token (`UKP_API_TOKEN`), separate from the

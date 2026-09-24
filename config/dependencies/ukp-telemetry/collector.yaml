@@ -128,22 +128,6 @@ spec:
                 credentials: ${env:UKP_METRICS_TOKEN}
               static_configs:
                 - targets: ['${env:HOST_IP}:45233']
-            - job_name: ukpd-host
-              scrape_interval: 30s
-              metrics_path: /metrics/host
-              authorization:
-                type: Bearer
-                credentials: ${env:UKP_METRICS_TOKEN}
-              static_configs:
-                - targets: ['${env:HOST_IP}:45233']
-            - job_name: ukpd-agent
-              scrape_interval: 30s
-              metrics_path: /metrics/agent
-              authorization:
-                type: Bearer
-                credentials: ${env:UKP_METRICS_TOKEN}
-              static_configs:
-                - targets: ['${env:HOST_IP}:45233']
     processors:
       # Enriches guest logs with the Datum identity of the owning compute
       # Instance, keyed on container.id (== the ukpd instance uuid Kraftlet
