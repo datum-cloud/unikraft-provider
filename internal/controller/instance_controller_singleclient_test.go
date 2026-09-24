@@ -735,6 +735,112 @@ func TestReconcileSandboxContainers_CNIEnabledByConfig(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Exec annotation is governed by config.ExecPolicy, an internal requirement
+// ---------------------------------------------------------------------------
+
+// TestReconcileSandboxContainers_ExecDisabledByDefault verifies a tenant-set
+// enable-exec annotation never reaches the Pod with ExecPolicy unset.
+func TestReconcileSandboxContainers_ExecDisabledByDefault(t *testing.T) {
+	ctx := context.Background()
+	s := testScheme(t)
+
+	instance := instanceWithUID("exec-default-uid")
+	instance.Annotations = map[string]string{ukcExecEnabledAnnotation: "true"}
+
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(instance).
+		WithStatusSubresource(&computev1alpha.Instance{}).
+		Build()
+
+	r := &InstanceReconciler{Client: cl, Scheme: s}
+
+	if _, err := r.reconcileSandboxContainers(ctx, instance); err != nil {
+		t.Fatalf("reconcileSandboxContainers returned error: %v", err)
+	}
+
+	var pod core.Pod
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(instance), &pod); err != nil {
+		t.Fatalf("failed to get pod after reconcile: %v", err)
+	}
+	if v, ok := pod.Annotations[ukcExecEnabledAnnotation]; ok {
+		t.Errorf("pod carries %s=%q with ExecPolicy unset, want annotation absent", ukcExecEnabledAnnotation, v)
+	}
+}
+
+// TestReconcileSandboxContainers_ExecAllowedLetsTenantValueThrough verifies
+// ExecPolicy "allowed" passes the tenant's enable-exec annotation through.
+func TestReconcileSandboxContainers_ExecAllowedLetsTenantValueThrough(t *testing.T) {
+	ctx := context.Background()
+	s := testScheme(t)
+
+	instance := instanceWithUID("exec-allowed-uid")
+	instance.Annotations = map[string]string{ukcExecEnabledAnnotation: "true"}
+
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(instance).
+		WithStatusSubresource(&computev1alpha.Instance{}).
+		Build()
+
+	r := &InstanceReconciler{
+		Client: cl,
+		Scheme: s,
+		Config: &config.UnikraftProvider{
+			DownstreamResourceManagement: config.DownstreamResourceManagementConfig{ExecPolicy: "allowed"},
+		},
+	}
+
+	if _, err := r.reconcileSandboxContainers(ctx, instance); err != nil {
+		t.Fatalf("reconcileSandboxContainers returned error: %v", err)
+	}
+
+	var pod core.Pod
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(instance), &pod); err != nil {
+		t.Fatalf("failed to get pod after reconcile: %v", err)
+	}
+	if got := pod.Annotations[ukcExecEnabledAnnotation]; got != "true" {
+		t.Errorf("pod annotation %s = %q, want %q", ukcExecEnabledAnnotation, got, "true")
+	}
+}
+
+// TestReconcileSandboxContainers_ExecAlwaysForcedOn verifies ExecPolicy
+// "always" forces the enable-exec annotation on even if the tenant opted out.
+func TestReconcileSandboxContainers_ExecAlwaysForcedOn(t *testing.T) {
+	ctx := context.Background()
+	s := testScheme(t)
+
+	instance := instanceWithUID("exec-always-uid")
+	instance.Annotations = map[string]string{ukcExecEnabledAnnotation: "false"}
+
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(instance).
+		WithStatusSubresource(&computev1alpha.Instance{}).
+		Build()
+
+	r := &InstanceReconciler{
+		Client: cl,
+		Scheme: s,
+		Config: &config.UnikraftProvider{
+			DownstreamResourceManagement: config.DownstreamResourceManagementConfig{ExecPolicy: "always"},
+		},
+	}
+
+	if _, err := r.reconcileSandboxContainers(ctx, instance); err != nil {
+		t.Fatalf("reconcileSandboxContainers returned error: %v", err)
+	}
+
+	var pod core.Pod
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(instance), &pod); err != nil {
+		t.Fatalf("failed to get pod after reconcile: %v", err)
+	}
+	if got := pod.Annotations[ukcExecEnabledAnnotation]; got != "true" {
+		t.Errorf("pod annotation %s = %q, want %q", ukcExecEnabledAnnotation, got, "true")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Scale-to-zero stateful annotation is platform-controlled, not tenant-controlled
 // ---------------------------------------------------------------------------
 
