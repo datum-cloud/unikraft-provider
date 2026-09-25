@@ -179,7 +179,7 @@ func (r *InstanceReconciler) handleDeletion(ctx context.Context, instance *compu
 		return ctrl.Result{}, fmt.Errorf("failed to delete pod for instance %s: %w", instance.Name, err)
 	}
 
-	svc := &core.Service{ObjectMeta: metav1.ObjectMeta{Name: instance.Name, Namespace: instance.Namespace}}
+	svc := &core.Service{ObjectMeta: metav1.ObjectMeta{Name: instanceServiceName(instance.Name), Namespace: instance.Namespace}}
 	if err := r.Delete(ctx, svc); err != nil && !apierrors.IsNotFound(err) {
 		return ctrl.Result{}, fmt.Errorf("failed to delete service for instance %s: %w", instance.Name, err)
 	}
@@ -217,7 +217,8 @@ func (r *InstanceReconciler) backingResourcesPending(ctx context.Context, instan
 	}
 
 	var svc core.Service
-	switch err := r.Get(ctx, key, &svc); {
+	svcKey := client.ObjectKey{Name: instanceServiceName(instance.Name), Namespace: instance.Namespace}
+	switch err := r.Get(ctx, svcKey, &svc); {
 	case err == nil:
 		return true, nil
 	case !apierrors.IsNotFound(err):
@@ -263,7 +264,7 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 			instancePod.Labels = map[string]string{}
 		}
 		instancePod.Labels["managed-by"] = "infra-provider-unikraft"
-		instancePod.Labels["upstream.instance"] = instance.Name
+		instancePod.Labels[upstreamInstanceLabel] = instanceLabelValue(instance.Name)
 		// Copy a subset of the Instance labels to the Pod.
 		copyInstancePodLabels(instance.Labels, instancePod.Labels)
 
@@ -595,7 +596,7 @@ func (r *InstanceReconciler) reconcileInstanceService(
 
 	svc := &core.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      instance.Name,
+			Name:      instanceServiceName(instance.Name),
 			Namespace: instance.Namespace,
 		},
 	}
@@ -648,10 +649,10 @@ func (r *InstanceReconciler) reconcileInstanceService(
 			svc.Labels = map[string]string{}
 		}
 		svc.Labels["managed-by"] = "infra-provider-unikraft"
-		svc.Labels["upstream.instance"] = instance.Name
+		svc.Labels[upstreamInstanceLabel] = instanceLabelValue(instance.Name)
 
 		svc.Spec.Selector = map[string]string{
-			"upstream.instance": instance.Name,
+			upstreamInstanceLabel: instanceLabelValue(instance.Name),
 		}
 		svc.Spec.Ports = servicePorts
 		if svc.Spec.Type == "" {
