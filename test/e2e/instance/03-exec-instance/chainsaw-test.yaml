@@ -1,0 +1,68 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: exec-instance
+spec:
+  # kubectl exec into a running microVM, using the sandbox plugin that ships in
+  # the runtime image rather than one pulled from the vendor registry.
+  description: Exec into a running Instance using the embedded sandbox plugin.
+  steps:
+    - name: assert ukpd imported the embedded sandbox plugin
+      try:
+        - script:
+            content: |
+              set -eu
+              POD=$(kubectl -n unikraft-system get pod -l app=ukp-runtime -o jsonpath='{.items[0].metadata.name}')
+              kubectl -n unikraft-system exec "$POD" -c ukpd -- \
+                grep -E "imgdb-import: .*plugins/sandbox" /var/log/ukp/platform/ukpd.log
+    - name: create and start the exec-enabled Instance
+      try:
+        - apply:
+            file: instance.yaml
+        - assert:
+            resource:
+              apiVersion: compute.datumapis.com/v1alpha
+              kind: Instance
+              metadata:
+                name: e2e-exec-instance
+              status:
+                (conditions[?type == 'Available'] | [0].status): "True"
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  managed-by: infra-provider-unikraft
+                  upstream.instance: e2e-exec-instance
+              status:
+                phase: Running
+    - name: kubectl exec into the microVM
+      try:
+        - script:
+            timeout: 120s
+            content: |
+              set -u
+              POD=$(kubectl -n "$NAMESPACE" get pod -l upstream.instance=e2e-exec-instance -o jsonpath='{.items[0].metadata.name}')
+              for i in $(seq 1 20); do
+                if kubectl -n "$NAMESPACE" exec "$POD" -c app -- ls /; then
+                  exit 0
+                fi
+                sleep 5
+              done
+              exit 1
+      catch:
+        - script:
+            content: |
+              kubectl -n unikraft-system logs -l app.kubernetes.io/name=kraftlet --tail=100 | grep -i -E "exec|plugin|sandbox|tls|cert" || true
+              POD=$(kubectl -n unikraft-system get pod -l app=ukp-runtime -o jsonpath='{.items[0].metadata.name}')
+              kubectl -n unikraft-system exec "$POD" -c ukpd -- grep -i -E "plugin|sandbox" /var/log/ukp/platform/ukpd.log | tail -50 || true
+    - name: assert the agent never pulled the plugin
+      try:
+        - script:
+            content: |
+              set -eu
+              if kubectl -n unikraft-system logs -l app=ukp-runtime -c agent --tail=-1 | grep "plugins/sandbox"; then
+                echo "agent was asked for plugins/sandbox; the embedded plugin was not used" >&2
+                exit 1
+              fi
