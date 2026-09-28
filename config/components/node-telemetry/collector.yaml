@@ -87,6 +87,22 @@ spec:
             - tag_name: datum.project.name
               key: resourcemanager.miloapis.com/project-name
               from: namespace
+            - tag_name: k8s.namespace.upstream_cluster_name
+              key: meta.datumapis.com/upstream-cluster-name
+              from: namespace
+      # Compute's mapped namespaces encode project identity as cluster-<project>.
+      # Prefer an explicit project label; never derive identity from log bodies.
+      transform/unikraft-project:
+        error_mode: propagate
+        log_statements:
+          - context: resource
+            statements:
+              - >-
+                set(resource.attributes["datum.project.name"],
+                ExtractPatterns(resource.attributes["k8s.namespace.upstream_cluster_name"], "^cluster-(?P<project>.+)$")["project"])
+                where (resource.attributes["datum.project.name"] == nil or resource.attributes["datum.project.name"] == "")
+                and IsString(resource.attributes["k8s.namespace.upstream_cluster_name"])
+                and IsMatch(resource.attributes["k8s.namespace.upstream_cluster_name"], "^cluster-.+$")
       resource/unikraft:
         attributes:
           - key: k8s.node.name
@@ -109,7 +125,7 @@ spec:
       pipelines:
         logs/unikraft:
           receivers: [filelog/unikraft]
-          processors: [memory_limiter, k8sattributes/unikraft, filter/unikraft, resource/unikraft, resource/unikraft-routing]
+          processors: [memory_limiter, k8sattributes/unikraft, transform/unikraft-project, filter/unikraft, resource/unikraft, resource/unikraft-routing]
           exporters: [otlp_grpc/project]
         metrics/unikraft:
           receivers: [prometheus/unikraft]
