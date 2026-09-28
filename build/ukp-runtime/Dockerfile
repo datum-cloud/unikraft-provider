@@ -136,10 +136,11 @@ RUN --mount=type=secret,id=unikraft-registry-auth \
 # The exec sandbox plugin kraftlet attaches for `kubectl exec`. ukpd imports it
 # at startup (--images-import-path), so nodes never pull it and need no
 # registry credential. UKP_PLUGIN_URL must match kraftlet's
-# KRAFTLET_EXEC_PLUGIN_IMAGE exactly.
+# KRAFTLET_EXEC_PLUGIN_IMAGE exactly; UKP_PLUGIN_REF pins what that tag
+# resolved to.
 ARG UKP_PLUGIN_REGISTRY=index.unikraft.io
 ARG UKP_PLUGIN_REPO=plugins/sandbox
-ARG UKP_PLUGIN_REF=staging
+ARG UKP_PLUGIN_REF=sha256:66f1fb02251ee735a81845f56c218183131c311d8de945cd1a63b1b748eaf518
 ARG UKP_PLUGIN_URL=oci://unikraft.io/plugins/sandbox:staging
 
 COPY fetch-plugin.sh /usr/local/bin/fetch-plugin.sh

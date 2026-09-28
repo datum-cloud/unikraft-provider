@@ -5,8 +5,7 @@
 #
 # Writes:
 #
-#   <dest>/kernel        the plugin kernel
-#   <dest>/initrd        the plugin initrd, when the image carries one
+#   <dest>/rom           the plugin ROM (plugins ship as a single ROM layer)
 #   <dest>/config.json   the image config
 #   <index>              ukpd --images-import-path entries, one per plugin
 #
@@ -77,24 +76,18 @@ verify "$WORK/config.json" "$config_digest"
 mkdir -p "$DEST"
 install -m 0644 "$WORK/config.json" "$DEST/config.json"
 
-# Extracts the file a layer's annotation names into $DEST/<name>.
-extract() { # <annotation> <name>
-	layer=$(jq -c --arg a "$1" '[.layers[] | select(.annotations[$a])][0] // empty' "$WORK/manifest.json")
-	[ -n "$layer" ] || return 1
-	ldigest=$(printf '%s' "$layer" | jq -r '.digest')
-	path=$(printf '%s' "$layer" | jq -r --arg a "$1" '.annotations[$a]' | sed 's,^/,,')
-	api -o "$WORK/$2.tar" "https://$REGISTRY/v2/$REPO/blobs/$ldigest"
-	verify "$WORK/$2.tar" "$ldigest"
-	tar -xf "$WORK/$2.tar" -C "$WORK" "$path" || die "layer $ldigest has no $path"
-	[ -s "$WORK/$path" ] || die "extracted $2 is empty"
-	install -m 0644 "$WORK/$path" "$DEST/$2"
-}
+jq -c . "$WORK/config.json" >&2
 
-extract org.unikraft.kernel.image kernel || die "manifest has no layer annotated org.unikraft.kernel.image"
-entry=$(jq -n --arg url "$URL" --arg d "$DEST" '{url: $url, config: "\($d)/config.json", kernel: "\($d)/kernel"}')
-if extract org.unikraft.kernel.initrd initrd; then
-	entry=$(printf '%s' "$entry" | jq --arg d "$DEST" '. + {initrd: "\($d)/initrd"}')
-fi
+# A ROM layer is the raw filesystem blob, not a tar.
+rom=$(jq -r '[.layers[] | select(.mediaType == "application/vnd.unikraft.rom.v1")][0].digest // empty' \
+	"$WORK/manifest.json")
+[ -n "$rom" ] || die "manifest has no application/vnd.unikraft.rom.v1 layer"
+api -o "$WORK/rom" "https://$REGISTRY/v2/$REPO/blobs/$rom"
+verify "$WORK/rom" "$rom"
+printf 'fetch-plugin: rom magic at 1024: %s\n' "$(od -An -tx1 -j1024 -N4 "$WORK/rom" | tr -d ' ')" >&2
+install -m 0644 "$WORK/rom" "$DEST/rom"
+
+entry=$(jq -n --arg url "$URL" --arg d "$DEST" '{url: $url, config: "\($d)/config.json", rom: "\($d)/rom"}')
 
 [ -s "$INDEX" ] || echo '[]' > "$INDEX"
 jq --argjson e "$entry" '. + [$e]' "$INDEX" > "$WORK/index.json"
