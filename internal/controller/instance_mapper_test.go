@@ -252,9 +252,9 @@ func TestResolveContainerResources(t *testing.T) {
 }
 
 // TestBuildPodSpecFromContainers_InstanceTypeSizing verifies that
-// buildPodSpecFromContainers sets both Requests and Limits for cpu and memory
+// buildPodSpecFromContainers sets the instanceType catalog values as Limits
 // on the downstream Pod container when the instance is sized by instanceType
-// only. This ensures the Pod footprint equals what the quota claim accounts for.
+// only.
 func TestBuildPodSpecFromContainers_InstanceTypeSizing(t *testing.T) {
 	ctx := context.Background()
 	r := &InstanceReconciler{}
@@ -290,7 +290,6 @@ func TestBuildPodSpecFromContainers_InstanceTypeSizing(t *testing.T) {
 	wantCPU := resource.MustParse("1000m")
 	wantMem := resource.MustParse("2048Mi")
 
-	// Both Limits and Requests must be set with catalog values.
 	gotCPULimit := c.Resources.Limits[corev1.ResourceCPU]
 	if gotCPULimit.Cmp(wantCPU) != 0 {
 		t.Errorf("CPU Limit = %s, want %s", gotCPULimit.String(), wantCPU.String())
@@ -299,13 +298,103 @@ func TestBuildPodSpecFromContainers_InstanceTypeSizing(t *testing.T) {
 	if gotMemLimit.Cmp(wantMem) != 0 {
 		t.Errorf("Memory Limit = %s, want %s", gotMemLimit.String(), wantMem.String())
 	}
-	gotCPUReq := c.Resources.Requests[corev1.ResourceCPU]
-	if gotCPUReq.Cmp(wantCPU) != 0 {
-		t.Errorf("CPU Request = %s, want %s", gotCPUReq.String(), wantCPU.String())
+	assertZeroRequestsForEveryLimit(t, c)
+}
+
+func TestBuildPodSpecFromContainers_ZeroRequests(t *testing.T) {
+	ctx := context.Background()
+	r := &InstanceReconciler{}
+
+	tests := []struct {
+		name         string
+		instanceType string
+		limits       corev1.ResourceList
+		wantLimits   corev1.ResourceList
+	}{
+		{
+			name:         "instanceType sizing",
+			instanceType: "datumcloud/d1-standard-2",
+			wantLimits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("1"),
+				corev1.ResourceMemory: resource.MustParse("2Gi"),
+			},
+		},
+		{
+			name: "explicit limits",
+			limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("500m"),
+				corev1.ResourceMemory: resource.MustParse("512Mi"),
+			},
+			wantLimits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("500m"),
+				corev1.ResourceMemory: resource.MustParse("512Mi"),
+			},
+		},
+		{
+			name: "memory only",
+			limits: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("256Mi"),
+			},
+			wantLimits: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("256Mi"),
+			},
+		},
 	}
-	gotMemReq := c.Resources.Requests[corev1.ResourceMemory]
-	if gotMemReq.Cmp(wantMem) != 0 {
-		t.Errorf("Memory Request = %s, want %s", gotMemReq.String(), wantMem.String())
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sc := computev1alpha.SandboxContainer{
+				Name:  "app",
+				Image: "index.unikraft.io/datum/myapp:latest",
+			}
+			if tc.limits != nil {
+				sc.Resources = &computev1alpha.ContainerResourceRequirements{Limits: tc.limits}
+			}
+			instance := &computev1alpha.Instance{
+				Spec: computev1alpha.InstanceSpec{
+					Runtime: computev1alpha.InstanceRuntimeSpec{
+						Resources: computev1alpha.InstanceRuntimeResources{InstanceType: tc.instanceType},
+						Sandbox: &computev1alpha.SandboxRuntime{
+							Containers: []computev1alpha.SandboxContainer{sc},
+						},
+					},
+				},
+			}
+
+			spec, err := r.buildPodSpecFromContainers(ctx, instance, instance.Spec.Runtime.Sandbox.Containers)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			c := spec.Containers[0]
+
+			if len(c.Resources.Limits) != len(tc.wantLimits) {
+				t.Errorf("Limits = %v, want %v", c.Resources.Limits, tc.wantLimits)
+			}
+			for name, want := range tc.wantLimits {
+				got, ok := c.Resources.Limits[name]
+				if !ok || got.Cmp(want) != 0 {
+					t.Errorf("%s Limit = %s, want %s", name, got.String(), want.String())
+				}
+			}
+			assertZeroRequestsForEveryLimit(t, c)
+		})
+	}
+}
+
+func assertZeroRequestsForEveryLimit(t *testing.T, c corev1.Container) {
+	t.Helper()
+	if len(c.Resources.Requests) != len(c.Resources.Limits) {
+		t.Errorf("Requests = %v, want one zero entry per Limit %v", c.Resources.Requests, c.Resources.Limits)
+	}
+	for name := range c.Resources.Limits {
+		got, ok := c.Resources.Requests[name]
+		if !ok {
+			t.Errorf("%s Request absent; the API server would default it to the Limit", name)
+			continue
+		}
+		if !got.IsZero() {
+			t.Errorf("%s Request = %s, want 0", name, got.String())
+		}
 	}
 }
 
