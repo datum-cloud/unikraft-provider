@@ -1,0 +1,117 @@
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: compute-node-collector
+spec:
+  config:
+    receivers:
+      # Guest application logs — one file per instance, read straight from
+      # ukpd's own platform dir. k8sattributes resolves the owning Pod by
+      # container ID, since Kraftlet sets each provider Pod container's
+      # containerID to the ukpd instance uuid.
+      filelog/unikraft:
+        include:
+          - /var/lib/ukp/data/platform/*/vm.log
+        include_file_path: true
+        start_at: beginning
+        storage: file_storage
+        retry_on_failure:
+          enabled: true
+          max_elapsed_time: 0s
+        operators:
+          - type: regex_parser
+            parse_from: 'attributes["log.file.path"]'
+            regex: '/var/lib/ukp/data/platform/(?P<uuid>[^/]+)/vm\.log$'
+          - type: copy
+            from: attributes.uuid
+            to: 'resource["ukp.instance.uuid"]'
+          - type: move
+            from: attributes.uuid
+            to: 'resource["container.id"]'
+      # Runtime + host metrics plus per-instance resource metrics.
+      prometheus/unikraft:
+        config:
+          scrape_configs:
+            - job_name: ukpd-instances
+              scrape_interval: 15s
+              metrics_path: /v1/instances/metrics
+              authorization:
+                type: Bearer
+                credentials: ${env:UKP_API_TOKEN}
+              static_configs:
+                - targets: ['127.0.0.1:45232']
+            - job_name: ukpd-controller
+              scrape_interval: 30s
+              metrics_path: /metrics/controller
+              authorization:
+                type: Bearer
+                credentials: ${env:UKP_METRICS_TOKEN}
+              static_configs:
+                - targets: ['${env:UKP_HOST_IP}:45233']
+    processors:
+      # Enriches guest logs with the Datum identity of the owning compute
+      # Instance, keyed on container.id (== the ukpd instance uuid Kraftlet
+      # assigns as the provider Pod container's containerID). Instance/workload
+      # identity comes from provider Pod labels; the namespace labels give the
+      # upstream namespace and project. Watches pods cluster-wide (the
+      # provider Pods live on the Kraftlet virtual node, so node-scoping
+      # cannot apply).
+      k8sattributes/unikraft:
+        auth_type: serviceAccount
+        wait_for_metadata: true
+        wait_for_metadata_timeout: 60s
+        filter:
+          labels:
+            - key: managed-by
+              value: infra-provider-unikraft
+              op: equals
+        pod_association:
+          - sources:
+              - from: resource_attribute
+                name: container.id
+        extract:
+          metadata:
+            - k8s.namespace.name
+            - k8s.pod.name
+            - container.id
+          labels:
+            - tag_name: datum.instance.name
+              key: upstream.instance
+              from: pod
+            - tag_name: datum.workload.name
+              key: compute.datumapis.com/workload-name
+              from: pod
+            - tag_name: datum.instance.namespace
+              key: meta.datumapis.com/upstream-namespace
+              from: namespace
+            - tag_name: datum.project.name
+              key: resourcemanager.miloapis.com/project-name
+              from: namespace
+      resource/unikraft:
+        attributes:
+          - key: k8s.node.name
+            value: ${env:K8S_NODE_NAME}
+            action: upsert
+      batch/unikraft: {}
+      filter/unikraft:
+        error_mode: propagate
+        logs:
+          log_record:
+            - 'resource.attributes["datum.project.name"] == nil or resource.attributes["datum.project.name"] == ""'
+            - 'resource.attributes["datum.instance.namespace"] == nil or resource.attributes["datum.instance.namespace"] == ""'
+            - 'resource.attributes["datum.instance.name"] == nil or resource.attributes["datum.instance.name"] == ""'
+      resource/unikraft-routing:
+        attributes:
+          - key: project_name
+            from_attribute: datum.project.name
+            action: upsert
+    service:
+      pipelines:
+        logs/unikraft:
+          receivers: [filelog/unikraft]
+          processors: [memory_limiter, k8sattributes/unikraft, filter/unikraft, resource/unikraft, resource/unikraft-routing]
+          exporters: [otlp_grpc/project]
+        metrics/unikraft:
+          receivers: [prometheus/unikraft]
+          processors: [memory_limiter, resource/unikraft, batch/unikraft]
+          exporters: [prometheusremotewrite/compute]

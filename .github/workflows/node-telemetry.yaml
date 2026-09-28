@@ -1,0 +1,41 @@
+name: Node telemetry component
+
+on:
+  pull_request:
+    paths:
+      - config/components/node-telemetry/**
+      - test/telemetry/**
+      - .github/workflows/node-telemetry.yaml
+  push:
+    branches: [main]
+    paths:
+      - config/components/node-telemetry/**
+      - test/telemetry/**
+      - .github/workflows/node-telemetry.yaml
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Install Kustomize
+        run: go install sigs.k8s.io/kustomize/kustomize/v5@v5.4.3
+      - name: Install the platform contract collector
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl --fail --location --retry 3 --output otelcol.tar.gz \
+            https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.144.0/otelcol-contrib_0.144.0_linux_amd64.tar.gz
+          echo '4429eecfb311e35f846af453d46c0a8a72e6773489e8105fb049f5bc9edec022  otelcol.tar.gz' | sha256sum --check
+          tar -xzf otelcol.tar.gz otelcol-contrib
+      - name: Compose and validate both telemetry pipelines
+        env:
+          OTELCOL_BIN: ${{ runner.temp }}/otelcol-contrib
+        run: go test -count=1 -timeout=2m ./test/telemetry

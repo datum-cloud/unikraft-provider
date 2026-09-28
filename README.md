@@ -6,6 +6,12 @@ Namespace creation is opt-in through `config/components/namespace`; deployment
 bundles leave it to infra. The compute dependency installs CRDs only and uses
 the existing `flux-system` namespace.
 
+The optional [node telemetry component](config/components/node-telemetry/README.md)
+adds Unikraft application logs and runtime metrics to the shared compute node
+collector. Infra composes it with the platform base and other runtime
+components. The existing standalone telemetry deployment remains available
+during migration; do not enable both on the same nodes.
+
 ## Kraftlet
 
 Unikraft Cloud integrates seamlessly with any Kubernetes cluster through a virtual kubelet known as Kraftlet. More information in [Unikraft docs](https://unikraft.com/docs/integrations/kubernetes).
