@@ -485,9 +485,6 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 			})
 		}
 
-		// Resolve CPU and memory from the container spec or the instanceType
-		// catalog. Using requests == limits ensures kraftlet sees a guaranteed
-		// QoS class and the Pod's resource footprint matches what quota claimed.
 		cpuMillicores, memoryMB := resolveContainerResources(instance, sc)
 		memQ := *resource.NewQuantity(memoryMB*1024*1024, resource.BinarySI)
 		resourceList := core.ResourceList{
@@ -497,7 +494,7 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 			resourceList[core.ResourceCPU] = *resource.NewMilliQuantity(cpuMillicores, resource.DecimalSI)
 		}
 		resources := core.ResourceRequirements{
-			Requests: resourceList.DeepCopy(),
+			Requests: zeroSchedulerRequests(resourceList),
 			Limits:   resourceList,
 		}
 
@@ -987,4 +984,12 @@ func (r *InstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		WithOptions(controller.Options{MaxConcurrentReconciles: 5}).
 		Named("instance").
 		Complete(r)
+}
+
+func zeroSchedulerRequests(limits core.ResourceList) core.ResourceList {
+	requests := make(core.ResourceList, len(limits))
+	for name := range limits {
+		requests[name] = resource.MustParse("0")
+	}
+	return requests
 }
