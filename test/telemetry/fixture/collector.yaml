@@ -1,0 +1,49 @@
+# Minimal platform contract. Real scheduling, RBAC and destinations belong to infra.
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: compute-node-collector
+  namespace: o11y-system
+spec:
+  image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.144.0
+  env:
+    - name: K8S_NODE_NAME
+      value: fixture-node
+    - name: LOGS_OTLP_ENDPOINT
+      value: localhost:4317
+    - name: METRICS_RW_ENDPOINT
+      value: http://localhost:8429/api/v1/write
+  volumes:
+    - name: storage
+      emptyDir: {}
+  volumeMounts:
+    - name: storage
+      mountPath: /var/lib/otelcol/storage
+  config:
+    extensions:
+      file_storage:
+        directory: /var/lib/otelcol/storage
+    receivers:
+      filelog/kubernetes:
+        include: [/var/log/pods/*/*/*.log]
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 384
+        spike_limit_mib: 96
+    exporters:
+      otlp_grpc/project:
+        endpoint: ${env:LOGS_OTLP_ENDPOINT}
+        tls:
+          insecure: true
+      prometheusremotewrite/compute:
+        endpoint: ${env:METRICS_RW_ENDPOINT}
+        resource_to_telemetry_conversion:
+          enabled: true
+    service:
+      extensions: [file_storage]
+      pipelines:
+        logs/platform:
+          receivers: [filelog/kubernetes]
+          processors: [memory_limiter]
+          exporters: [otlp_grpc/project]

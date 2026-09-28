@@ -1,0 +1,43 @@
+# Append service requirements; preserve all platform and other service entries.
+- op: add
+  path: /spec/hostNetwork
+  value: true
+- op: add
+  path: /spec/dnsPolicy
+  value: ClusterFirstWithHostNet
+- op: add
+  path: /spec/volumes/-
+  value:
+    name: unikraft-data
+    hostPath:
+      path: /var/mnt/ukp
+      type: Directory
+- op: add
+  path: /spec/volumeMounts/-
+  value:
+    name: unikraft-data
+    mountPath: /var/lib/ukp
+    readOnly: true
+- op: add
+  path: /spec/env/-
+  value:
+    name: UKP_HOST_IP
+    valueFrom:
+      fieldRef:
+        fieldPath: status.hostIP
+- op: add
+  path: /spec/env/-
+  value:
+    name: UKP_METRICS_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: ukp-runtime-credentials
+        key: metrics-token
+- op: add
+  path: /spec/env/-
+  value:
+    name: UKP_API_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: kraftlet-ukc-token
+        key: token

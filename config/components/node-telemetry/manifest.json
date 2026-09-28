@@ -1,0 +1,9 @@
+{
+  "contractVersion": 1,
+  "service": "unikraft",
+  "collectorVersion": "0.144.0",
+  "pipelines": [
+    "logs/unikraft",
+    "metrics/unikraft"
+  ]
+}
