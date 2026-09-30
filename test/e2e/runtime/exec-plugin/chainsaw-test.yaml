@@ -16,7 +16,7 @@ spec:
               POD=$(kubectl -n unikraft-system get pod -l app=ukp-runtime -o jsonpath='{.items[0].metadata.name}')
               kubectl -n unikraft-system exec "$POD" -c ukpd -- \
                 grep -E "imgdb-import: .*Imported .*'oci://unikraft.io/plugins/sandbox:staging'" /var/log/ukp/platform/ukpd.log
-    - name: assert the plugin is listed by ukpd's image API
+    - name: assert ukpd's image API reports the plugin ready
       try:
         - script:
             env:
@@ -29,4 +29,5 @@ spec:
               IMAGES=$(kubectl -n unikraft-system exec "$POD" -c ukpd -- \
                 curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:45232/v1/images)
               echo "$IMAGES"
-              echo "$IMAGES" | grep -q "plugins/sandbox"
+              echo "$IMAGES" | jq -e '.data.images[]
+                | select(.url == "oci://unikraft.io/plugins/sandbox:staging" and .state == "ready")'
