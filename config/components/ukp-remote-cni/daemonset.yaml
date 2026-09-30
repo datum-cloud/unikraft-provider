@@ -1,7 +1,7 @@
 # Real-cluster only: the vendor ukp-remote-cni gRPC CNI shim (cnishim.cni.v1,
 # :9555), as its own DaemonSet so its restarts don't couple to ukpd's (which
-# parks every guest on restart). No published kraftlet has a client for it
-# yet — this is prep, nothing calls it today.
+# parks every guest on restart). Kraftlet calls this shim to configure
+# instance networking through the node's Multus CNI.
 #
 # Overlay-only: without CNI_SHIM_TOKEN_FILE it crash-loops, and the kind e2e
 # applies the base directly with no ESO to provide one.
@@ -99,6 +99,10 @@ spec:
             - name: host-run
               mountPath: /host/run
               readOnly: true
+              # Follow namespace unmounts from /run/netns. A private copy of
+              # these mounts can keep a deleted instance's namespace busy
+              # and block its replacement from starting.
+              mountPropagation: HostToContainer
             - name: run-netns
               mountPath: /run/netns
               mountPropagation: Bidirectional
