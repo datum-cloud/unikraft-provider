@@ -152,6 +152,7 @@ RUN --mount=type=secret,id=unikraft-registry-auth \
        UKP_PLUGIN_URL="${UKP_PLUGIN_URL}" \
        UKP_PLUGIN_DEST=/usr/lib/ukp/plugins/sandbox \
        UKP_PLUGIN_INDEX=/usr/lib/ukp/plugins/images.json \
+       UKP_PLUGIN_IMAGES_PATH=/var/lib/ukp/images \
        /usr/local/bin/fetch-plugin.sh
 
 # Datum coredns entrypoint. The stripped vendor CoreDNS has no `bind` plugin, so
