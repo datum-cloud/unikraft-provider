@@ -107,5 +107,6 @@ spec:
             # node outright when its lease lapses, and kraftlet never re-registers.
             - name: KRAFTLET_NODE_PROVIDER_ID
               value: "unikraft://kraftlet-$(NODE_NAME)"
+            # Must match UKP_PLUGIN_URL in build/ukp-runtime/Dockerfile.
             - name: KRAFTLET_EXEC_PLUGIN_IMAGE
-              value: "oci://unikraft.io/plugins/sandbox:staging"
+              value: "oci://unikraft.io/plugins/sandbox@sha256:66f1fb02251ee735a81845f56c218183131c311d8de945cd1a63b1b748eaf518"
