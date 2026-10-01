@@ -6,16 +6,18 @@ spec:
   # The exec sandbox plugin ships in the runtime image, so ukpd holds it without
   # any registry. Exec itself needs a node license with plugins, which this
   # hermetic cluster does not have (docs/architecture/node-licensing.md).
-  description: ukpd serves the embedded exec sandbox plugin without a registry pull.
+  description: ukpd serves the embedded exec sandbox plugin, under the URL kraftlet requests, without a registry pull.
   steps:
     - name: assert ukpd imported the embedded sandbox plugin
       try:
         - script:
             content: |
               set -eu
+              URL=$(kubectl -n unikraft-system get ds kraftlet \
+                -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="KRAFTLET_EXEC_PLUGIN_IMAGE")].value}')
               POD=$(kubectl -n unikraft-system get pod -l app=ukp-runtime -o jsonpath='{.items[0].metadata.name}')
               kubectl -n unikraft-system exec "$POD" -c ukpd -- \
-                grep -E "imgdb-import: .*Imported .*'oci://unikraft.io/plugins/sandbox:staging'" /var/log/ukp/platform/ukpd.log
+                grep -F "Imported public image" /var/log/ukp/platform/ukpd.log | grep -F "'$URL'"
     - name: assert ukpd's image API reports the plugin ready
       try:
         - script:
@@ -25,12 +27,14 @@ spec:
                 value: Y2kkZGF0dW0udXNlcnMua3JhZnRjbG91ZDpjaS1lMmUtdG9rZW4=
             content: |
               set -eu
+              URL=$(kubectl -n unikraft-system get ds kraftlet \
+                -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="KRAFTLET_EXEC_PLUGIN_IMAGE")].value}')
               POD=$(kubectl -n unikraft-system get pod -l app=ukp-runtime -o jsonpath='{.items[0].metadata.name}')
               IMAGES=$(kubectl -n unikraft-system exec "$POD" -c ukpd -- \
                 curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:45232/v1/images)
               echo "$IMAGES"
-              echo "$IMAGES" | jq -e '.data.images[]
-                | select(.url == "oci://unikraft.io/plugins/sandbox:staging" and .state == "ready")'
+              echo "$IMAGES" | jq -e --arg url "$URL" '.data.images[]
+                | select(.url == $url and .state == "ready")'
     - name: assert the plugin ROM resolves under ukpd's images path
       try:
         - script:
