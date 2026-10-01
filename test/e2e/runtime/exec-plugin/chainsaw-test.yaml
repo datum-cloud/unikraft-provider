@@ -31,3 +31,12 @@ spec:
               echo "$IMAGES"
               echo "$IMAGES" | jq -e '.data.images[]
                 | select(.url == "oci://unikraft.io/plugins/sandbox:staging" and .state == "ready")'
+    - name: assert the plugin ROM resolves under ukpd's images path
+      try:
+        - script:
+            content: |
+              set -eu
+              POD=$(kubectl -n unikraft-system get pod -l app=ukp-runtime -o jsonpath='{.items[0].metadata.name}')
+              # ukpd hands Firecracker <images-path>/<rom>; a missing file fails every exec-enabled boot.
+              kubectl -n unikraft-system exec "$POD" -c ukpd -- sh -c \
+                'rom=$(jq -r ".[0].rom" /usr/lib/ukp/plugins/images.json); ls -laL "/var/lib/ukp/images/$rom"'

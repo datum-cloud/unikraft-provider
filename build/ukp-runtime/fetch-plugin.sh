@@ -23,6 +23,7 @@ REF=${UKP_PLUGIN_REF:?}
 URL=${UKP_PLUGIN_URL:?}
 DEST=${UKP_PLUGIN_DEST:?}
 INDEX=${UKP_PLUGIN_INDEX:?}
+IMAGES=${UKP_PLUGIN_IMAGES_PATH:?}
 AUTH_FILE=${UKP_PLUGIN_AUTH_FILE:-/run/secrets/unikraft-registry-auth}
 
 die() { printf 'fetch-plugin: %s\n' "$*" >&2; exit 1; }
@@ -87,7 +88,9 @@ verify "$WORK/rom" "$rom"
 printf 'fetch-plugin: rom magic at 1024: %s\n' "$(od -An -tx1 -j1024 -N4 "$WORK/rom" | tr -d ' ')" >&2
 install -m 0644 "$WORK/rom" "$DEST/rom"
 
-entry=$(jq -n --arg url "$URL" --arg d "$DEST" '{url: $url, config: "\($d)/config.json", rom: "\($d)/rom"}')
+# ukpd resolves an imported rom against its --images-path, so name it relative to that.
+rom_rel=$(realpath -m --relative-to="$IMAGES" "$DEST/rom")
+entry=$(jq -n --arg url "$URL" --arg d "$DEST" --arg rom "$rom_rel" '{url: $url, config: "\($d)/config.json", rom: $rom}')
 
 [ -s "$INDEX" ] || echo '[]' > "$INDEX"
 jq --argjson e "$entry" '. + [$e]' "$INDEX" > "$WORK/index.json"
