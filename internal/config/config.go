@@ -4,6 +4,8 @@ package config
 
 import (
 	"context"
+	"fmt"
+	"net/netip"
 
 	core "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -201,4 +203,61 @@ type DownstreamResourceManagementConfig struct {
 	// +optional
 	// +kubebuilder:validation:Enum=disabled;allowed;always
 	ExecPolicy string `json:"execPolicy,omitempty"`
+
+	// InstanceDNS sets the resolver configuration every Instance Pod carries,
+	// in place of whatever the runtime would hand the guest on its own. Like
+	// the other fields here it is a platform-wide setting chosen at deployment
+	// time, not something a tenant picks per Instance. Unset leaves the Pod's
+	// DNS fields alone, so the runtime's own default resolver governs.
+	//
+	// +optional
+	InstanceDNS *InstanceDNSConfig `json:"instanceDNS,omitempty"`
+}
+
+// +k8s:deepcopy-gen=true
+
+// InstanceDNSConfig is the resolver configuration applied to every Instance
+// Pod. It is expressed as the Pod's own dnsConfig with dnsPolicy None, which
+// is the contract a kubelet (virtual or otherwise) consumes.
+type InstanceDNSConfig struct {
+	// Nameservers lists the resolvers the guest should use, as IPv4 or IPv6
+	// literals. Kubernetes allows at most three.
+	Nameservers []string `json:"nameservers"`
+
+	// Searches lists the DNS search domains for short-name lookups.
+	//
+	// +optional
+	Searches []string `json:"searches,omitempty"`
+}
+
+// MaxInstanceDNSNameservers mirrors the apiserver's limit on Pod dnsConfig
+// nameservers, so a bad value fails at startup instead of on every Pod create.
+const MaxInstanceDNSNameservers = 3
+
+// Validate rejects a resolver list the apiserver would refuse anyway, so the
+// provider fails at startup rather than wedging every Instance it reconciles.
+func (d *InstanceDNSConfig) Validate() error {
+	if d == nil {
+		return nil
+	}
+	if len(d.Nameservers) == 0 {
+		return fmt.Errorf("instanceDNS: at least one nameserver is required")
+	}
+	if len(d.Nameservers) > MaxInstanceDNSNameservers {
+		return fmt.Errorf("instanceDNS: at most %d nameservers are allowed, got %d", MaxInstanceDNSNameservers, len(d.Nameservers))
+	}
+	for _, ns := range d.Nameservers {
+		// netip accepts both IPv4 and IPv6 literals; an IPv6 zone or a port
+		// suffix is not a valid Pod nameserver, so reject those too.
+		addr, err := netip.ParseAddr(ns)
+		if err != nil || addr.Zone() != "" {
+			return fmt.Errorf("instanceDNS: nameserver %q is not an IP address", ns)
+		}
+	}
+	for _, s := range d.Searches {
+		if s == "" {
+			return fmt.Errorf("instanceDNS: search domains must not be empty")
+		}
+	}
+	return nil
 }

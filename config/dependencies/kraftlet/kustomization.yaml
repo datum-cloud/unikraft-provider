@@ -5,6 +5,7 @@ resources:
   - serviceaccount.yaml
   - clusterrole.yaml
   - clusterrolebinding.yaml
+  - auth-delegator-binding.yaml
   - daemonset.yaml
 # The unikraft-system namespace (privileged Pod Security) is created by the
 # deploying layer, not this bundle: the datum-cloud/infra edge app owns it on

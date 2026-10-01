@@ -31,6 +31,28 @@ Runtime state lives on the node, not in the pod: the runtime's data directory is
 a host path backed by a quota-enabled filesystem, which is what makes a node's
 identity and its license survive pod restarts and image bumps.
 
+## Guest DNS
+
+A guest resolves through its host-side TAP gateway: `ukpd` hands the guest
+that gateway address as its resolver at boot, and the `coredns` container
+answers there for `.internal` names and forwards everything else to the
+upstream set by `UKP_DNS_UPSTREAM` in [`ukp.conf`](../../config/dependencies/ukp-runtime/ukp.conf).
+That upstream is the effective path today for choosing the resolvers every
+Instance uses. Set it per cluster through the `UKP_DNS_UPSTREAM` env on the
+`coredns` container of the `ukp-runtime` DaemonSet, which wins over the value in
+`ukp.conf`; empty keeps the default. The value is a space-separated list of
+CoreDNS forward upstreams, IPv4 or IPv6, so an IPv6-only cluster uses
+`[2606:4700:4700::1111]:53 [2001:4860:4860::8888]:53` (bare IPv6 literals also
+work and get port 53). The guest itself still talks IPv4 to its gateway; only
+the host-side hop is IPv6.
+
+The provider has its own deployment-time knob, `downstreamResourceManagement.instanceDNS`
+in the server config, which stamps the listed nameservers (and optional search
+domains) onto every Instance Pod as `dnsConfig` with `dnsPolicy: None`. That is
+the contract a kubelet consumes, and it becomes the authoritative per-Instance
+path once kraftlet maps Pod DNS configuration onto the platform's instance
+`nameserver` field. Until then the Pod carries the configuration but the guest does not see it, so a cluster can set both knobs now and the Instance-level one takes over when kraftlet catches up.
+
 ## Packaging and Deployment
 
 Runtime configuration is Kustomize, published from this repository as an OCI

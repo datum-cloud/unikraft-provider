@@ -608,7 +608,32 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 		Tolerations:                  tolerations,
 	}
 
+	// Resolver choice is a platform decision made at deployment time. Policy
+	// None makes the listed nameservers the guest's only resolvers instead of
+	// appending them to a cluster default. Unset leaves both fields empty so
+	// the runtime keeps handing the guest its own default resolver.
+	if dns := r.instanceDNS(); dns != nil {
+		spec.DNSPolicy = core.DNSNone
+		spec.DNSConfig = &core.PodDNSConfig{
+			Nameservers: append([]string(nil), dns.Nameservers...),
+			Searches:    append([]string(nil), dns.Searches...),
+		}
+	}
+
 	return spec, nil
+}
+
+// instanceDNS returns the deployment-time resolver configuration, or nil when
+// none is set or it names no resolver.
+func (r *InstanceReconciler) instanceDNS() *config.InstanceDNSConfig {
+	if r.Config == nil {
+		return nil
+	}
+	dns := r.Config.DownstreamResourceManagement.InstanceDNS
+	if dns == nil || len(dns.Nameservers) == 0 {
+		return nil
+	}
+	return dns
 }
 
 func (r *InstanceReconciler) reconcileInstanceService(

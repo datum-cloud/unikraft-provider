@@ -133,6 +133,28 @@ RUN --mount=type=secret,id=unikraft-registry-auth \
        UKP_KERNEL_DEST="${UKP_KERNEL_DEST}" \
        /usr/local/bin/fetch-kernel.sh
 
+# The exec sandbox plugin kraftlet attaches for `kubectl exec`. ukpd imports it
+# at startup (--images-import-path), so nodes never pull it and need no
+# registry credential. UKP_PLUGIN_URL must match kraftlet's
+# KRAFTLET_EXEC_PLUGIN_IMAGE exactly. It carries the digest because ukpd never
+# replaces an imported image, so a new plugin needs a new URL.
+ARG UKP_PLUGIN_REGISTRY=index.unikraft.io
+ARG UKP_PLUGIN_REPO=plugins/sandbox
+ARG UKP_PLUGIN_REF=sha256:66f1fb02251ee735a81845f56c218183131c311d8de945cd1a63b1b748eaf518
+ARG UKP_PLUGIN_URL=oci://unikraft.io/plugins/sandbox@${UKP_PLUGIN_REF}
+
+COPY fetch-plugin.sh /usr/local/bin/fetch-plugin.sh
+RUN --mount=type=secret,id=unikraft-registry-auth \
+    chmod +x /usr/local/bin/fetch-plugin.sh \
+    && UKP_PLUGIN_REGISTRY="${UKP_PLUGIN_REGISTRY}" \
+       UKP_PLUGIN_REPO="${UKP_PLUGIN_REPO}" \
+       UKP_PLUGIN_REF="${UKP_PLUGIN_REF}" \
+       UKP_PLUGIN_URL="${UKP_PLUGIN_URL}" \
+       UKP_PLUGIN_DEST=/usr/lib/ukp/plugins/sandbox \
+       UKP_PLUGIN_INDEX=/usr/lib/ukp/plugins/images.json \
+       UKP_PLUGIN_IMAGES_PATH=/var/lib/ukp/images \
+       /usr/local/bin/fetch-plugin.sh
+
 # Datum coredns entrypoint. The stripped vendor CoreDNS has no `bind` plugin, so
 # it cannot listen on just the isolate gateway IPs; its wildcard `.:53` collides
 # with Talos hostDNS on 127.0.0.53:53. This wrapper runs CoreDNS on an alternate
