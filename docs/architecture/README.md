@@ -51,7 +51,7 @@ in the server config, which stamps the listed nameservers (and optional search
 domains) onto every Instance Pod as `dnsConfig` with `dnsPolicy: None`. That is
 the contract a kubelet consumes, and it becomes the authoritative per-Instance
 path once kraftlet maps Pod DNS configuration onto the platform's instance
-`nameserver` field; until then it is inert, so leave it unset.
+`nameserver` field. Until then the Pod carries the configuration but the guest does not see it, so a cluster can set both knobs now and the Instance-level one takes over when kraftlet catches up.
 
 ## Packaging and Deployment
 
