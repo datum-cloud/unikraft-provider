@@ -136,6 +136,15 @@ spec:
           command: ["/usr/local/bin/coredns-redirect.sh"]
           securityContext:
             privileged: true
+          env:
+            # Deployment-time override for where guest lookups outside the
+            # internal zone are forwarded. Empty defers to ukp.conf's
+            # UKP_DNS_UPSTREAM (Talos hostDNS). Set it per cluster with a
+            # strategic-merge patch on this container, as a space-separated
+            # list of CoreDNS forward upstreams, IPv4 or IPv6, e.g.
+            # "[2606:4700:4700::1111]:53 [2001:4860:4860::8888]:53".
+            - name: UKP_DNS_UPSTREAM
+              value: ""
           volumeMounts:
             - name: ukp-data
               mountPath: /var/lib/ukp
