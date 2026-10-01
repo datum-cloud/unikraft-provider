@@ -31,6 +31,22 @@ Runtime state lives on the node, not in the pod: the runtime's data directory is
 a host path backed by a quota-enabled filesystem, which is what makes a node's
 identity and its license survive pod restarts and image bumps.
 
+## Guest DNS
+
+A guest resolves through its host-side TAP gateway: `ukpd` hands the guest
+that gateway address as its resolver at boot, and the `coredns` container
+answers there for `.internal` names and forwards everything else to the
+upstream set by `UKP_DNS_UPSTREAM` in [`ukp.conf`](../../config/dependencies/ukp-runtime/ukp.conf).
+Changing that upstream is the node-level way to steer every Instance's lookups
+at a different resolver, and it accepts an IPv6 upstream.
+
+The provider has its own deployment-time knob, `downstreamResourceManagement.instanceDNS`
+in the server config, which stamps the listed nameservers (and optional search
+domains) onto every Instance Pod as `dnsConfig` with `dnsPolicy: None`. That is
+the contract a kubelet consumes, and it is honored only insofar as the deployed
+kraftlet maps Pod DNS configuration onto the platform's instance `nameserver`
+field; leave it unset to keep the runtime's default resolver.
+
 ## Packaging and Deployment
 
 Runtime configuration is Kustomize, published from this repository as an OCI

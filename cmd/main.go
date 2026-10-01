@@ -85,6 +85,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := serverConfig.DownstreamResourceManagement.InstanceDNS.Validate(); err != nil {
+		setupLog.Error(err, "invalid server config")
+		os.Exit(1)
+	}
+
 	setupLog.Info("server config", "config", serverConfig)
 
 	cfg := ctrl.GetConfigOrDie()
