@@ -17,7 +17,12 @@
 # so the behaviour survives pod/container restarts.
 set -euo pipefail
 
-[ -f /etc/ukp.conf ] && . /etc/ukp.conf
+# The container env is the deployment-time override for the upstream resolver
+# list: infra patches it on the DaemonSet without replacing ukp.conf. Capture
+# it before sourcing ukp.conf, which sets the same name unconditionally.
+UKP_DNS_UPSTREAM_ENV="${UKP_DNS_UPSTREAM:-}"
+UKP_CONF="${UKP_CONF:-/etc/ukp.conf}"
+[ -f "$UKP_CONF" ] && . "$UKP_CONF"
 
 UKP_RUNTIME="${UKP_RUNTIME:-/var/run/ukp}"
 IDNS_ZONE="${IDNS_ZONE:-internal}"
@@ -25,7 +30,10 @@ IDNS_EMAIL="${IDNS_EMAIL:-ns@internal}"
 IDNS_HOSTNAME="${IDNS_HOSTNAME:-ns}"
 NET_SEGMENT="${NET_SEGMENT:-172.16.0.0/12}"
 IDNS_ENDPOINT="${UKP_RUNTIME}/ukpd-idns.api"   # ukpd's iDNS UNIX socket
-UPSTREAM="${UKP_DNS_UPSTREAM:-127.0.0.53:53}"  # Talos hostDNS by default
+# Space-separated CoreDNS forward upstreams: "host:port" or a bare IP, IPv4
+# or IPv6 (bare IPv6 literals get port 53; with a port, bracket them as
+# "[2606:4700:4700::1111]:53"). Env wins over ukp.conf; Talos hostDNS by default.
+UPSTREAM="${UKP_DNS_UPSTREAM_ENV:-${UKP_DNS_UPSTREAM:-127.0.0.53:53}}"
 DNS_PORT="${UKP_DNS_PORT:-5300}"               # CoreDNS wildcard listen port
 PIDFILE="${UKP_DNS_PIDFILE:-${UKP_RUNTIME}/coredns.pid}"
 
@@ -77,4 +85,4 @@ CONF="${CONF_DIR}/ukpdns.conf"
 } > "$CONF"
 
 echo "coredns-redirect: rendered ${CONF}; upstream ${UPSTREAM}" >&2
-exec /usr/bin/coredns -conf "$CONF" -pidfile "$PIDFILE"
+exec "${COREDNS_BIN:-/usr/bin/coredns}" -conf "$CONF" -pidfile "$PIDFILE"
