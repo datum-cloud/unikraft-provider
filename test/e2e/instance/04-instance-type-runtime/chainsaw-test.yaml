@@ -1,0 +1,120 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: instance-type-runtime
+spec:
+  # Unlike 03-instance-type-sizing, which only asserts the footprint the
+  # provider writes on the downstream Pod spec, this test boots real instances:
+  #   - InstanceFallback selects a type that is NOT published in this
+  #     environment (datumcloud-d1-standard-2), so the provider's live read
+  #     finds nothing and sizing must come from the hardcoded catalog —
+  #     which is also what compute claims against quota. The instance must
+  #     boot at 1 vCPU / 2 GiB.
+  #   - InstancePublishedType selects a brand-new InstanceType published in
+  #     this very test, with no container resources, so the Pod's footprint
+  #     can only come from that live object — 2 vCPU / 1 GiB, deliberately
+  #     different from every hardcoded catalog entry. The instance must boot
+  #     at 2 vCPU / 1 GiB.
+  #
+  # Requires a real Unikraft runtime behind Kraftlet (same requirement and
+  # boot assertions as 02-run-instance). Like it, we assert the instance
+  # reaches Available (its microVM has booted) and its microVM Pod is Running
+  # on the runtime node, but NOT in-guest network reachability (the e2e TAP is
+  # ENODEV; Galactic networking is out of scope and not deployed here).
+  #
+  # Both instances fit within the e2e runtime's ci quota
+  # (test/e2e/kind/setup.sh: 4 vCPU / 4096 MB): 1+2 vCPU, 2+1 GiB.
+  description: Boot instances on the hardcoded catalog fallback and on a newly published InstanceType.
+  steps:
+    # state-projector's billing "project" comes from a label on the Namespace
+    # object (meta.datumapis.com/upstream-cluster-name), never the namespace's
+    # own name — see cmd/state-projector/README.md "Attribution". In a real
+    # cluster the label is stamped by Karmada federation before any Instance
+    # can exist in the namespace; this kind sandbox has no such federation, so
+    # stamp it ourselves exactly as 02-run-instance does, so quota attribution
+    # and the running-instance decode path behave like production.
+    - name: label the test namespace with a Karmada-style project identity
+      try:
+        - apply:
+            resource:
+              apiVersion: v1
+              kind: Namespace
+              metadata:
+                name: ($namespace)
+                labels:
+                  meta.datumapis.com/upstream-cluster-name: cluster-e2e-test-project
+    - name: start an Instance on a type that is not published (hardcoded catalog fallback)
+      try:
+        - apply:
+            file: instance-fallback.yaml
+        - assert:
+            resource:
+              apiVersion: compute.datumapis.com/v1alpha
+              kind: Instance
+              metadata:
+                name: e2e-fallback-instance
+              status:
+                # Subset match: assert the Available condition is True without
+                # requiring the full condition list to match exactly.
+                (conditions[?type == 'Available'] | [0].status): "True"
+    - name: assert the fallback Instance boots at the hardcoded catalog footprint
+      try:
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  managed-by: infra-provider-unikraft
+                  upstream.instance: e2e-fallback-instance
+              status:
+                phase: Running
+              spec:
+                (containers[?name == 'app'] | [0].resources.limits.cpu): "1"
+                (containers[?name == 'app'] | [0].resources.limits.memory): 2Gi
+    - name: publish a new InstanceType to the control plane
+      try:
+        - apply:
+            file: instance-type.yaml
+        - assert:
+            resource:
+              apiVersion: compute.datumapis.com/v1alpha
+              kind: InstanceType
+              metadata:
+                name: e2e-run-2cpu-1gi
+              spec:
+                lifecycle:
+                  phase: Active
+        # The provider reads InstanceType through its informer cache, and a
+        # Pod's limits are fixed when it is created. Give the watch event for
+        # the type just published time to reach that cache, so the Instance
+        # below is never sized before the provider can see the type.
+        - sleep:
+            duration: 5s
+    - name: start an Instance on the newly published type
+      try:
+        - apply:
+            file: instance-published.yaml
+        - assert:
+            resource:
+              apiVersion: compute.datumapis.com/v1alpha
+              kind: Instance
+              metadata:
+                name: e2e-run-published-instance
+              status:
+                (conditions[?type == 'Available'] | [0].status): "True"
+    - name: assert the published-type Instance boots at the live object's footprint
+      try:
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  managed-by: infra-provider-unikraft
+                  upstream.instance: e2e-run-published-instance
+              status:
+                phase: Running
+              spec:
+                (containers[?name == 'app'] | [0].resources.limits.cpu): "2"
+                (containers[?name == 'app'] | [0].resources.limits.memory): 1Gi

@@ -1,25 +1,21 @@
+# Names the published InstanceType (instance-type.yaml) and sets no container
+# resources, so the Pod's limits can only come from that object.
 apiVersion: compute.datumapis.com/v1alpha
 kind: Instance
 metadata:
-  name: e2e-sandbox-instance
+  name: e2e-published-type-instance
 spec:
   runtime:
     resources:
-      instanceType: datumcloud-d1-standard-2
+      instanceType: e2e-custom-2cpu-1gi
     sandbox:
       containers:
         - name: app
           image: datum/bun@sha256:13a3b306652d78df4230d57ca2404dc62788c6c9265e11d76d8f3bc05d1a4efc
-          env:
-            - name: ENVIRONMENT
-              value: e2e
           ports:
             - name: http
               port: 3000
               protocol: TCP
-          resources:
-            limits:
-              memory: 512Mi
   networkInterfaces:
     - network:
         name: default
