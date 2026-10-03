@@ -87,6 +87,8 @@ var instancePodLabelKeys = []string{
 
 type InstanceReconciler struct {
 	client.Client
+	// APIReader reads only provider-owned DNS ConfigMaps without caching tenant data.
+	APIReader         client.Reader
 	Scheme            *runtime.Scheme
 	Config            *config.UnikraftProvider
 	LocationClassName string
@@ -333,6 +335,11 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 			if err != nil {
 				return err
 			}
+			if dns := r.instanceDNS(); dns != nil && dns.InitializeGuest {
+				if err := r.ensureGuestDNSConfigMap(ctx, instance, dns); err != nil {
+					return err
+				}
+			}
 			instancePod.Spec = podSpec
 		} else {
 			logger.Info("skipping pod spec reconciliation; pod already exists",
@@ -576,6 +583,11 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 		spec.DNSConfig = &core.PodDNSConfig{
 			Nameservers: append([]string(nil), dns.Nameservers...),
 			Searches:    append([]string(nil), dns.Searches...),
+		}
+		if dns.InitializeGuest {
+			if err := initializeGuestDNS(&spec, guestDNSConfigMap(instance, dns).Name); err != nil {
+				return core.PodSpec{}, err
+			}
 		}
 	}
 
@@ -1001,6 +1013,9 @@ func (r *InstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 	if r.Scheme == nil {
 		r.Scheme = mgr.GetScheme()
+	}
+	if r.APIReader == nil {
+		r.APIReader = mgr.GetAPIReader()
 	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&computev1alpha.Instance{}).
