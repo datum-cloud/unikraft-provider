@@ -1,0 +1,31 @@
+# Names datumcloud-d1-standard-2, which is NOT published as an InstanceType
+# object in this environment, and sets no container resources. The provider's
+# live read finds nothing, so the Pod's limits must come from the hardcoded
+# catalog (1 vCPU / 2 GiB) — the same footprint compute's quota path claims.
+#
+# The scale_to_zero annotations keep the guest booted for the whole test
+# (kraftlet parks idle guests after a ~3s cooldown by default, which would drop
+# Available back to Unknown and flake the assert); mirror 02-run-instance.
+apiVersion: compute.datumapis.com/v1alpha
+kind: Instance
+metadata:
+  name: e2e-fallback-instance
+  annotations:
+    cloud.unikraft.v1.instances/scale_to_zero.policy: "on"
+    cloud.unikraft.v1.instances/scale_to_zero.stateful: "true"
+    cloud.unikraft.v1.instances/scale_to_zero.cooldown_time_ms: "600000" # 10 min — never park during the test
+spec:
+  runtime:
+    resources:
+      instanceType: datumcloud-d1-standard-2
+    sandbox:
+      containers:
+        - name: app
+          image: datum/httpserver-go121:latest
+          ports:
+            - name: http
+              port: 8080
+              protocol: TCP
+  networkInterfaces:
+    - network:
+        name: default

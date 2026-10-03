@@ -11,7 +11,7 @@ metadata:
 spec:
   runtime:
     resources:
-      instanceType: datumcloud/d1-standard-2 # unused in Unikraft provider
+      instanceType: datumcloud-d1-standard-2 # supplies the container's CPU limit below (1 vCPU); memory is explicit
     sandbox:
       containers:
         - name: app

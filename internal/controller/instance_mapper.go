@@ -1,32 +1,18 @@
 package controller
 
 import (
+	"context"
+	"fmt"
+
 	"go.datum.net/compute/api/v1alpha"
 )
 
-// ukcInstanceTypeSpec holds the vCPU and memory dimensions for a named
-// platform instance type as seen by the unikraft provider.
-type ukcInstanceTypeSpec struct {
-	// cpuMillicores is the number of CPU millicores (1000 = 1 vCPU).
-	cpuMillicores int64
-	// memoryMiB is the amount of RAM in mebibytes.
-	memoryMiB int64
-}
-
-// ukcInstanceTypeCatalog maps platform instance type names to their resource
-// dimensions. These values must stay in sync with the compute controller's
-// instanceTypeCatalog (internal/controller/instance_controller.go) — the two
-// catalogs are the single source of truth for what quota claims and what the
-// running Pod actually receives. When new instance types are added, update
-// both catalogs with the same values.
-//
-// datumcloud/d1-standard-2: 1 vCPU, 2 GiB RAM.
-var ukcInstanceTypeCatalog = map[string]ukcInstanceTypeSpec{
-	"datumcloud/d1-standard-2": {
-		cpuMillicores: 1000, // 1 vCPU
-		memoryMiB:     2048, // 2 GiB
-	},
-}
+// instanceTypeReader fetches the InstanceType object the instance selects from
+// the cluster the provider runs in. It returns (nil, nil) when the type is not
+// found there, so sizing falls back to the hardcoded catalog. A non-nil error
+// is transient and fails the Pod build rather than silently sizing the Pod
+// below the footprint the compute controller claimed against.
+type instanceTypeReader func(ctx context.Context, name string) (*v1alpha.InstanceType, error)
 
 // resolveContainerResources returns the CPU (millicores) and memory (MiB) to
 // set on the downstream Pod container for the given Instance container.
@@ -35,13 +21,23 @@ var ukcInstanceTypeCatalog = map[string]ukcInstanceTypeSpec{
 // that sets only a memory limit still gets its explicit memory honoured while
 // the catalog supplies CPU (and vice versa). Precedence per dimension:
 //  1. Explicit container Limits for that dimension — always wins.
-//  2. instanceType catalog — used when the instance is sized by instanceType
-//     only, without an explicit limit for that dimension. This is the common
-//     production case and ensures the Pod receives the same resource footprint
-//     that the quota claim accounts for.
-//  3. Legacy defaults — defaultInstanceMemoryMB for memory; zero (unset) for
+//  2. The published InstanceType object the instance selects, read live via
+//     readInstanceType. This is the same catalog the compute controller sizes
+//     quota claims from, so the Pod runs at the footprint that was billed.
+//  3. The hardcoded catalog (instancetype_catalog.go — a temporary local copy
+//     of go.datum.net/compute/pkg/instancetype, see the TODO there) — covers a
+//     type not yet available through the reader (and installs that read none).
+//  4. Legacy defaults — defaultInstanceMemoryMB for memory; zero (unset) for
 //     CPU. Preserves prior behaviour for unknown or empty instanceType.
-func resolveContainerResources(instance *v1alpha.Instance, container *v1alpha.SandboxContainer) (cpuMillicores, memoryMiB int64) {
+//
+// A transient failure reading the InstanceType returns a non-nil error: the
+// Pod must never be programmed at a smaller size than the quota claim assumed.
+func resolveContainerResources(
+	ctx context.Context,
+	instance *v1alpha.Instance,
+	container *v1alpha.SandboxContainer,
+	readInstanceType instanceTypeReader,
+) (cpuMillicores, memoryMiB int64, err error) {
 	// Collect any explicit Limits from the container spec.
 	var explicitCPUMillicores, explicitMemMiB int64
 	if container != nil && container.Resources != nil && container.Resources.Limits != nil {
@@ -53,40 +49,73 @@ func resolveContainerResources(instance *v1alpha.Instance, container *v1alpha.Sa
 		}
 	}
 
-	// Explicit values win outright; look up the catalog only for missing ones.
+	// Explicit values win outright; look up the type catalog only for missing ones.
 	if explicitCPUMillicores > 0 && explicitMemMiB > 0 {
-		return explicitCPUMillicores, explicitMemMiB
+		return explicitCPUMillicores, explicitMemMiB, nil
 	}
 
-	// Attempt catalog lookup for any dimension not covered by explicit limits.
+	// The published InstanceType object, when a type is selected and a reader is
+	// available. A transient read failure is propagated so the reconcile fails
+	// rather than under-size the Pod; a missing type falls through to the
+	// hardcoded catalog below.
 	var catalogCPU, catalogMem int64
-	if instance != nil {
-		it := instance.Spec.Runtime.Resources.InstanceType
-		if it != "" {
-			if spec, ok := ukcInstanceTypeCatalog[it]; ok {
-				catalogCPU = spec.cpuMillicores
-				catalogMem = spec.memoryMiB
+	resolved := false
+	if readInstanceType != nil && instance != nil {
+		if it := instance.Spec.Runtime.Resources.InstanceType; it != "" {
+			t, rerr := readInstanceType(ctx, canonicalInstanceTypeName(it))
+			if rerr != nil {
+				return 0, 0, fmt.Errorf("reading InstanceType %q: %w", it, rerr)
+			}
+			if t != nil {
+				catalogCPU = t.Spec.Resources.CPU.MilliValue()
+				catalogMem = t.Spec.Resources.Memory.Value() / (1024 * 1024)
+				// A type published with a zero dimension is invalid; fall through
+				// to the hardcoded catalog rather than size partially from it.
+				resolved = catalogCPU > 0 && catalogMem > 0
 			}
 		}
 	}
 
-	// Merge: explicit limit wins per-dimension; catalog fills gaps; legacy
-	// default covers memory when neither source has a value.
+	// TODO(instance-type-catalog): two things to delete once compute's
+	// instance-type-catalog work (datum-cloud/compute#333) merges and a
+	// tagged compute release incorporates it:
+	//  1. This hardcoded lookup table, once the live InstanceType CRD read
+	//     path above is proven in production. It only covers names the
+	//     reader does not hold yet (old installs, types not projected into
+	//     this cell); once every cell reliably serves InstanceType objects,
+	//     sizing must come from a single source — the published catalog —
+	//     and could otherwise drift from the footprint compute claims
+	//     against quota.
+	//  2. lookupHardcodedInstanceType itself (instancetype_catalog.go), a
+	//     temporary local copy of instancetype.Lookup kept only because this
+	//     repo has no stable compute release to import that package from
+	//     yet. Switch this call back to instancetype.Lookup(it) then.
+	if !resolved && instance != nil {
+		if it := instance.Spec.Runtime.Resources.InstanceType; it != "" {
+			if sizing, ok := lookupHardcodedInstanceType(it); ok {
+				catalogCPU, catalogMem = sizing.cpuMillicores, sizing.memoryMiB
+				resolved = true
+			}
+		}
+	}
+
+	// Merge: explicit limit wins per-dimension; a resolved catalog fills gaps;
+	// legacy default covers memory when neither source has a value.
 	resolvedCPU := explicitCPUMillicores
 	if resolvedCPU == 0 {
-		resolvedCPU = catalogCPU // zero when instanceType is unknown (no fabricated value)
+		resolvedCPU = catalogCPU // zero when no source resolved (no fabricated value)
 	}
 
 	resolvedMem := explicitMemMiB
 	if resolvedMem == 0 {
-		if catalogMem > 0 {
+		if resolved {
 			resolvedMem = catalogMem
 		} else {
 			resolvedMem = int64(defaultInstanceMemoryMB) // legacy fallback
 		}
 	}
 
-	return resolvedCPU, resolvedMem
+	return resolvedCPU, resolvedMem, nil
 }
 
 // translateWaitingReason converts a raw Kubernetes container waiting reason and
