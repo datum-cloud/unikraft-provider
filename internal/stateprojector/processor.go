@@ -95,7 +95,7 @@ func (p *processor) HandleEvent(ev stateChange) {
 		ts = time.Now().UTC()
 		p.debugf("event warn=unparseable_timestamp raw_timestamp=%q using=now", ev.Timestamp)
 	}
-	uuid, oldState, newState := extractTransition(ev.Data)
+	uuid, oldState, newState := extractTransition(ev)
 	if uuid == "" {
 		// Logged loudly with the payload: if the vendor renames its uuid
 		// field this is the only signal, and it silently stops all billing.
