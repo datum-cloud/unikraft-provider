@@ -140,7 +140,7 @@ RUN --mount=type=secret,id=unikraft-registry-auth \
 # replaces an imported image, so a new plugin needs a new URL.
 ARG UKP_PLUGIN_REGISTRY=index.unikraft.io
 ARG UKP_PLUGIN_REPO=plugins/sandbox
-ARG UKP_PLUGIN_REF=sha256:66f1fb02251ee735a81845f56c218183131c311d8de945cd1a63b1b748eaf518
+ARG UKP_PLUGIN_REF=sha256:ff839a2a846a510112dcbd6e5a4b867793a3f1cccb980290ec0451a0c428237d
 ARG UKP_PLUGIN_URL=oci://unikraft.io/plugins/sandbox@${UKP_PLUGIN_REF}
 
 COPY fetch-plugin.sh /usr/local/bin/fetch-plugin.sh
