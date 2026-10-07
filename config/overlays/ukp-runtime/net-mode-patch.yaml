@@ -1,0 +1,17 @@
+# Real-cluster only: galactic supplies each instance's TAP device through
+# ukp-remote-cni, so ukpd runs in managed mode and creates none. The kind e2e
+# cluster has no galactic and keeps ukp.conf's isolates default.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ukp-runtime
+spec:
+  template:
+    spec:
+      containers:
+        - name: ukpd
+          env:
+            - name: NET_MODE
+              value: managed
+            - name: NET_COUNT
+              value: "0"
