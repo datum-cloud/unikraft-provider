@@ -115,6 +115,7 @@ func TestReconcileSandboxContainers_RunningPod_SetsConditions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reconcileSandboxContainers returned error: %v", err)
 	}
+	//nolint:staticcheck
 	if result.Requeue || result.RequeueAfter != 0 {
 		t.Errorf("expected empty Result (no requeue), got %+v", result)
 	}
@@ -327,9 +328,11 @@ func TestReconcileSandboxContainers_ConflictOnStatusPatch(t *testing.T) {
 				t.Errorf("expected no error, got: %v", err)
 			}
 
+			//nolint:staticcheck
 			gotRequeue := result.Requeue || result.RequeueAfter != 0
 			if gotRequeue != tc.wantRequeue {
 				t.Errorf("result.Requeue = %v (RequeueAfter=%v), want wantRequeue=%v",
+					//nolint:staticcheck
 					result.Requeue, result.RequeueAfter, tc.wantRequeue)
 			}
 		})

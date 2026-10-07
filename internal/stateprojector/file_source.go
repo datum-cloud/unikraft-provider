@@ -78,7 +78,7 @@ func (f *fileSource) Run(ctx context.Context) error {
 	)
 	defer func() {
 		if file != nil {
-			file.Close()
+			_ = file.Close()
 		}
 		f.saveOffset(offset)
 	}()
@@ -106,7 +106,7 @@ func (f *fileSource) Run(ctx context.Context) error {
 		if fi, err := os.Stat(f.path); err == nil {
 			if !os.SameFile(fi, fileInfo) || fi.Size() < offset {
 				log.Printf("conn rotated path=%s (reopening from start)", f.path)
-				file.Close()
+				_ = file.Close()
 				file = nil
 				offset = 0
 				pending = nil
@@ -156,14 +156,14 @@ func (f *fileSource) open(offset int64) (*os.File, os.FileInfo, int64, error) {
 	}
 	fi, err := file.Stat()
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, nil, offset, err
 	}
 	if offset > fi.Size() {
 		offset = 0
 	}
 	if _, err := file.Seek(offset, io.SeekStart); err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, nil, offset, err
 	}
 	return file, fi, offset, nil
