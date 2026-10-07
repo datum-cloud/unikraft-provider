@@ -1,0 +1,62 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: instance-type-sizing
+spec:
+  # Like 01-create-instance, this only asserts what the provider writes on the
+  # downstream Pod spec, so it does not depend on the guest booting. The Pod's
+  # container limits are the footprint the provider programs, and must equal
+  # what compute claimed against quota:
+  #   - an Instance naming a published InstanceType is sized from that object;
+  #   - an Instance naming a type that is not published falls back to the
+  #     hardcoded catalog.
+  # Requests are deliberately zero on these Pods (see zeroSchedulerRequests), so
+  # only limits are asserted.
+  #
+  # Both Instances stay within the e2e runtime's user quota
+  # (test/e2e/kind/setup.sh: 4 vCPU / 4096 MB): 2+1 vCPU, 1+2 GiB.
+  description: Size Pod limits from a published InstanceType, and from the hardcoded catalog when none is published.
+  steps:
+    - name: publish an InstanceType
+      try:
+        - apply:
+            file: instance-type.yaml
+        - assert:
+            resource:
+              apiVersion: compute.datumapis.com/v1alpha
+              kind: InstanceType
+              metadata:
+                name: e2e-custom-2cpu-1gi
+              spec:
+                lifecycle:
+                  phase: Active
+    - name: a published InstanceType sizes the Pod
+      try:
+        - apply:
+            file: instance-published-type.yaml
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  managed-by: infra-provider-unikraft
+                  upstream.instance: e2e-published-type-instance
+              spec:
+                (containers[?name == 'app'] | [0].resources.limits.cpu): "2"
+                (containers[?name == 'app'] | [0].resources.limits.memory): 1Gi
+    - name: an unpublished InstanceType falls back to the hardcoded catalog
+      try:
+        - apply:
+            file: instance-catalog-type.yaml
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  managed-by: infra-provider-unikraft
+                  upstream.instance: e2e-catalog-type-instance
+              spec:
+                (containers[?name == 'app'] | [0].resources.limits.cpu): "1"
+                (containers[?name == 'app'] | [0].resources.limits.memory): 2Gi

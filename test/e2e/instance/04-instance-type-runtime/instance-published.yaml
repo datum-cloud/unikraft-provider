@@ -1,0 +1,27 @@
+# Names the InstanceType published in this test (instance-type.yaml) and sets
+# no container resources, so the Pod's 2 vCPU / 1 GiB limits can only come from
+# that live object — they are not in any hardcoded catalog entry. scale_to_zero
+# annotations as in instance-fallback.yaml: 10 min cooldown, never park.
+apiVersion: compute.datumapis.com/v1alpha
+kind: Instance
+metadata:
+  name: e2e-run-published-instance
+  annotations:
+    cloud.unikraft.v1.instances/scale_to_zero.policy: "on"
+    cloud.unikraft.v1.instances/scale_to_zero.stateful: "true"
+    cloud.unikraft.v1.instances/scale_to_zero.cooldown_time_ms: "600000" # 10 min — never park during the test
+spec:
+  runtime:
+    resources:
+      instanceType: e2e-run-2cpu-1gi
+    sandbox:
+      containers:
+        - name: app
+          image: datum/httpserver-go121:latest
+          ports:
+            - name: http
+              port: 8080
+              protocol: TCP
+  networkInterfaces:
+    - network:
+        name: default

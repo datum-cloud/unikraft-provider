@@ -90,6 +90,7 @@ func instanceWithVolumes() *computev1alpha.Instance {
 
 // testSchemeWithAll returns a scheme that includes both compute and core types
 // plus Pod/Service GVKs needed for Owns() reconciliation in tests.
+//nolint:unused
 func testSchemeWithAll(t *testing.T) *runtime.Scheme {
 	return testScheme(t)
 }

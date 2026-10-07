@@ -1,0 +1,17 @@
+# A published InstanceType the provider reads live to size the Pod. Its sizing
+# (2 vCPU / 1 GiB) deliberately differs from every entry in the provider's
+# hardcoded catalog (datumcloud-d1-standard-2 is 1 vCPU / 2 GiB), so a Pod
+# sized from this object cannot be mistaken for one sized from the catalog.
+# InstanceType is cluster-scoped; only compute's CRDs are installed in this
+# environment (no compute webhook), so the object is stored as written.
+apiVersion: compute.datumapis.com/v1alpha
+kind: InstanceType
+metadata:
+  name: e2e-custom-2cpu-1gi
+spec:
+  displayName: e2e custom 2 vCPU / 1 GiB
+  resources:
+    cpu: "2"
+    memory: 1Gi
+  lifecycle:
+    phase: Active

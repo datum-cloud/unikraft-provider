@@ -4,10 +4,15 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	computev1alpha "go.datum.net/compute/api/v1alpha"
 )
@@ -138,11 +143,24 @@ func TestBuildPodSpecFromContainers_OtherFieldsPassthrough(t *testing.T) {
 	}
 }
 
-// TestResolveContainerResources verifies the three-tier sizing precedence for
-// Pod container resources: explicit Limits > instanceType catalog > legacy
-// default. The catalog values must equal what compute's quota claim accounts
-// for (1 vCPU / 2 GiB for datumcloud/d1-standard-2) so that Pod sizing and
-// quota are always consistent.
+// instanceTypeSized returns an InstanceType published with the given CPU and
+// memory quantities, for seeding readers in sizing tests.
+func instanceTypeSized(cpu, mem string) *computev1alpha.InstanceType {
+	return &computev1alpha.InstanceType{
+		Spec: computev1alpha.InstanceTypeSpec{
+			Resources: computev1alpha.InstanceTypeResources{
+				CPU:    resource.MustParse(cpu),
+				Memory: resource.MustParse(mem),
+			},
+		},
+	}
+}
+
+// TestResolveContainerResources verifies the sizing precedence for Pod container
+// resources: explicit Limits > live InstanceType object > hardcoded catalog >
+// legacy default. The resolved footprint must equal what compute's quota claim
+// accounts for (1 vCPU / 2 GiB for datumcloud-d1-standard-2) so that Pod sizing
+// and quota are always consistent.
 func TestResolveContainerResources(t *testing.T) {
 	instanceWithType := func(instanceType string) *computev1alpha.Instance {
 		return &computev1alpha.Instance{
@@ -175,14 +193,17 @@ func TestResolveContainerResources(t *testing.T) {
 		name      string
 		instance  *computev1alpha.Instance
 		container *computev1alpha.SandboxContainer
+		reader    instanceTypeReader
 		wantCPU   int64
 		wantMem   int64
+		wantErr   bool
 	}{
 		{
-			// Common production shape: instanceType only, no explicit limits.
-			// The Pod must receive the catalog values so it matches the quota claim.
+			// Common production shape: instanceType only, no explicit limits and no
+			// published object (or none projected yet). The Pod must receive the
+			// hardcoded catalog values so it matches the quota claim.
 			name:      "d1-standard-2 with no explicit limits → catalog values",
-			instance:  instanceWithType("datumcloud/d1-standard-2"),
+			instance:  instanceWithType("datumcloud-d1-standard-2"),
 			container: &computev1alpha.SandboxContainer{},
 			wantCPU:   1000, // 1 vCPU
 			wantMem:   2048, // 2 GiB
@@ -190,7 +211,7 @@ func TestResolveContainerResources(t *testing.T) {
 		{
 			// Both cpu and memory Limits set explicitly — catalog must not override.
 			name:      "explicit cpu+memory limits take precedence over catalog",
-			instance:  instanceWithType("datumcloud/d1-standard-2"),
+			instance:  instanceWithType("datumcloud-d1-standard-2"),
 			container: containerWithLimits("500m", "512Mi"),
 			wantCPU:   500,
 			wantMem:   512,
@@ -198,7 +219,7 @@ func TestResolveContainerResources(t *testing.T) {
 		{
 			// Only memory limit set — memory comes from explicit limit, CPU from catalog.
 			name:      "explicit memory only: explicit memory wins, catalog supplies CPU",
-			instance:  instanceWithType("datumcloud/d1-standard-2"),
+			instance:  instanceWithType("datumcloud-d1-standard-2"),
 			container: containerWithLimits("", "256Mi"),
 			wantCPU:   1000, // catalog d1-standard-2
 			wantMem:   256,  // explicit
@@ -206,19 +227,109 @@ func TestResolveContainerResources(t *testing.T) {
 		{
 			// Only CPU limit set — cpu from explicit, memory from catalog.
 			name:      "explicit cpu only: explicit cpu wins, catalog supplies memory",
-			instance:  instanceWithType("datumcloud/d1-standard-2"),
+			instance:  instanceWithType("datumcloud-d1-standard-2"),
 			container: containerWithLimits("2", ""),
 			wantCPU:   2000, // explicit 2 cores
 			wantMem:   2048, // catalog d1-standard-2
 		},
 		{
-			// Unknown instanceType with no explicit limits → legacy fallback.
-			// No fabricated CPU value; memory uses the hardcoded default.
-			name:      "unknown instanceType, no limits → legacy default memory, no CPU",
-			instance:  instanceWithType("datumcloud/unknown-type-99"),
+			// The published InstanceType object is read live and wins over the
+			// hardcoded catalog for a name the static table also knows.
+			name:      "published instanceType overrides hardcoded catalog",
+			instance:  instanceWithType("datumcloud-d1-standard-2"),
 			container: &computev1alpha.SandboxContainer{},
-			wantCPU:   0,
-			wantMem:   int64(defaultInstanceMemoryMB),
+			reader: func(_ context.Context, _ string) (*computev1alpha.InstanceType, error) {
+				return instanceTypeSized("2000m", "4096Mi"), nil
+			},
+			wantCPU: 2000,
+			wantMem: 4096,
+		},
+		{
+			// Sizing comes from the live catalog even for a type the hardcoded
+			// table does not know.
+			name:      "published instanceType unknown to hardcoded catalog",
+			instance:  instanceWithType("datumcloud-custom-x"),
+			container: &computev1alpha.SandboxContainer{},
+			reader: func(_ context.Context, _ string) (*computev1alpha.InstanceType, error) {
+				return instanceTypeSized("750m", "1024Mi"), nil
+			},
+			wantCPU: 750,
+			wantMem: 1024,
+		},
+		{
+			// A name the reader does not hold falls through to the hardcoded
+			// catalog, preserving old installs where the type is not yet projected.
+			name:      "instanceType not found → hardcoded catalog fallback",
+			instance:  instanceWithType("datumcloud-d1-standard-2"),
+			container: &computev1alpha.SandboxContainer{},
+			reader: func(_ context.Context, _ string) (*computev1alpha.InstanceType, error) {
+				return nil, nil
+			},
+			wantCPU: 1000,
+			wantMem: 2048,
+		},
+		{
+			// Instances stored before the rename carry the slash name
+			// ("datumcloud/d1-standard-2"). The name must be canonicalized before
+			// the live read: client-go rejects a "/" in a resource name before the
+			// request leaves the client, so a reader backed by a real Get errors on
+			// the raw name and fails the Pod build. This reader mimics that
+			// rejection, so the test fails unless the reader is only ever called
+			// with the canonical name.
+			name:      "legacy instanceType name is canonicalized before the live read",
+			instance:  instanceWithType(legacyD1Standard2InstanceType),
+			container: &computev1alpha.SandboxContainer{},
+			reader: func(_ context.Context, name string) (*computev1alpha.InstanceType, error) {
+				if name != d1Standard2InstanceType {
+					return nil, errors.New("live read must use the canonical instance type name")
+				}
+				return instanceTypeSized("1000m", "2048Mi"), nil
+			},
+			wantCPU: 1000,
+			wantMem: 2048,
+		},
+		{
+			// A type published with a zero dimension is invalid; sizing falls
+			// through to the hardcoded catalog rather than fabricating a partial
+			// footprint.
+			name:      "zero-dimension published type → hardcoded catalog fallback",
+			instance:  instanceWithType("datumcloud-d1-standard-2"),
+			container: &computev1alpha.SandboxContainer{},
+			reader: func(_ context.Context, _ string) (*computev1alpha.InstanceType, error) {
+				return instanceTypeSized("0m", "0Mi"), nil
+			},
+			wantCPU: 1000,
+			wantMem: 2048,
+		},
+		{
+			// A transient failure reading the instanceType must fail the resolve,
+			// never silently size the Pod below the footprint quota claimed.
+			name:      "instanceType read error propagates",
+			instance:  instanceWithType("datumcloud-d1-standard-2"),
+			container: &computev1alpha.SandboxContainer{},
+			reader: func(_ context.Context, _ string) (*computev1alpha.InstanceType, error) {
+				return nil, errors.New("transient read failure")
+			},
+			wantErr: true,
+		},
+		{
+			// Explicit limits for both dimensions win outright; the reader is never
+			// consulted, so an erroring reader cannot disturb an explicit sizing.
+			name:      "explicit limits win without consulting the reader",
+			instance:  instanceWithType("datumcloud-d1-standard-2"),
+			container: containerWithLimits("500m", "512Mi"),
+			reader: func(_ context.Context, _ string) (*computev1alpha.InstanceType, error) {
+				return nil, errors.New("must not be called")
+			},
+			wantCPU: 500,
+			wantMem: 512,
+		},
+		{
+			// Unknown instanceType with no explicit limits → error.
+			name:      "unknown instanceType, no limits → legacy default memory, no CPU",
+			instance:  instanceWithType("datumcloud-unknown-type-99"),
+			container: &computev1alpha.SandboxContainer{},
+			wantErr:   true,
 		},
 		{
 			// No instanceType, no explicit limits → same legacy fallback.
@@ -240,7 +351,16 @@ func TestResolveContainerResources(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cpu, mem := resolveContainerResources(tc.instance, tc.container)
+			cpu, mem, err := resolveContainerResources(context.Background(), tc.instance, tc.container, tc.reader)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected an error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 			if cpu != tc.wantCPU {
 				t.Errorf("cpuMillicores = %d, want %d", cpu, tc.wantCPU)
 			}
@@ -251,19 +371,91 @@ func TestResolveContainerResources(t *testing.T) {
 	}
 }
 
+// TestInstanceTypeReaderFromClient verifies the reader produced by
+// instanceTypeReaderFromClient: it returns the published object when present and
+// (nil, nil) on NotFound so callers fall through to the hardcoded catalog.
+func TestInstanceTypeReaderFromClient(t *testing.T) {
+	ctx := context.Background()
+
+	seeded := instanceTypeSized("1000m", "2048Mi")
+	seeded.Name = "datumcloud-d1-standard-2"
+
+	cl := fake.NewClientBuilder().
+		WithScheme(testScheme(t)).
+		WithObjects(seeded).
+		Build()
+
+	read := instanceTypeReaderFromClient(cl)
+
+	t.Run("found", func(t *testing.T) {
+		got, err := read(ctx, "datumcloud-d1-standard-2")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got == nil {
+			t.Fatal("expected the published instanceType, got nil")
+		}
+		if cpu := got.Spec.Resources.CPU.MilliValue(); cpu != 1000 {
+			t.Errorf("CPU = %d millicores, want 1000", cpu)
+		}
+	})
+
+	t.Run("not found returns nil so sizing falls back", func(t *testing.T) {
+		got, err := read(ctx, "datumcloud-absent-type")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != nil {
+			t.Errorf("expected nil for an absent type, got %v", got)
+		}
+	})
+
+	// A cluster whose API server does not serve the InstanceType kind (its CRD
+	// not installed yet) must fall back to the catalog like a missing object,
+	// not fail every Pod build.
+	t.Run("kind not served returns nil so sizing falls back", func(t *testing.T) {
+		noKind := fake.NewClientBuilder().
+			WithScheme(testScheme(t)).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+					return &meta.NoKindMatchError{
+						GroupKind: computev1alpha.GroupVersion.WithKind("InstanceType").GroupKind(),
+					}
+				},
+			}).
+			Build()
+
+		got, err := instanceTypeReaderFromClient(noKind)(ctx, "datumcloud-d1-standard-2")
+		if err != nil {
+			t.Fatalf("a cluster without the InstanceType kind must not fail sizing, got %v", err)
+		}
+		if got != nil {
+			t.Errorf("expected nil when the kind is not served, got %v", got)
+		}
+	})
+}
+
 // TestBuildPodSpecFromContainers_InstanceTypeSizing verifies that
 // buildPodSpecFromContainers sets the instanceType catalog values as Limits
 // on the downstream Pod container when the instance is sized by instanceType
-// only.
+// only, reading the published InstanceType object from the client. This ensures
+// the Pod footprint equals what the quota claim accounts for.
 func TestBuildPodSpecFromContainers_InstanceTypeSizing(t *testing.T) {
 	ctx := context.Background()
-	r := &InstanceReconciler{}
+
+	published := instanceTypeSized("1000m", "2048Mi")
+	published.Name = "datumcloud-d1-standard-2"
+	cl := fake.NewClientBuilder().
+		WithScheme(testScheme(t)).
+		WithObjects(published).
+		Build()
+	r := &InstanceReconciler{Client: cl}
 
 	instance := &computev1alpha.Instance{
 		Spec: computev1alpha.InstanceSpec{
 			Runtime: computev1alpha.InstanceRuntimeSpec{
 				Resources: computev1alpha.InstanceRuntimeResources{
-					InstanceType: "datumcloud/d1-standard-2",
+					InstanceType: "datumcloud-d1-standard-2",
 				},
 				Sandbox: &computev1alpha.SandboxRuntime{
 					Containers: []computev1alpha.SandboxContainer{
@@ -303,7 +495,10 @@ func TestBuildPodSpecFromContainers_InstanceTypeSizing(t *testing.T) {
 
 func TestBuildPodSpecFromContainers_ZeroRequests(t *testing.T) {
 	ctx := context.Background()
-	r := &InstanceReconciler{}
+	// A client is required: instanceType sizing reads the published
+	// InstanceType object first. None is seeded, so sizing falls back to the
+	// hardcoded catalog.
+	r := &InstanceReconciler{Client: fake.NewClientBuilder().WithScheme(testScheme(t)).Build()}
 
 	tests := []struct {
 		name         string
@@ -403,13 +598,13 @@ func assertZeroRequestsForEveryLimit(t *testing.T, c corev1.Container) {
 // with custom sizing is programmed at its declared footprint.
 func TestBuildPodSpecFromContainers_ExplicitLimitsPreserved(t *testing.T) {
 	ctx := context.Background()
-	r := &InstanceReconciler{}
+	r := &InstanceReconciler{Client: fake.NewClientBuilder().WithScheme(testScheme(t)).Build()}
 
 	instance := &computev1alpha.Instance{
 		Spec: computev1alpha.InstanceSpec{
 			Runtime: computev1alpha.InstanceRuntimeSpec{
 				Resources: computev1alpha.InstanceRuntimeResources{
-					InstanceType: "datumcloud/d1-standard-2",
+					InstanceType: "datumcloud-d1-standard-2",
 				},
 				Sandbox: &computev1alpha.SandboxRuntime{
 					Containers: []computev1alpha.SandboxContainer{

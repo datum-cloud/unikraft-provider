@@ -71,7 +71,7 @@ func TestFileSourceTailsAppendedLines(t *testing.T) {
 	src := newTestFileSource(path, handler, &stats{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go src.Run(ctx)
+	go func() { _ = src.Run(ctx) }()
 
 	appendLine(t, path, `{"type":"vm.state_change","timestamp":"1970-01-01T00:00:01Z","data":{"vm":"u1","prev":"stopped","new":"starting"}}`)
 	handler.waitForEvents(t, 1)
@@ -95,7 +95,7 @@ func TestFileSourceIgnoresPartialTrailingLine(t *testing.T) {
 	src := newTestFileSource(path, handler, &stats{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go src.Run(ctx)
+	go func() { _ = src.Run(ctx) }()
 
 	// Write a complete line followed by a partial one (no trailing newline).
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
@@ -106,7 +106,7 @@ func TestFileSourceIgnoresPartialTrailingLine(t *testing.T) {
 		`{"type":"vm.state_change","timestamp":"1970-01-01T00:00:02Z","data":{"vm":"u1"`); err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
+	_ = f.Close()
 
 	handler.waitForEvents(t, 1)
 	time.Sleep(100 * time.Millisecond) // give the tailer time to (wrongly) parse a partial line if it were going to
@@ -122,7 +122,7 @@ func TestFileSourceIgnoresPartialTrailingLine(t *testing.T) {
 	if _, err := f.WriteString(`,"prev":"starting","new":"running"}}` + "\n"); err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
+	_ = f.Close()
 	handler.waitForEvents(t, 2)
 }
 
@@ -143,7 +143,7 @@ func TestFileSourceResumesFromPersistedOffset(t *testing.T) {
 	src := newTestFileSource(path, handler, &stats{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go src.Run(ctx)
+	go func() { _ = src.Run(ctx) }()
 
 	handler.waitForEvents(t, 1)
 	time.Sleep(100 * time.Millisecond)
@@ -166,7 +166,7 @@ func TestFileSourceHandlesRotation(t *testing.T) {
 	src := newTestFileSource(path, handler, &stats{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go src.Run(ctx)
+	go func() { _ = src.Run(ctx) }()
 	handler.waitForEvents(t, 1)
 
 	// Simulate an external rotation: rename the current file away, then have
@@ -194,7 +194,7 @@ func TestFileSourceToleratesMissingFileAtBoot(t *testing.T) {
 	src := newTestFileSource(path, handler, &stats{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go src.Run(ctx)
+	go func() { _ = src.Run(ctx) }()
 
 	time.Sleep(50 * time.Millisecond) // must not panic/error while the file is absent
 
@@ -210,7 +210,7 @@ func appendLine(t *testing.T, path, line string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.WriteString(line + "\n"); err != nil {
 		t.Fatal(err)
 	}

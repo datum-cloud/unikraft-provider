@@ -20,6 +20,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -388,6 +389,29 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 // Volume and env references (ConfigMap/Secret names) are resolved at mount time
 // by kraftlet using its own node/kubelet identity. The provider only references
 // them by name in the Pod spec; no data is read or mirrored by the provider.
+//
+// instanceTypeReaderFromClient returns an instanceTypeReader backed by a live
+// client Get, the way the provider reads the InstanceType objects the compute
+// control plane projects into the cell that hosts the instance being sized.
+// A NotFound is reported as (nil, nil) so sizing falls through to the
+// hardcoded catalog, and so is a cluster that does not serve the InstanceType
+// kind at all (its CRD not installed yet): refusing there would fail every
+// Pod build rather than size it from the catalog. Any other error propagates
+// so the reconcile retries.
+func instanceTypeReaderFromClient(c client.Client) instanceTypeReader {
+	return func(ctx context.Context, name string) (*computev1alpha.InstanceType, error) {
+		var t computev1alpha.InstanceType
+		err := c.Get(ctx, types.NamespacedName{Name: name}, &t)
+		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &t, nil
+	}
+}
+
 func (r *InstanceReconciler) buildPodSpecFromContainers(
 	ctx context.Context,
 	instance *computev1alpha.Instance,
@@ -433,6 +457,11 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 			imagePullSecrets = append(imagePullSecrets, core.LocalObjectReference{Name: ref.Name})
 		}
 	}
+
+	// Read instanceType sizing from the live catalog so the Pod is programmed at
+	// the same footprint the compute controller claimed against. The reader is
+	// built once for the whole Pod rather than per container.
+	readInstanceType := instanceTypeReaderFromClient(r.Client)
 
 	containers := make([]core.Container, 0, len(sandboxContainers))
 	for i := range sandboxContainers {
@@ -485,7 +514,13 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 			})
 		}
 
-		cpuMillicores, memoryMB := resolveContainerResources(instance, sc)
+		// Resolve CPU and memory from the container spec or the instanceType
+		// catalog. The Pod's limits are set so the resource footprint matches
+		// what quota claimed. Requests are set to zero so scheduling is unchanged.
+		cpuMillicores, memoryMB, rerr := resolveContainerResources(ctx, instance, sc, readInstanceType)
+		if rerr != nil {
+			return core.PodSpec{}, fmt.Errorf("resolving resources for container %q: %w", sc.Name, rerr)
+		}
 		memQ := *resource.NewQuantity(memoryMB*1024*1024, resource.BinarySI)
 		resourceList := core.ResourceList{
 			core.ResourceMemory: memQ,
