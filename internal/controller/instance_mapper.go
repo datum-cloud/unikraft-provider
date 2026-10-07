@@ -45,7 +45,7 @@ func resolveContainerResources(
 			explicitCPUMillicores = cpu.MilliValue()
 		}
 		if mem := container.Resources.Limits.Memory(); mem != nil && !mem.IsZero() {
-			explicitMemMiB = mem.Value() / (1024 * 1024)
+			explicitMemMiB = bytesToRoundedMiB(mem.Value())
 		}
 	}
 
@@ -68,7 +68,7 @@ func resolveContainerResources(
 			}
 			if t != nil {
 				catalogCPU = t.Spec.Resources.CPU.MilliValue()
-				catalogMem = t.Spec.Resources.Memory.Value() / (1024 * 1024)
+				catalogMem = bytesToRoundedMiB(t.Spec.Resources.Memory.Value())
 				// A type published with a zero dimension is invalid; fall through
 				// to the hardcoded catalog rather than size partially from it.
 				resolved = catalogCPU > 0 && catalogMem > 0
@@ -95,6 +95,8 @@ func resolveContainerResources(
 			if sizing, ok := lookupHardcodedInstanceType(it); ok {
 				catalogCPU, catalogMem = sizing.cpuMillicores, sizing.memoryMiB
 				resolved = true
+			} else {
+				return 0, 0, fmt.Errorf("instance type %q not found in published or fallback catalog", it)
 			}
 		}
 	}
@@ -140,4 +142,14 @@ func translateWaitingReason(k8sReason, _ string) (reason, message string) {
 	default:
 		return "Provisioning", "Instance is provisioning"
 	}
+}
+
+
+// bytesToRoundedMiB converts bytes to Mebibytes (MiB) by rounding up.
+// Integer division truncates decimals toward zero (e.g. 953.67 -> 953).
+// By adding (divisor - 1) before dividing, we implement a ceiling function using pure
+// integer math. This ensures that instance memory is never under-sized when
+// users request values that do not divide evenly by 1024*1024 (like "1000M").
+func bytesToRoundedMiB(bytes int64) int64 {
+	return (bytes + 1024*1024 - 1) / (1024 * 1024)
 }

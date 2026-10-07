@@ -30,12 +30,6 @@ spec:
               spec:
                 lifecycle:
                   phase: Active
-        # The provider reads InstanceType through its informer cache, and a
-        # Pod's limits are fixed when it is created. Give the watch event for
-        # the type just published time to reach that cache, so the Instance
-        # below is never sized before the provider can see the type.
-        - sleep:
-            duration: 5s
     - name: a published InstanceType sizes the Pod
       try:
         - apply:
