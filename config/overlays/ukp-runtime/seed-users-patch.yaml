@@ -21,8 +21,8 @@ spec:
   template:
     spec:
       initContainers:
-        # An initContainer (ordering vs netsetup is immaterial — it only writes
-        # the data dir); like every initContainer it completes before ukpd starts.
+        # Only writes the data dir; like every initContainer it completes before
+        # ukpd starts.
         - name: seed-users
           image: ghcr.io/datum-cloud/ukp-runtime:latest
           imagePullPolicy: IfNotPresent

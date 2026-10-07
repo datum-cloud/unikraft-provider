@@ -1,5 +1,5 @@
 # Unikraft runtime (ukp) as a node component, minimal profile:
-# netsetup (init) + ukpd + agent. Ingress and network policy are owned by
+# ukpd + agent. Ingress and network policy are owned by
 # the platform; the vendor firewall/proxy/certificate stack is not
 # deployed. See docs/enhancements/containerized-unikraft-runtime/.
 apiVersion: apps/v1
@@ -60,18 +60,6 @@ spec:
       # taint that keeps ordinary workloads off these privileged KVM hosts.
       tolerations:
         - operator: Exists
-      initContainers:
-        - name: netsetup
-          image: ghcr.io/datum-cloud/ukp-runtime:latest
-          imagePullPolicy: IfNotPresent
-          command: ["/usr/lib/ukp/networking/netsetup", "start"]
-          securityContext:
-            privileged: true
-          volumeMounts:
-            - name: ukp-conf
-              mountPath: /etc/ukp.conf
-              subPath: ukp.conf
-              readOnly: true
       containers:
         - name: ukpd
           image: ghcr.io/datum-cloud/ukp-runtime:latest

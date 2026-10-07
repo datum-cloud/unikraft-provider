@@ -7,7 +7,7 @@
 # never persisted into any image layer.
 # See docs/enhancements/containerized-unikraft-runtime/.
 #
-# The kernel comes from the vendor's image registry, using a second build
+# The exec sandbox plugin comes from the vendor's image registry, using a second build
 # secret that holds base64 of "user:password".
 #
 # Build (requires BuildKit; the credentials file is Debian apt auth.conf format
@@ -81,6 +81,10 @@ ARG UKP_PLATFORM_VERSION=6:0.14.0-29+51528ca-2staging+deb13
 # ukp-remote-cni: server-side CNI shim for kraftlet.
 ARG UKP_REMOTE_CNI_VERSION=6:0.1.1-19+b84b457-2staging+deb13
 
+# The kernel ukpd gives to images packaged without one. The ukpd launcher
+# imports it from /usr/lib/ukp/guest/linux when the package is installed.
+ARG UKP_GUESTKERNEL_LINUX_VERSION=
+
 # Install the ukp packages from the vendor repo. The BuildKit secret provides
 # the apt basic-auth credentials at /etc/apt/auth.conf.d/unikraft.conf for the
 # duration of this RUN only, so they leave no trace in any layer.
@@ -103,6 +107,7 @@ RUN --mount=type=secret,id=unikraft-apt-auth,target=/etc/apt/auth.conf.d/unikraf
         ukp-openresty="${UKP_OPENRESTY_VERSION}" \
         ukp-platform="${UKP_PLATFORM_VERSION}" \
         ukp-remote-cni="${UKP_REMOTE_CNI_VERSION}" \
+        ukp-guestkernel-linux${UKP_GUESTKERNEL_LINUX_VERSION:+=${UKP_GUESTKERNEL_LINUX_VERSION}} \
     && rm -rf /var/lib/apt/lists/*
 
 # The ukpd launcher resolves this user for storage quota ownership
@@ -112,26 +117,6 @@ RUN id ukpvol >/dev/null 2>&1 \
 
 # Runtime directories normally created by systemd/tmpfiles on a native install.
 RUN mkdir -p /var/lib/ukp /var/log/ukp /var/run/ukp
-
-# The kernel ukpd gives to images packaged without one. It ships in the image
-# rather than being downloaded on each node, so the kernel and the packages
-# above update and roll back together, and no node needs a registry credential.
-#
-# Pinned by digest, not tag: tags move, and machines built weeks apart must not
-# end up with different kernels. Update alongside UKP_PLATFORM_VERSION.
-ARG UKP_KERNEL_REGISTRY=index.unikraft.io
-ARG UKP_KERNEL_REPO=datum/base-compat
-ARG UKP_KERNEL_MANIFEST_DIGEST=sha256:1be27d37d8f5fe19f0167aad0e9eddfb401a256e6e1ee367b140d306ce83b141
-ARG UKP_KERNEL_DEST=/usr/lib/ukp/kernel
-
-COPY fetch-kernel.sh /usr/local/bin/fetch-kernel.sh
-RUN --mount=type=secret,id=unikraft-registry-auth \
-    chmod +x /usr/local/bin/fetch-kernel.sh \
-    && UKP_KERNEL_REGISTRY="${UKP_KERNEL_REGISTRY}" \
-       UKP_KERNEL_REPO="${UKP_KERNEL_REPO}" \
-       UKP_KERNEL_MANIFEST_DIGEST="${UKP_KERNEL_MANIFEST_DIGEST}" \
-       UKP_KERNEL_DEST="${UKP_KERNEL_DEST}" \
-       /usr/local/bin/fetch-kernel.sh
 
 # The exec sandbox plugin kraftlet attaches for `kubectl exec`. ukpd imports it
 # at startup (--images-import-path), so nodes never pull it and need no
