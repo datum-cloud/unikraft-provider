@@ -83,7 +83,7 @@ ARG UKP_REMOTE_CNI_VERSION=6:0.1.1-19+b84b457-2staging+deb13
 
 # The kernel ukpd gives to images packaged without one. The ukpd launcher
 # imports it from /usr/lib/ukp/guest/linux when the package is installed.
-ARG UKP_GUESTKERNEL_LINUX_VERSION=
+ARG UKP_GUESTKERNEL_LINUX_VERSION=1.0.49~19a576b-2staging+deb13
 
 # Install the ukp packages from the vendor repo. The BuildKit secret provides
 # the apt basic-auth credentials at /etc/apt/auth.conf.d/unikraft.conf for the
@@ -107,7 +107,7 @@ RUN --mount=type=secret,id=unikraft-apt-auth,target=/etc/apt/auth.conf.d/unikraf
         ukp-openresty="${UKP_OPENRESTY_VERSION}" \
         ukp-platform="${UKP_PLATFORM_VERSION}" \
         ukp-remote-cni="${UKP_REMOTE_CNI_VERSION}" \
-        ukp-guestkernel-linux${UKP_GUESTKERNEL_LINUX_VERSION:+=${UKP_GUESTKERNEL_LINUX_VERSION}} \
+        ukp-guestkernel-linux="${UKP_GUESTKERNEL_LINUX_VERSION}" \
     && rm -rf /var/lib/apt/lists/*
 
 # The ukpd launcher resolves this user for storage quota ownership
