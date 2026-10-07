@@ -1,6 +1,10 @@
 # Real-cluster only: galactic supplies each instance's TAP device through
 # ukp-remote-cni, so ukpd runs in managed mode and creates none. The kind e2e
 # cluster has no galactic and keeps ukp.conf's isolates default.
+#
+# erase-platform-taps removes TAP devices left by an earlier isolates-mode ukpd,
+# which persist on the host until deleted. It skips devices still in use (exit
+# code 2) rather than cutting a running instance off.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -8,6 +12,16 @@ metadata:
 spec:
   template:
     spec:
+      initContainers:
+        - name: erase-platform-taps
+          image: ghcr.io/datum-cloud/ukp-runtime:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - /usr/lib/ukp/platform/tools/ukp-tap erase || [ $? -eq 2 ]
+          securityContext:
+            privileged: true
       containers:
         - name: ukpd
           env:
