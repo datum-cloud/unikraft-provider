@@ -325,13 +325,11 @@ func TestResolveContainerResources(t *testing.T) {
 			wantMem: 512,
 		},
 		{
-			// Unknown instanceType with no explicit limits → legacy fallback.
-			// No fabricated CPU value; memory uses the hardcoded default.
+			// Unknown instanceType with no explicit limits → error.
 			name:      "unknown instanceType, no limits → legacy default memory, no CPU",
 			instance:  instanceWithType("datumcloud-unknown-type-99"),
 			container: &computev1alpha.SandboxContainer{},
-			wantCPU:   0,
-			wantMem:   int64(defaultInstanceMemoryMB),
+			wantErr:   true,
 		},
 		{
 			// No instanceType, no explicit limits → same legacy fallback.
