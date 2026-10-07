@@ -76,10 +76,10 @@ func TestFileSourceTailsAppendedLines(t *testing.T) {
 	appendLine(t, path, `{"type":"vm.state_change","timestamp":"1970-01-01T00:00:01Z","data":{"vm":"u1","prev":"stopped","new":"starting"}}`)
 	handler.waitForEvents(t, 1)
 
-	appendLine(t, path, `{"type":"vm.state_change","timestamp":"1970-01-01T00:00:02Z","data":{"vm":"u1","prev":"starting","new":"running"}}`)
+	appendLine(t, path, `{"type":"vm.state_change","timestamp":"1970-01-01T00:00:02Z","object":{"type":"i","uuid":"u1"},"data":{"prev":"starting","new":"running"}}`)
 	handler.waitForEvents(t, 2)
 
-	if handler.all()[0].Data["new"] != "starting" || handler.all()[1].Data["new"] != "running" {
+	if handler.all()[0].Data["new"] != "starting" || handler.all()[1].Data["new"] != "running" || handler.all()[1].Object.UUID != "u1" {
 		t.Errorf("events out of order or wrong: %+v", handler.all())
 	}
 }

@@ -31,6 +31,9 @@ type stateChange struct {
 	Timestamp string         `json:"timestamp"`
 	Type      string         `json:"type"`
 	Data      map[string]any `json:"data"`
+	Object    struct {
+		UUID string `json:"uuid"`
+	} `json:"object"`
 
 	// Raw is the exact wire bytes, kept only so a payload we fail to
 	// interpret can be logged verbatim.
@@ -45,23 +48,24 @@ func (ev stateChange) raw() []byte {
 	return b
 }
 
-// extractTransition pulls uuid + old/new state out of the event data
-// object. ukpd's real payload only ever carries "vm"/"prev"/"new"; if the
-// uuid field is ever renamed, the regex fallback below still catches it by
-// shape rather than needing another speculative key added here.
-func extractTransition(data map[string]any) (uuid, oldState, newState string) {
-	if data == nil {
-		return "", "", ""
-	}
-	uuid = stringField(data, "vm")
+// extractTransition pulls uuid + old/new state out of the event. ukpd's real
+// payload carries the uuid as object.uuid (ukp-platform 0.14+) or data "vm",
+// and the states as data "prev"/"new"; if the data uuid field is ever
+// renamed, the regex fallback below still catches it by shape rather than
+// needing another speculative key added here.
+func extractTransition(ev stateChange) (uuid, oldState, newState string) {
+	uuid = ev.Object.UUID
 	if uuid == "" {
-		raw, _ := json.Marshal(data)
+		uuid = stringField(ev.Data, "vm")
+	}
+	if uuid == "" {
+		raw, _ := json.Marshal(ev.Data)
 		if m := uuidRe.Find(raw); m != nil {
 			uuid = string(m)
 		}
 	}
-	newState = stringField(data, "new")
-	oldState = stringField(data, "prev")
+	newState = stringField(ev.Data, "new")
+	oldState = stringField(ev.Data, "prev")
 	return uuid, oldState, newState
 }
 
