@@ -390,12 +390,6 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 // by kraftlet using its own node/kubelet identity. The provider only references
 // them by name in the Pod spec; no data is read or mirrored by the provider.
 //
-// TODO(Phase 3b): EnvFrom mapping is deferred. compute's SandboxContainer does
-// not yet expose an EnvFrom field. When it is added (planned for v1 API), the
-// mapping here will require field-by-field translation from
-// computev1alpha.EnvFromSource to core.EnvFromSource — it is NOT a simple
-// ValueFrom-style passthrough because the two types are not identical.
-
 // instanceTypeReaderFromClient returns an instanceTypeReader backed by a live
 // client Get, the way the provider reads the InstanceType objects the compute
 // control plane projects into the cell that hosts the instance being sized.
@@ -521,8 +515,8 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 		}
 
 		// Resolve CPU and memory from the container spec or the instanceType
-		// catalog. Using requests == limits ensures kraftlet sees a guaranteed
-		// QoS class and the Pod's resource footprint matches what quota claimed.
+		// catalog. The Pod's limits are set so the resource footprint matches
+		// what quota claimed. Requests are set to zero so scheduling is unchanged.
 		cpuMillicores, memoryMB, rerr := resolveContainerResources(ctx, instance, sc, readInstanceType)
 		if rerr != nil {
 			return core.PodSpec{}, fmt.Errorf("resolving resources for container %q: %w", sc.Name, rerr)
