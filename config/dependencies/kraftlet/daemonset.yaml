@@ -109,4 +109,4 @@ spec:
               value: "unikraft://kraftlet-$(NODE_NAME)"
             # Must match UKP_PLUGIN_URL in build/ukp-runtime/Dockerfile.
             - name: KRAFTLET_EXEC_PLUGIN_IMAGE
-              value: "oci://unikraft.io/plugins/sandbox@sha256:66f1fb02251ee735a81845f56c218183131c311d8de945cd1a63b1b748eaf518"
+              value: "oci://unikraft.io/plugins/sandbox@sha256:ff839a2a846a510112dcbd6e5a4b867793a3f1cccb980290ec0451a0c428237d"
