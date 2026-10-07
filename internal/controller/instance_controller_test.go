@@ -427,41 +427,91 @@ func TestTranslateWaitingReason(t *testing.T) {
 
 // TestSyncInstancePowerState_WaitingReasonTranslation verifies that
 // syncInstancePowerState translates container waiting reasons end-to-end: the
-// Available condition must carry domain language, never raw k8s strings.
+// conditions must carry domain language, never raw k8s strings.
 func TestSyncInstancePowerState_WaitingReasonTranslation(t *testing.T) {
+	const runtimeImage = "oci://oci.unikraft.io/official/nginx:latest"
+
+	pullWaiting := podPendingWithWaiting("ErrImagePull", "platform stop: image pull failed")
+	pullWaiting.Status.ContainerStatuses[0].Image = runtimeImage
+
+	pullFailed := podPendingWithWaiting("", "")
+	pullFailed.Status.Phase = core.PodFailed
+	pullFailed.Status.ContainerStatuses[0].Image = runtimeImage
+	pullFailed.Status.ContainerStatuses[0].State = core.ContainerState{
+		Terminated: &core.ContainerStateTerminated{ExitCode: 1, Message: "Instance is stopped, platform stop: image pull failed"},
+	}
+
+	crashing := podPendingWithWaiting("CrashLoopBackOff", "back-off 5m0s restarting failed container")
+	crashing.Status.Phase = core.PodRunning
+	crashing.Status.ContainerStatuses[0].LastTerminationState.Terminated = &core.ContainerStateTerminated{ExitCode: 137}
+
 	tests := []struct {
-		name          string
-		pod           *core.Pod
-		wantReason    string
-		wantMessage   string
-		wantNotReason string
+		name           string
+		pod            *core.Pod
+		pullSecrets    []string
+		wantStatus     metav1.ConditionStatus
+		wantProgrammed metav1.ConditionStatus
+		wantReason     string
+		wantMessage    string
+		wantNotReason  string
+		wantHash       bool
 	}{
 		{
-			name:          "ImagePullBackOff → ImageUnavailable in Available condition",
-			pod:           podPendingWithWaiting("ImagePullBackOff", "Back-off pulling image"),
-			wantReason:    "ImageUnavailable",
-			wantMessage:   "The instance image could not be pulled",
-			wantNotReason: "ImagePullBackOff",
+			name:           "image pull retrying",
+			pod:            pullWaiting,
+			wantStatus:     metav1.ConditionFalse,
+			wantProgrammed: metav1.ConditionFalse,
+			wantReason:     "ImageUnavailable",
+			wantMessage:    `Image "oci.unikraft.io/official/nginx:latest" for container "app" could not be pulled anonymously`,
+			wantNotReason:  "ErrImagePull",
 		},
 		{
-			name:          "CrashLoopBackOff → InstanceCrashing in Available condition",
-			pod:           podPendingWithWaiting("CrashLoopBackOff", "back-off 5m0s restarting failed container"),
-			wantReason:    "InstanceCrashing",
-			wantMessage:   "The instance is repeatedly failing to start",
-			wantNotReason: "CrashLoopBackOff",
+			name:           "image pull failed",
+			pod:            pullFailed,
+			pullSecrets:    []string{"registry-creds"},
+			wantStatus:     metav1.ConditionFalse,
+			wantProgrammed: metav1.ConditionFalse,
+			wantReason:     "ImageUnavailable",
+			wantMessage:    `Image "oci.unikraft.io/official/nginx:latest" for container "app" could not be pulled using credentials from "registry-creds"`,
+			wantNotReason:  "Failed",
 		},
 		{
-			name:          "unknown k8s reason → generic Provisioning, raw string never set",
-			pod:           podPendingWithWaiting("SomeObscureK8sReason", "internal details"),
-			wantReason:    "Provisioning",
-			wantMessage:   "Instance is provisioning",
-			wantNotReason: "SomeObscureK8sReason",
+			name:           "crash loop",
+			pod:            crashing,
+			wantStatus:     metav1.ConditionFalse,
+			wantProgrammed: metav1.ConditionTrue,
+			wantReason:     "InstanceCrashing",
+			wantMessage:    `Container "app" keeps exiting (last exit code 137); restarting`,
+			wantNotReason:  "CrashLoopBackOff",
+			wantHash:       true,
+		},
+		{
+			name:           "configuration error",
+			pod:            podPendingWithWaiting("CreateContainerConfigError", "secret not found"),
+			wantStatus:     metav1.ConditionFalse,
+			wantProgrammed: metav1.ConditionFalse,
+			wantReason:     "ConfigurationError",
+			wantMessage:    `Container "app" could not be started due to a configuration error; retrying`,
+			wantNotReason:  "CreateContainerConfigError",
+		},
+		{
+			name:           "unknown reason",
+			pod:            podPendingWithWaiting("SomeObscureK8sReason", "internal details"),
+			wantStatus:     metav1.ConditionUnknown,
+			wantProgrammed: metav1.ConditionUnknown,
+			wantReason:     "Provisioning",
+			wantMessage:    "Instance is provisioning",
+			wantNotReason:  "SomeObscureK8sReason",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			instance := newTestInstance()
+			instance.Spec.Controller = &computev1alpha.InstanceController{TemplateHash: "abc123"}
+			for _, name := range tc.pullSecrets {
+				instance.Spec.Runtime.Sandbox.ImagePullSecrets = append(instance.Spec.Runtime.Sandbox.ImagePullSecrets, computev1alpha.LocalSecretReference{Name: name})
+			}
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(testScheme(t)).
 				WithObjects(instance).
@@ -478,6 +528,9 @@ func TestSyncInstancePowerState_WaitingReasonTranslation(t *testing.T) {
 			if running == nil {
 				t.Fatal("expected Available condition to be set")
 			}
+			if running.Status != tc.wantStatus {
+				t.Errorf("Available.Status = %q, want %q", running.Status, tc.wantStatus)
+			}
 			if running.Reason != tc.wantReason {
 				t.Errorf("Available.Reason = %q, want %q", running.Reason, tc.wantReason)
 			}
@@ -487,8 +540,26 @@ func TestSyncInstancePowerState_WaitingReasonTranslation(t *testing.T) {
 			if running.Reason == tc.wantNotReason {
 				t.Errorf("raw k8s reason %q leaked into Available condition", tc.wantNotReason)
 			}
-			if running.Message == tc.pod.Status.ContainerStatuses[0].State.Waiting.Message {
+			state := tc.pod.Status.ContainerStatuses[0].State
+			if (state.Waiting != nil && running.Message == state.Waiting.Message) ||
+				(state.Terminated != nil && running.Message == state.Terminated.Message) {
 				t.Errorf("raw k8s message leaked into Available condition: %q", running.Message)
+			}
+
+			programmed := apimeta.FindStatusCondition(instance.Status.Conditions, computev1alpha.InstanceProgrammed)
+			if programmed == nil {
+				t.Fatal("expected Programmed condition to be set")
+			}
+			if programmed.Status != tc.wantProgrammed {
+				t.Errorf("Programmed.Status = %q, want %q", programmed.Status, tc.wantProgrammed)
+			}
+			if tc.wantProgrammed == metav1.ConditionFalse && (programmed.Reason != tc.wantReason || programmed.Message != tc.wantMessage) {
+				t.Errorf("Programmed = %s %q, want %s %q", programmed.Reason, programmed.Message, tc.wantReason, tc.wantMessage)
+			}
+
+			gotHash := instance.Status.Controller != nil && instance.Status.Controller.ObservedTemplateHash == "abc123"
+			if gotHash != tc.wantHash {
+				t.Errorf("ObservedTemplateHash recorded = %v, want %v", gotHash, tc.wantHash)
 			}
 		})
 	}

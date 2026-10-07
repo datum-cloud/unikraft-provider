@@ -3,8 +3,11 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"go.datum.net/compute/api/v1alpha"
+	core "k8s.io/api/core/v1"
 )
 
 // instanceTypeReader fetches the InstanceType object the instance selects from
@@ -144,7 +147,6 @@ func translateWaitingReason(k8sReason, _ string) (reason, message string) {
 	}
 }
 
-
 // bytesToRoundedMiB converts bytes to Mebibytes (MiB) by rounding up.
 // Integer division truncates decimals toward zero (e.g. 953.67 -> 953).
 // By adding (divisor - 1) before dividing, we implement a ceiling function using pure
@@ -152,4 +154,56 @@ func translateWaitingReason(k8sReason, _ string) (reason, message string) {
 // users request values that do not divide evenly by 1024*1024 (like "1000M").
 func bytesToRoundedMiB(bytes int64) int64 {
 	return (bytes + 1024*1024 - 1) / (1024 * 1024)
+}
+
+// runtimeImagePullFailed is the runtime's text for a failed image pull.
+const runtimeImagePullFailed = "image pull failed"
+
+// containerStartFailure reports the first container the runtime is failing to
+// start. Transient states such as ContainerCreating are not failures.
+func containerStartFailure(instance *v1alpha.Instance, pod *core.Pod) (reason, message string, failing bool) {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if t := cs.State.Terminated; t != nil && strings.Contains(t.Message, runtimeImagePullFailed) {
+			return v1alpha.InstanceProgrammedReasonImageUnavailable, imagePullFailure(instance, cs), true
+		}
+		if cs.State.Waiting == nil {
+			continue
+		}
+		reason, _ := translateWaitingReason(cs.State.Waiting.Reason, cs.State.Waiting.Message)
+		switch reason {
+		case v1alpha.InstanceProgrammedReasonImageUnavailable:
+			return reason, imagePullFailure(instance, cs), true
+		case v1alpha.InstanceProgrammedReasonInstanceCrashing:
+			message := fmt.Sprintf("Container %q keeps exiting", cs.Name)
+			if t := cs.LastTerminationState.Terminated; t != nil {
+				message += fmt.Sprintf(" (last exit code %d)", t.ExitCode)
+			}
+			return reason, message + "; restarting", true
+		case v1alpha.InstanceProgrammedReasonConfigurationError:
+			return reason, fmt.Sprintf("Container %q could not be started due to a configuration error; retrying", cs.Name), true
+		}
+	}
+	return "", "", false
+}
+
+// imagePullFailure names the image as the user wrote it (the runtime reports a
+// rewritten form) and the pull secrets it was tried with.
+func imagePullFailure(instance *v1alpha.Instance, cs core.ContainerStatus) string {
+	image := cs.Image
+	var secrets []string
+	if sandbox := instance.Spec.Runtime.Sandbox; sandbox != nil {
+		for _, c := range sandbox.Containers {
+			if c.Name == cs.Name {
+				image = c.Image
+			}
+		}
+		for _, ref := range sandbox.ImagePullSecrets {
+			secrets = append(secrets, strconv.Quote(ref.Name))
+		}
+	}
+	message := fmt.Sprintf("Image %q for container %q could not be pulled", image, cs.Name)
+	if len(secrets) == 0 {
+		return message + " anonymously"
+	}
+	return message + " using credentials from " + strings.Join(secrets, ", ")
 }

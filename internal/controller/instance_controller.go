@@ -779,33 +779,66 @@ func (r *InstanceReconciler) syncInstancePowerState(
 		programmedCondition.Message = "Instance is terminating"
 
 	default:
+		// The runtime retries a failing container indefinitely or fails the pod
+		// outright; report both as a start failure. Log raw state only when
+		// the reason changes.
+		failureReason, failureMessage, failing := containerStartFailure(instance, instancePod)
+		previous := meta.FindStatusCondition(instance.Status.Conditions, computev1alpha.InstanceAvailable)
+		if failing && (previous == nil || previous.Reason != failureReason) {
+			for _, cs := range instancePod.Status.ContainerStatuses {
+				if cs.State.Waiting != nil {
+					logger.Info("container waiting",
+						"container", cs.Name,
+						"k8sReason", cs.State.Waiting.Reason,
+						"k8sMessage", cs.State.Waiting.Message,
+					)
+				}
+				if cs.State.Terminated != nil {
+					logger.Info("container terminated",
+						"container", cs.Name,
+						"k8sReason", cs.State.Terminated.Reason,
+						"k8sMessage", cs.State.Terminated.Message,
+					)
+				}
+			}
+		}
+
+		// Compute tracks rollouts by ObservedTemplateHash; a running pod was
+		// built from this template even if its container crashes.
+		if instancePod.Status.Phase == core.PodRunning && instance.Spec.Controller != nil {
+			if instance.Status.Controller == nil {
+				instance.Status.Controller = &computev1alpha.InstanceControllerStatus{}
+			}
+			if instance.Status.Controller.ObservedTemplateHash != instance.Spec.Controller.TemplateHash {
+				instance.Status.Controller.ObservedTemplateHash = instance.Spec.Controller.TemplateHash
+				statusChanged = true
+			}
+		}
+
 		// Derive running and programmed conditions from the underlying runtime phase.
-		// Programmed=True means the instance has been accepted and is running;
-		// it transitions to False only on terminal failures.
-		switch instancePod.Status.Phase {
-		case core.PodRunning:
+		// A crash loop stays Programmed=True: the platform did start it.
+		switch phase := instancePod.Status.Phase; {
+		case failing && phase != core.PodSucceeded:
+			availableCondition.Status = metav1.ConditionFalse
+			availableCondition.Reason = failureReason
+			availableCondition.Message = failureMessage
+			if failureReason == computev1alpha.InstanceProgrammedReasonInstanceCrashing {
+				programmedCondition.Status = metav1.ConditionTrue
+				programmedCondition.Reason = computev1alpha.InstanceProgrammedReasonProgrammed
+				programmedCondition.Message = "Instance has been programmed"
+			} else {
+				programmedCondition.Status = metav1.ConditionFalse
+				programmedCondition.Reason = failureReason
+				programmedCondition.Message = failureMessage
+			}
+		case phase == core.PodRunning:
 			availableCondition.Status = metav1.ConditionTrue
 			availableCondition.Reason = computev1alpha.InstanceAvailableReasonAvailable
 			availableCondition.Message = "Instance is available"
 			programmedCondition.Status = metav1.ConditionTrue
 			programmedCondition.Reason = computev1alpha.InstanceProgrammedReasonProgrammed
 			programmedCondition.Message = "Instance is available"
-
-			// The instance has been programmed, so record the template hash the
-			// provider acted on. Compute counts an instance toward its current
-			// replicas only when ObservedTemplateHash matches the desired hash
-			// it stamped on Spec.Controller.TemplateHash, so echo that value
-			// back to keep rolling-update/template-version tracking accurate.
-			if instance.Spec.Controller != nil {
-				if instance.Status.Controller == nil {
-					instance.Status.Controller = &computev1alpha.InstanceControllerStatus{}
-				}
-				if instance.Status.Controller.ObservedTemplateHash != instance.Spec.Controller.TemplateHash {
-					instance.Status.Controller.ObservedTemplateHash = instance.Spec.Controller.TemplateHash
-					statusChanged = true
-				}
-			}
-		case core.PodPending:
+		case phase == core.PodPending:
 			availableCondition.Status = metav1.ConditionUnknown
 			availableCondition.Reason = "Provisioning"
 			availableCondition.Message = "Instance is provisioning"
@@ -825,14 +858,14 @@ func (r *InstanceReconciler) syncInstancePowerState(
 			programmedCondition.Status = metav1.ConditionUnknown
 			programmedCondition.Reason = computev1alpha.InstanceProgrammedReasonProgrammingInProgress
 			programmedCondition.Message = availableCondition.Message
-		case core.PodSucceeded:
+		case phase == core.PodSucceeded:
 			availableCondition.Status = metav1.ConditionFalse
 			availableCondition.Reason = computev1alpha.InstanceAvailableReasonStopping
 			availableCondition.Message = "Instance has stopped"
 			programmedCondition.Status = metav1.ConditionFalse
 			programmedCondition.Reason = computev1alpha.InstanceAvailableReasonStopping
 			programmedCondition.Message = "Instance has stopped"
-		case core.PodFailed:
+		case phase == core.PodFailed:
 			availableCondition.Status = metav1.ConditionFalse
 			availableCondition.Reason = "Failed"
 			availableCondition.Message = instancePod.Status.Message
