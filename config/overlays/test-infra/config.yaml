@@ -17,6 +17,10 @@ downstreamResourceManagement:
   # runtime's default. Unset leaves the default in place. IPv4 and IPv6
   # literals are both accepted; Kubernetes allows at most three.
   # instanceDNS:
+  #   # Opt-in workaround for runtimes that ignore Pod DNSConfig. Requires
+  #   # an explicit container command, /bin/sh, cat, and writable /etc/resolv.conf.
+  #   # Applies to new Pods only. See docs/enhancements/galactic-dns.
+  #   initializeGuest: true
   #   nameservers:
   #     - "2606:4700:4700::1111"
   #     - "2001:4860:4860::8888"

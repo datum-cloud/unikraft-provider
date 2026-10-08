@@ -33,12 +33,13 @@ identity and its license survive pod restarts and image bumps.
 
 ## Guest DNS
 
-A guest resolves through its host-side TAP gateway: `ukpd` hands the guest
+On the runtime-managed `ukp*` TAP path, a guest resolves through its host-side
+gateway: `ukpd` hands the guest
 that gateway address as its resolver at boot, and the `coredns` container
 answers there for `.internal` names and forwards everything else to the
 upstream set by `UKP_DNS_UPSTREAM` in [`ukp.conf`](../../config/dependencies/ukp-runtime/ukp.conf).
-That upstream is the effective path today for choosing the resolvers every
-Instance uses. Set it per cluster through the `UKP_DNS_UPSTREAM` env on the
+That upstream chooses the public resolvers for guests that reach CoreDNS.
+Set it per cluster through the `UKP_DNS_UPSTREAM` env on the
 `coredns` container of the `ukp-runtime` DaemonSet, which wins over the value in
 `ukp.conf`; empty keeps the default. The value is a space-separated list of
 CoreDNS forward upstreams, IPv4 or IPv6, so an IPv6-only cluster uses
@@ -50,8 +51,20 @@ The provider has its own deployment-time knob, `downstreamResourceManagement.ins
 in the server config, which stamps the listed nameservers (and optional search
 domains) onto every Instance Pod as `dnsConfig` with `dnsPolicy: None`. That is
 the contract a kubelet consumes, and it becomes the authoritative per-Instance
-path once kraftlet maps Pod DNS configuration onto the platform's instance
-`nameserver` field. Until then the Pod carries the configuration but the guest does not see it, so a cluster can set both knobs now and the Instance-level one takes over when kraftlet catches up.
+path once kraftlet and the runtime apply that configuration inside the guest.
+The staging runtime tested on 2026-10-01 rejects IPv6 values in its instance
+`nameserver` API field, so simply wiring that field is insufficient.
+
+Galactic-attached guests use a different path. A real staging microVM had no
+`/etc/resolv.conf` despite its Pod carrying public IPv6 nameservers. Supplying
+that file at application startup enabled UDP/TCP DNS and HTTPS through NAT66.
+The current runtime mounts ConfigMap volumes as ROM directories and does not
+honor a `subPath` file mount at `/etc/resolv.conf`; mount a separate directory
+and copy the file during startup instead. Set `instanceDNS.initializeGuest: true`
+to have the provider do this for new Pods with explicit application commands,
+`/bin/sh`, `cat`, and writable `/etc/resolv.conf`. See the
+[Galactic DNS investigation](../enhancements/galactic-dns/README.md) for evidence,
+the tested workaround, and the required platform integration.
 
 ## Packaging and Deployment
 
