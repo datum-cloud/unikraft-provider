@@ -1,0 +1,87 @@
+# OCI adapter: lets Instances run plain OCI images. It converts the images
+# of Pods the provider gates (downstreamResourceManagement.enableImageConversion)
+# and serves them to the node's runtime over http+oci, through the Service.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ukp-oci-adapter
+  namespace: unikraft-system
+  labels:
+    app.kubernetes.io/name: ukp-oci-adapter
+    app.kubernetes.io/component: oci-adapter
+    app.kubernetes.io/part-of: unikraft-provider
+spec:
+  selector:
+    matchLabels:
+      app: ukp-oci-adapter
+  template:
+    metadata:
+      labels:
+        app: ukp-oci-adapter
+        app.kubernetes.io/name: ukp-oci-adapter
+        app.kubernetes.io/component: oci-adapter
+        app.kubernetes.io/part-of: unikraft-provider
+    spec:
+      serviceAccountName: ukp-oci-adapter
+      priorityClassName: system-node-critical
+      # The runtime's nodes (see ukp-runtime).
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: compute.datumapis.com/runtime
+                    operator: In
+                    values: ["unikraft"]
+                  - key: unikraft.com/virtual-kubelet
+                    operator: DoesNotExist
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: adapter
+          image: ghcr.io/datum-cloud/ukp-oci-adapter:latest
+          args:
+            - -advertise-url=http+oci://ukp-oci-adapter.$(POD_NAMESPACE).svc.cluster.local
+            - -platform=kraftcloud/x86_64=linux/amd64
+            # kraftlet's virtual node on this node (config/dependencies/kraftlet).
+            - -preferred-node=kraftlet-$(NODE_NAME)
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: http-oci
+              containerPort: 8090
+          securityContext:
+            # Mounts snapshot views with overlayfs.
+            privileged: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: containerd-socket
+              mountPath: /run/containerd/containerd.sock
+            # Same path as the host's: snapshot mounts name host paths. Writable
+            # for the snapshots' upper directories; the socket grants as much.
+            - name: containerd-root
+              mountPath: /var/lib/containerd
+            # EROFS images being built.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: containerd-socket
+          hostPath:
+            path: /run/containerd/containerd.sock
+            type: Socket
+        - name: containerd-root
+          hostPath:
+            path: /var/lib/containerd
+            type: Directory
+        - name: tmp
+          emptyDir: {}

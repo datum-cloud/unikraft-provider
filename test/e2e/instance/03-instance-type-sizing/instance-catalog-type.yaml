@@ -6,6 +6,10 @@ apiVersion: compute.datumapis.com/v1alpha
 kind: Instance
 metadata:
   name: e2e-catalog-type-instance
+  annotations:
+    # A prebuilt runtime image from the vendor registry, pulled by the
+    # runtime itself: no image conversion.
+    compute.datumapis.com/image-format: unikraft
 spec:
   runtime:
     resources:
@@ -13,7 +17,7 @@ spec:
     sandbox:
       containers:
         - name: app
-          image: datum/bun@sha256:13a3b306652d78df4230d57ca2404dc62788c6c9265e11d76d8f3bc05d1a4efc
+          image: unikraft.io/datum/bun@sha256:13a3b306652d78df4230d57ca2404dc62788c6c9265e11d76d8f3bc05d1a4efc
           ports:
             - name: http
               port: 3000

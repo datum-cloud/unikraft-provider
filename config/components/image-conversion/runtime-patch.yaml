@@ -1,0 +1,16 @@
+# The runtime's image agent reaches the adapter by its Service name, and asks
+# it at every instance start.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ukp-runtime
+  namespace: unikraft-system
+spec:
+  template:
+    spec:
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: ukpd
+          env:
+            - name: UKP_IMAGES_ALWAYS_AUTHORIZE
+              value: "true"

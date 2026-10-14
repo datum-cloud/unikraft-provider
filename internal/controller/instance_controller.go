@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/distribution/reference"
 	core "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -549,7 +550,7 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 
 		containers = append(containers, core.Container{
 			Name:         sc.Name,
-			Image:        sc.Image,
+			Image:        normalizedImage(sc.Image),
 			Command:      sc.Command,
 			Args:         sc.Args,
 			Env:          envVars,
@@ -600,6 +601,9 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 		RestartPolicy:                core.RestartPolicyAlways,
 		NodeSelector:                 nodeSelector,
 		Tolerations:                  tolerations,
+	}
+	if r.gatesForImageConversion(instance) {
+		spec.SchedulingGates = []core.PodSchedulingGate{{Name: imageConversionGate}}
 	}
 
 	// Resolver choice is a platform decision made at deployment time. Policy
@@ -842,6 +846,9 @@ func (r *InstanceReconciler) syncInstancePowerState(
 			availableCondition.Status = metav1.ConditionUnknown
 			availableCondition.Reason = "Provisioning"
 			availableCondition.Message = "Instance is provisioning"
+			if imageConversionInProgress(instancePod) {
+				availableCondition.Message = "The instance image is being prepared"
+			}
 			// Translate the first non-empty container waiting reason into
 			// Instance-domain language. Log the raw k8s detail for operators.
 			for _, cs := range instancePod.Status.ContainerStatuses {
@@ -915,6 +922,18 @@ func (r *InstanceReconciler) syncInstancePowerState(
 	}
 
 	return nil
+}
+
+// normalizedImage fully qualifies an image reference the way Docker and the
+// kubelet do (nginx becomes docker.io/library/nginx). The runtime's image agent
+// resolves short names against its own registry instead. References that do
+// not parse, such as http+oci URLs, are returned as they are.
+func normalizedImage(image string) string {
+	named, err := reference.ParseNormalizedNamed(image)
+	if err != nil {
+		return image
+	}
+	return named.String()
 }
 
 func copyInstancePodLabels(instanceLabels, podLabels map[string]string) {

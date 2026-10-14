@@ -64,12 +64,31 @@ jobs:
       platforms: linux/amd64
     secrets: inherit
 
+  # The OCI adapter: a node DaemonSet that lets Instances run plain OCI
+  # images (config/components/image-conversion). amd64 only, like the runtime
+  # it serves.
+  publish-oci-adapter-image:
+    needs:
+      - validate-kustomize
+    permissions:
+      id-token: write
+      contents: read
+      packages: write
+    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.21.0
+    with:
+      image-name: ukp-oci-adapter
+      context: .
+      dockerfile-path: build/ukp-oci-adapter/Dockerfile
+      platforms: linux/amd64
+    secrets: inherit
+
   # Pin every image to the tag its job published, then push the config tree as the bundle.
   publish-kustomize-bundle:
     needs:
       - publish-container-image
       - publish-runtime-image
       - publish-state-projector-image
+      - publish-oci-adapter-image
     uses: datum-cloud/actions/.github/workflows/publish-kustomize-bundle.yaml@v1.21.0
     with:
       bundle-name: ghcr.io/datum-cloud/unikraft-provider-kustomize
@@ -83,4 +102,5 @@ jobs:
         - { path: config/dependencies/ukp-runtime, name: ghcr.io/datum-cloud/ukp-runtime, tag: "${{ needs.publish-runtime-image.outputs.tag }}" }
         - { path: config/overlays/ukp-runtime, name: ghcr.io/datum-cloud/ukp-runtime, tag: "${{ needs.publish-runtime-image.outputs.tag }}" }
         - { path: config/dependencies/ukp-runtime, name: ghcr.io/datum-cloud/ukp-state-projector, tag: "${{ needs.publish-state-projector-image.outputs.tag }}" }
+        - { path: config/dependencies/ukp-oci-adapter, name: ghcr.io/datum-cloud/ukp-oci-adapter, tag: "${{ needs.publish-oci-adapter-image.outputs.tag }}" }
     secrets: inherit

@@ -125,7 +125,7 @@ RUN mkdir -p /var/lib/ukp /var/log/ukp /var/run/ukp
 # replaces an imported image, so a new plugin needs a new URL.
 ARG UKP_PLUGIN_REGISTRY=index.unikraft.io
 ARG UKP_PLUGIN_REPO=plugins/sandbox
-ARG UKP_PLUGIN_REF=sha256:ff839a2a846a510112dcbd6e5a4b867793a3f1cccb980290ec0451a0c428237d
+ARG UKP_PLUGIN_REF=sha256:f50ec87bcd06c5606ec6df41c61293799ffc5d51869cd57858928b9eae2ac055
 ARG UKP_PLUGIN_URL=oci://unikraft.io/plugins/sandbox@${UKP_PLUGIN_REF}
 
 COPY fetch-plugin.sh /usr/local/bin/fetch-plugin.sh

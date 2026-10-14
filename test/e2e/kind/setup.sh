@@ -11,6 +11,8 @@
 #   UKP_AGENT_CREDENTIALS   ukp.secrets.conf content (AGENT_PULL_* vendor pull
 #                           credentials); the runtime pulls the test workload
 #                           image with these.
+#   OCI_ADAPTER_IMAGE       optional prebuilt OCI adapter image; built from
+#                           the repo when unset.
 #
 # Produces a cluster where `chainsaw test test/e2e` (incl. run-instance)
 # passes against the real runtime.
@@ -60,6 +62,14 @@ if [ -z "${STATE_PROJECTOR_IMAGE:-}" ]; then
 fi
 docker tag "$STATE_PROJECTOR_IMAGE" ghcr.io/datum-cloud/ukp-state-projector:e2e
 kind load docker-image ghcr.io/datum-cloud/ukp-state-projector:e2e --name $CLUSTER >/dev/null
+# The OCI adapter likewise builds from this repo; OCI_ADAPTER_IMAGE overrides.
+log "build the OCI adapter image"
+if [ -z "${OCI_ADAPTER_IMAGE:-}" ]; then
+  OCI_ADAPTER_IMAGE=ghcr.io/datum-cloud/ukp-oci-adapter:e2e
+  docker build -t "$OCI_ADAPTER_IMAGE" -f "$repo/build/ukp-oci-adapter/Dockerfile" "$repo"
+fi
+docker tag "$OCI_ADAPTER_IMAGE" ghcr.io/datum-cloud/ukp-oci-adapter:e2e
+kind load docker-image ghcr.io/datum-cloud/ukp-oci-adapter:e2e --name $CLUSTER >/dev/null
 
 log "cert-manager + Flux (control-plane dependencies)"
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml >/dev/null

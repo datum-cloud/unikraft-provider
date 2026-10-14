@@ -13,6 +13,9 @@ downstreamResourceManagement:
   # CNI is on by default, but this kind e2e environment doesn't deploy
   # ukp-remote-cni, so it's turned off here.
   enableCNI: false
+  # Plain OCI images run through the OCI adapter, which the
+  # ukp-runtime-e2e overlay deploys.
+  enableImageConversion: true
   # InstanceDNS sets the resolvers every Instance uses, in place of the
   # runtime's default. Unset leaves the default in place. IPv4 and IPv6
   # literals are both accepted; Kubernetes allows at most three.

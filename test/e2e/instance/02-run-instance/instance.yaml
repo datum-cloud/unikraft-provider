@@ -13,6 +13,9 @@ metadata:
   # cloud.unikraft.v1.* annotations verbatim onto the Pod, where kraftlet reads
   # them (see examples/instance.yaml).
   annotations:
+    # A prebuilt runtime image from the vendor registry, pulled by the
+    # runtime itself: no image conversion.
+    compute.datumapis.com/image-format: unikraft
     cloud.unikraft.v1.instances/scale_to_zero.policy: "on"
     cloud.unikraft.v1.instances/scale_to_zero.stateful: "true"
     cloud.unikraft.v1.instances/scale_to_zero.cooldown_time_ms: "600000" # 10 min — never park during the test
@@ -23,7 +26,7 @@ spec:
     sandbox:
       containers:
         - name: app
-          image: datum/httpserver-go121:latest
+          image: unikraft.io/datum/httpserver-go121:latest
           ports:
             - name: http
               port: 8080
