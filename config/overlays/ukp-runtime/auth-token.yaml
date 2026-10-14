@@ -28,9 +28,11 @@ metadata:
   name: kraftlet-ukc-token
   namespace: unikraft-system
 spec:
-  # Generate once and persist (ESO GeneratorState); do NOT rotate on a timer.
-  # Rotation must be a deliberate op: ukpd only re-syncs users at boot and
-  # kraftlet only re-reads the token at start, so both DaemonSets must restart.
+  # Regenerate when this spec changes (e.g. a new permission in users.json),
+  # never on a timer. A regeneration rotates the password: ukpd only re-syncs
+  # users at boot and kraftlet only re-reads the token at start, so restart
+  # both DaemonSets after a change here or kraftlet loses access to ukpd.
+  refreshPolicy: OnChange
   refreshInterval: "0"
   target:
     name: kraftlet-ukc-token
