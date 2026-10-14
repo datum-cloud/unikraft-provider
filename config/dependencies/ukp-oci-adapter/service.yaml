@@ -1,0 +1,18 @@
+# The runtime's image agent fetches converted images through this Service,
+# always from its own node's adapter.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ukp-oci-adapter
+  namespace: unikraft-system
+  labels:
+    app.kubernetes.io/name: ukp-oci-adapter
+    app.kubernetes.io/part-of: unikraft-provider
+spec:
+  selector:
+    app: ukp-oci-adapter
+  internalTrafficPolicy: Local
+  ports:
+    - name: http-oci
+      port: 80
+      targetPort: http-oci

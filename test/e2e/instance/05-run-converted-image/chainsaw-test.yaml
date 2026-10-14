@@ -1,0 +1,43 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: run-converted-image
+spec:
+  # Runs a plain OCI image from Docker Hub: the provider gates the Pod, the
+  # OCI adapter converts the image, points the Pod at it and removes the
+  # gate, and the runtime fetches it from the adapter over http+oci.
+  description: Run an Instance from a plain OCI image through the OCI adapter.
+  steps:
+    - name: create and start the Instance
+      try:
+        - apply:
+            file: instance.yaml
+        - assert:
+            timeout: 3m
+            resource:
+              apiVersion: compute.datumapis.com/v1alpha
+              kind: Instance
+              metadata:
+                name: e2e-converted-instance
+              status:
+                (conditions[?type == 'Available'] | [0].status): "True"
+    - name: assert the Pod runs the converted image
+      try:
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  managed-by: infra-provider-unikraft
+                  upstream.instance: e2e-converted-instance
+              spec:
+                (schedulingGates == null): true
+                (starts_with(containers[0].image, 'http+oci://ukp-oci-adapter.unikraft-system.svc.cluster.local/docker.io/library/nginx/@sha256:')): true
+              status:
+                phase: Running
+      catch:
+        - script:
+            content: |
+              kubectl get pod -l upstream.instance=e2e-converted-instance -o yaml
+              kubectl -n unikraft-system logs ds/ukp-oci-adapter --tail=50

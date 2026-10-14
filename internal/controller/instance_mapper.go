@@ -162,6 +162,9 @@ const runtimeImagePullFailed = "image pull failed"
 // containerStartFailure reports the first container the runtime is failing to
 // start. Transient states such as ContainerCreating are not failures.
 func containerStartFailure(instance *v1alpha.Instance, pod *core.Pod) (reason, message string, failing bool) {
+	if message, ok := imageConversionFailure(instance, pod); ok {
+		return v1alpha.InstanceProgrammedReasonImageUnavailable, message, true
+	}
 	for _, cs := range pod.Status.ContainerStatuses {
 		if t := cs.State.Terminated; t != nil && strings.Contains(t.Message, runtimeImagePullFailed) {
 			return v1alpha.InstanceProgrammedReasonImageUnavailable, imagePullFailure(instance, cs), true
@@ -190,20 +193,26 @@ func containerStartFailure(instance *v1alpha.Instance, pod *core.Pod) (reason, m
 // rewritten form) and the pull secrets it was tried with.
 func imagePullFailure(instance *v1alpha.Instance, cs core.ContainerStatus) string {
 	image := cs.Image
-	var secrets []string
 	if sandbox := instance.Spec.Runtime.Sandbox; sandbox != nil {
 		for _, c := range sandbox.Containers {
 			if c.Name == cs.Name {
 				image = c.Image
 			}
 		}
+	}
+	return fmt.Sprintf("Image %q for container %q could not be pulled", image, cs.Name) + pullCredentials(instance)
+}
+
+// pullCredentials says which credentials an Instance's images are pulled with.
+func pullCredentials(instance *v1alpha.Instance) string {
+	var secrets []string
+	if sandbox := instance.Spec.Runtime.Sandbox; sandbox != nil {
 		for _, ref := range sandbox.ImagePullSecrets {
 			secrets = append(secrets, strconv.Quote(ref.Name))
 		}
 	}
-	message := fmt.Sprintf("Image %q for container %q could not be pulled", image, cs.Name)
 	if len(secrets) == 0 {
-		return message + " anonymously"
+		return " anonymously"
 	}
-	return message + " using credentials from " + strings.Join(secrets, ", ")
+	return " using credentials from " + strings.Join(secrets, ", ")
 }

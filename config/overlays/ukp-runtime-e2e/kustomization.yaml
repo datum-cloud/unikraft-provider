@@ -6,6 +6,8 @@
 #     ghcr.io/datum-cloud/ukp-runtime:e2e (see test/e2e/kind/setup.sh).
 #   - data volume: the base uses the Talos path /var/mnt/ukp; kind bind-mounts
 #     the XFS-quota filesystem to /var/lib/ukp (data-volume-patch.yaml).
+#   - OCI adapter: deployed with the image-conversion component and pinned
+#     to the per-run :e2e build (see test/e2e/kind/setup.sh).
 #   - state-projector flush interval: shortened so chainsaw can assert a usage
 #     record within its own timeouts (state-projector-flush-interval-patch.yaml).
 #
@@ -17,10 +19,14 @@ kind: Kustomization
 namespace: unikraft-system
 resources:
   - ../../dependencies/ukp-runtime
+components:
+  - ../../components/image-conversion
 images:
   - name: ghcr.io/datum-cloud/ukp-runtime
     newTag: e2e
   - name: ghcr.io/datum-cloud/ukp-state-projector
+    newTag: e2e
+  - name: ghcr.io/datum-cloud/ukp-oci-adapter
     newTag: e2e
 patches:
   - path: data-volume-patch.yaml
