@@ -3,7 +3,7 @@ module go.datum.net/unikraft-provider
 go 1.26.4
 
 require (
-	go.datum.net/compute v0.10.10
+	go.datum.net/compute v0.12.10-0.20261015110714-c45b52b9160d
 	go.datum.net/network-services-operator v0.27.0
 	golang.org/x/sync v0.22.0 // indirect
 	k8s.io/api v0.36.2
@@ -77,7 +77,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.28.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
-	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/exp v0.0.0-20260603202125-055de637280b // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect

@@ -45,4 +45,5 @@ spec:
       platform parks an idle instance into a snapshot and restores it on the
       next request, so an idle instance keeps its state without holding the
       host's memory. Suspend and resume run on the platform's own schedule and
-      cannot be invoked directly.
+      cannot be invoked directly. When an instance is deleted or replaced, it
+      stops immediately; the application is not signaled first.

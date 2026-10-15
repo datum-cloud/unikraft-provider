@@ -600,6 +600,10 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 		RestartPolicy:                core.RestartPolicyAlways,
 		NodeSelector:                 nodeSelector,
 		Tolerations:                  tolerations,
+		// Kraftlet ignores this today, which is why the class does not declare
+		// graceful termination. Setting it means a kraftlet that honors it
+		// needs only the class declaration.
+		TerminationGracePeriodSeconds: instance.Spec.Runtime.TerminationGracePeriodSeconds,
 	}
 
 	// Resolver choice is a platform decision made at deployment time. Policy
