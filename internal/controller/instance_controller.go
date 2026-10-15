@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -359,6 +360,17 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 		"message", instancePod.Status.Message,
 	)
 
+	// The Owns(Pod) watch reconciles again once the deleted Pod is gone, which
+	// recreates it and refreshes the Instance status. The requeue is a backstop
+	// in case that event is missed.
+	deleted, wait, err := r.recoverInstancePod(ctx, instancePod)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if deleted {
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
 	if err := r.reconcileInstanceService(ctx, instance); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to reconcile service for instance %s: %w", instance.Name, err)
 	}
@@ -370,7 +382,7 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 		return ctrl.Result{}, fmt.Errorf("failed to sync instance power state: %w", err)
 	}
 
-	return ctrl.Result{}, nil
+	return recoveryResult(wait), nil
 }
 
 // buildPodSpecFromContainers translates an Instance's sandbox spec into a
@@ -1074,6 +1086,7 @@ func (r *InstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&computev1alpha.Instance{}).
 		Owns(&core.Pod{}).
 		Owns(&core.Service{}).
+		Watches(&core.Node{}, r.hostRebootHandler(), builder.WithPredicates(hostBootIDChanged)).
 		WithOptions(controller.Options{MaxConcurrentReconciles: 5}).
 		Named("instance").
 		Complete(r)
