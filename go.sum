@@ -134,8 +134,8 @@ github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWD
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
 github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
-go.datum.net/compute v0.12.10-0.20261015110714-c45b52b9160d h1:ZMGUlavcXQ0EP6lcYd8qrxTo8HK1j2vFM8YYHfnxF+w=
-go.datum.net/compute v0.12.10-0.20261015110714-c45b52b9160d/go.mod h1:INObcxGooNnBgxysWSaDh82E59mdvcY9A+JS0vj4TfI=
+go.datum.net/compute v0.12.10 h1:cQdRbAykH/NEwwgypZrcEVCvB4j36N2KofxilNwCjZ4=
+go.datum.net/compute v0.12.10/go.mod h1:INObcxGooNnBgxysWSaDh82E59mdvcY9A+JS0vj4TfI=
 go.datum.net/network-services-operator v0.27.0 h1:LYCUjc6i0/f3c5YXSgisnbV8gB3R8emDwNfiYapdCAo=
 go.datum.net/network-services-operator v0.27.0/go.mod h1:9nuuBWdrkdnIBMaWJsWM3j4CcbKJIF1GDuCmAjdpIHo=
 go.miloapis.com/locations v0.0.1 h1:voJKqBzyLX5x96M3+5y/ga7fgq9/+vypTizd+bBvqUY=
