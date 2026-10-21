@@ -76,14 +76,14 @@ ARG UKP_COREDNS_VERSION=6:1.14.6-20+a3e6bc6-2staging+deb13
 ARG UKP_FIRECRACKER_VERSION=6:1.16.1-77+1627833-2staging+deb13
 ARG UKP_NETWORKING_VERSION=6:1.7.3-6ec339b-2staging+deb13
 ARG UKP_OPENRESTY_VERSION=6:1.31.1.1-39+a8aad8c-2staging+deb13
-ARG UKP_PLATFORM_VERSION=6:0.14.0-63+bb85bf0-2staging+deb13
+ARG UKP_PLATFORM_VERSION=6:0.14.0-137+060baeb-2staging+deb13
 
 # ukp-remote-cni: server-side CNI shim for kraftlet.
 ARG UKP_REMOTE_CNI_VERSION=6:0.1.1-19+b84b457-2staging+deb13
 
 # The kernel ukpd gives to images packaged without one. The ukpd launcher
 # imports it from /usr/lib/ukp/guest/linux when the package is installed.
-ARG UKP_GUESTKERNEL_LINUX_VERSION=1.0.54~dbd3e40-2staging+deb13
+ARG UKP_GUESTKERNEL_LINUX_VERSION=1.0.55~08e64a0-2staging+deb13
 
 # Install the ukp packages from the vendor repo. The BuildKit secret provides
 # the apt basic-auth credentials at /etc/apt/auth.conf.d/unikraft.conf for the
