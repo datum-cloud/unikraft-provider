@@ -79,13 +79,12 @@ ukpd ──vm.state_change──▶ /var/run/ukp/vm-state.events ──▶ state
    The two halves name this file differently, and both are correct: ukpd's
    `log-sinks.json` says `/run/ukp/...` because its `debian:trixie-slim` image
    symlinks `/var/run` → `/run`, while the projector must say `/var/run/ukp/...`
-   because `distroless/static` has **no such symlink** — there, `/run` and
-   `/var/run` are separate real directories and only `/var/run/ukp` is the
-   mounted hostPath. Both therefore resolve to the same file on the node. Leaving
-   the projector on a `/run/ukp` path would put its events and usage files in the
-   container's ephemeral layer, where ukpd cannot write to them and Vector sees
-   nothing — with no error from either side. The DaemonSet passes both paths
-   explicitly for this reason.
+   because its `scratch` image has **no such symlink** — there, only
+   `/var/run/ukp` exists, as the mounted hostPath. Both therefore resolve to the
+   same file on the node. Leaving the projector on a `/run/ukp` path would put
+   its events and usage files in the container's ephemeral layer, where ukpd
+   cannot write to them and Vector sees nothing — with no error from either
+   side. The DaemonSet passes both paths explicitly for this reason.
 
    **This file has no built-in cap** — vendor-confirmed (2026-08-28):
    `--log-rotation` only applies to the primary `--log-path` controller log,
@@ -311,7 +310,7 @@ kubectl -n unikraft-system logs -l app=ukp-runtime -c state-projector \
   | grep -E 'ALERT|WARN|error=|dropped|write_error|resolve failed'
 
 # The usage file it wrote (what Vector tails)
-# NOT -c state-projector: it runs on distroless/static (no shell, no tail).
+# NOT -c state-projector: it runs on scratch (no shell, no tail).
 # ukpd shares the same ukp-run hostPath and has a real userland.
 kubectl -n unikraft-system exec -it <ukp-runtime-pod> -c ukpd -- \
   tail -20 /var/run/ukp/vm-state.usage

@@ -24,10 +24,10 @@ RUN --mount=type=cache,target=/go/pkg/mod/ \
     CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
     go build -o state-projector ./cmd/state-projector
 
-# distroless/static, run as root: like the other ukp-runtime node containers,
+# scratch, run as root: like the other ukp-runtime node containers,
 # the projector must write the root-owned ukp-run hostPath (/var/run/ukp) where
 # the usage stream lives and read the root-owned ukp-data hostPath.
-FROM gcr.io/distroless/static@sha256:034df5c1737e8241f6ed6423a12e720ee0f6d6f088609ee172f98f6f2166ef5d
+FROM scratch
 WORKDIR /
 COPY --from=builder /workspace/state-projector .
 USER 0:0
