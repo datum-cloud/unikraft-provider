@@ -11,8 +11,6 @@ import (
 	"os"
 	"time"
 
-	_ "golang.org/x/crypto/x509roots/fallback"
-
 	"go.datum.net/unikraft-provider/internal/stateprojector"
 )
 
@@ -20,9 +18,9 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.LUTC)
 
 	var (
-		// /var/run/ukp, not /run/ukp: this ships on scratch, which has no
-		// /var/run to /run symlink, and the ukp-run hostPath is mounted at
-		// /var/run/ukp.
+		// /var/run/ukp, not /run/ukp: this ships on distroless/static, where
+		// the two are separate real directories rather than a symlink pair,
+		// and the ukp-run hostPath is mounted at /var/run/ukp.
 		eventsPath    = flag.String("events-path", "/var/run/ukp/vm-state.events", "path to tail for vm.state_change events; ukpd's file-type log sink writes here")
 		outputPath    = flag.String("output", "/var/run/ukp/vm-state.usage", "path to append windowed usage JSONL (must be on a hostPath Vector can read)")
 		flushInterval = flag.Duration("flush-interval", 5*time.Minute, "how often open running windows are flushed as incremental records")
