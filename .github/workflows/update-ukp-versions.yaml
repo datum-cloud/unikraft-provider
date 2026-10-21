@@ -62,8 +62,11 @@ jobs:
               *staging+deb*) channel=staging ;;
               *)             channel=stable ;;
             esac
+            # Read madison's whole output: exiting awk early closes the pipe
+            # while apt (3.x writes line by line) is still writing, and apt
+            # exits 100, which fails the step under pipefail.
             latest="$(apt-cache madison "$pkg" 2>/dev/null |
-              awk -v c="trixie/$channel" 'index($0, c) {print $3; exit}')"
+              awk -v c="trixie/$channel" '!found && index($0, c) {print $3; found=1}')"
             if [ -z "$latest" ]; then
               echo "::warning::no $channel version found for $pkg (ARG $arg_name), skipping"
               continue
