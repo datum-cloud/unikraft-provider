@@ -110,8 +110,3 @@ spec:
             # Must match UKP_PLUGIN_URL in build/ukp-runtime/Dockerfile.
             - name: KRAFTLET_EXEC_PLUGIN_IMAGE
               value: "oci://unikraft.io/plugins/sandbox@sha256:f50ec87bcd06c5606ec6df41c61293799ffc5d51869cd57858928b9eae2ac055"
-            # Invoke the exec plugin on the instance's private address instead
-            # of through ukpd's OpenResty. Needs kraftlet 0.6.0-staging.66+.
-            # Plugin calls are unauthenticated in this mode.
-            - name: KRAFTLET_EXEC_PRIVATE_URL
-              value: "true"
