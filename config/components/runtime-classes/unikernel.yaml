@@ -31,6 +31,7 @@ spec:
       - secretVolumes
       - envFrom
       - imagePullSecrets
+      - gracefulTermination
     compatibility: >-
       Runs images whose application binary is position-independent. The root
       filesystem is held in memory, so image size counts against the instance's
@@ -45,4 +46,6 @@ spec:
       platform parks an idle instance into a snapshot and restores it on the
       next request, so an idle instance keeps its state without holding the
       host's memory. Suspend and resume run on the platform's own schedule and
-      cannot be invoked directly.
+      cannot be invoked directly. When an instance is deleted or replaced, the
+      application receives SIGTERM and has up to the instance's termination
+      grace period to exit before it is stopped.

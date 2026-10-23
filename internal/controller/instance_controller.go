@@ -595,11 +595,12 @@ func (r *InstanceReconciler) buildPodSpecFromContainers(
 		// projection of the default ServiceAccount token so no credential is
 		// mounted into the instance Pod (the apiserver still assigns the default
 		// SA identity, but without a token it cannot authenticate).
-		AutomountServiceAccountToken: ptr.To(false),
-		EnableServiceLinks:           ptr.To(false),
-		RestartPolicy:                core.RestartPolicyAlways,
-		NodeSelector:                 nodeSelector,
-		Tolerations:                  tolerations,
+		AutomountServiceAccountToken:  ptr.To(false),
+		EnableServiceLinks:            ptr.To(false),
+		RestartPolicy:                 core.RestartPolicyAlways,
+		NodeSelector:                  nodeSelector,
+		Tolerations:                   tolerations,
+		TerminationGracePeriodSeconds: instance.Spec.Runtime.TerminationGracePeriodSeconds,
 	}
 
 	// Resolver choice is a platform decision made at deployment time. Policy

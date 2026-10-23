@@ -107,6 +107,10 @@ spec:
             # node outright when its lease lapses, and kraftlet never re-registers.
             - name: KRAFTLET_NODE_PROVIDER_ID
               value: "unikraft://kraftlet-$(NODE_NAME)"
+            # Compute accepts grace periods up to 300s. Without this, kraftlet
+            # caps the wait at its 60s default and kills longer ones early.
+            - name: KRAFTLET_MAX_TERMINATION_GRACE_PERIOD
+              value: "300s"
             # Must match UKP_PLUGIN_URL in build/ukp-runtime/Dockerfile.
             - name: KRAFTLET_EXEC_PLUGIN_IMAGE
               value: "oci://unikraft.io/plugins/sandbox@sha256:f50ec87bcd06c5606ec6df41c61293799ffc5d51869cd57858928b9eae2ac055"
