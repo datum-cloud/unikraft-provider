@@ -9,10 +9,12 @@
 # only; the script computes the vmdb/vmm quotas per node from host resources
 # (knobs in ukp.conf, UKP_QUOTA_*) and merges them in before install.
 #
-# Failure semantics (see seed-users.sh): a missing/invalid secret is lenient
-# by design (optional volume; the runtime keeps its existing users.json), but
-# a quota computation failure fails this initContainer — the pod does not
-# start rather than assuming a node's capacity.
+# Failure semantics (see seed-users.sh): the step fails closed. A missing or
+# tokenless credential stops the pod, because ukpd authenticates image and
+# platform-kernel resolution as this user and would otherwise start and then
+# fail to resolve any image. The volume stays optional so the script reports
+# which Secret and key are missing, rather than the pod stalling on a kubelet
+# mount error that cannot tell an absent Secret from an absent key.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
