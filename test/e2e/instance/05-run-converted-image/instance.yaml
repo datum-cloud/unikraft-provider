@@ -1,0 +1,24 @@
+apiVersion: compute.datumapis.com/v1alpha
+kind: Instance
+metadata:
+  name: e2e-converted-instance
+  annotations:
+    # Keep the guest awake for the whole test (see 02-run-instance).
+    cloud.unikraft.v1.instances/scale_to_zero.policy: "on"
+    cloud.unikraft.v1.instances/scale_to_zero.cooldown_time_ms: "600000"
+spec:
+  runtime:
+    resources:
+      instanceType: datumcloud-d1-standard-2
+    sandbox:
+      containers:
+        - name: app
+          # A plain OCI image, named as users would; the provider expands it to
+          # docker.io/library/nginx and the OCI adapter makes it runnable.
+          image: nginx:1.27
+          resources:
+            limits:
+              memory: 256Mi
+  networkInterfaces:
+    - network:
+        name: default

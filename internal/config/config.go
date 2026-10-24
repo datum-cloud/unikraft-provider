@@ -212,6 +212,15 @@ type DownstreamResourceManagementConfig struct {
 	//
 	// +optional
 	InstanceDNS *InstanceDNSConfig `json:"instanceDNS,omitempty"`
+
+	// EnableImageConversion lets Instances run plain OCI images: their Pods
+	// are created with a scheduling gate that the OCI adapter
+	// (config/components/image-conversion) removes once it has converted their
+	// images. Defaults to disabled.
+	//
+	// +optional
+	// +default=false
+	EnableImageConversion bool `json:"enableImageConversion,omitempty"`
 }
 
 // +k8s:deepcopy-gen=true

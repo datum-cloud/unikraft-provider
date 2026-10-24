@@ -1,0 +1,12 @@
+# Optional: lets Instances run plain OCI images. Adds the OCI adapter and
+# readies the runtime for it. Pair with the provider's
+# downstreamResourceManagement.enableImageConversion.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - ../../dependencies/ukp-oci-adapter
+patches:
+  - path: runtime-patch.yaml
+    target:
+      kind: DaemonSet
+      name: ukp-runtime

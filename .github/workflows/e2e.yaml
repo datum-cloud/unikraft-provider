@@ -71,11 +71,15 @@ jobs:
       - name: Build state-projector image
         run: docker build -f build/state-projector/Dockerfile -t ghcr.io/datum-cloud/ukp-state-projector:e2e .
 
+      - name: Build OCI adapter image
+        run: docker build -f build/ukp-oci-adapter/Dockerfile -t ghcr.io/datum-cloud/ukp-oci-adapter:e2e .
+
       - name: Bring up the single-cluster environment
         env:
           PROVIDER_IMAGE: ghcr.io/datum-cloud/unikraft-provider:dev
           RUNTIME_IMAGE: ukp-runtime:e2e
           STATE_PROJECTOR_IMAGE: ghcr.io/datum-cloud/ukp-state-projector:e2e
+          OCI_ADAPTER_IMAGE: ghcr.io/datum-cloud/ukp-oci-adapter:e2e
           UKP_AGENT_CREDENTIALS: ${{ secrets.UKP_AGENT_CREDENTIALS }}
         run: task e2e:up
 

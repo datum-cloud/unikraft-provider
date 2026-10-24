@@ -1,0 +1,9 @@
+# Optional, with image-conversion on Cilium clusters: lets only the node's own
+# host reach its adapter. The runtime's image agent fetches over the host
+# network; anything else on the cluster network could otherwise download any
+# converted image a Pod uses. Separate from image-conversion because clusters
+# without Cilium, like the kind e2e, lack the CRD.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - network-policy.yaml

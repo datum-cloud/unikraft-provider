@@ -1,0 +1,17 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ukp-oci-adapter
+spec:
+  endpointSelector:
+    matchLabels:
+      app: ukp-oci-adapter
+  ingress:
+    # The Service has internalTrafficPolicy: Local, so the agent only reaches
+    # its own node's adapter.
+    - fromEntities:
+        - host
+      toPorts:
+        - ports:
+            - port: "8090"
+              protocol: TCP
