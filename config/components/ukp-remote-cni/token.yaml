@@ -19,7 +19,9 @@ metadata:
   name: ukp-remote-cni-token
   namespace: unikraft-system
 spec:
-  # Generate once, never rotate on a timer — remote-cni only reads this at startup.
+  # Regenerate when this spec changes, never on a timer. remote-cni and
+  # kraftlet only read this at startup, so restart both after a change here.
+  refreshPolicy: OnChange
   refreshInterval: "0"
   target:
     name: ukp-remote-cni-token
