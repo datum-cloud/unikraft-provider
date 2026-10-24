@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"strings"
+	"unicode"
 
 	core "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -122,8 +124,8 @@ func (m *MetricsServerConfig) Options(ctx context.Context, c client.Client) metr
 // The kraftlet cluster is always the same cluster as the cell cluster (kraftlet
 // runs as a virtual-kubelet node in the cell). ConfigMap and Secret volumes are
 // referenced by name in the Pod spec; kraftlet resolves and mounts them using
-// its own node/kubelet identity at runtime. The provider never reads or writes
-// ConfigMap/Secret data.
+// its own node/kubelet identity at runtime. The provider does not read or write
+// user ConfigMap/Secret data; guest DNS initialization creates its own ConfigMap.
 type DownstreamResourceManagementConfig struct {
 	// NodeSelector overrides the node selector applied to every Instance Pod.
 	// When unset, the provider defaults to {"unikraft.com/virtual-kubelet": "true"},
@@ -220,6 +222,15 @@ type DownstreamResourceManagementConfig struct {
 // Pod. It is expressed as the Pod's own dnsConfig with dnsPolicy None, which
 // is the contract a kubelet (virtual or otherwise) consumes.
 type InstanceDNSConfig struct {
+	// InitializeGuest installs resolv.conf before starting each application.
+	// This opt-in workaround requires an explicit container command, /bin/sh,
+	// cat, and a writable /etc/resolv.conf. It applies only to newly created Pods.
+	// Leave disabled for images that rely on their default entrypoint or do not
+	// provide a shell, and for runtimes that already honor Pod DNSConfig.
+	//
+	// +optional
+	InitializeGuest bool `json:"initializeGuest,omitempty"`
+
 	// Nameservers lists the resolvers the guest should use, as IPv4 or IPv6
 	// literals. Kubernetes allows at most three.
 	Nameservers []string `json:"nameservers"`
@@ -255,8 +266,8 @@ func (d *InstanceDNSConfig) Validate() error {
 		}
 	}
 	for _, s := range d.Searches {
-		if s == "" {
-			return fmt.Errorf("instanceDNS: search domains must not be empty")
+		if s == "" || strings.ContainsAny(s, "#;\x00") || strings.ContainsFunc(s, unicode.IsSpace) {
+			return fmt.Errorf("instanceDNS: search domain %q must be nonempty and contain no whitespace, NUL, or comment delimiters", s)
 		}
 	}
 	return nil

@@ -12,6 +12,11 @@ rules:
 - apiGroups: [""]
   resources: ["services"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Guest DNS initialization creates immutable ConfigMaps and reads them directly.
+# Do not grant list/watch: tenant configuration must not enter the provider cache.
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "create"]
 - apiGroups: ["compute.datumapis.com"]
   resources: ["instances", "instances/status"]
   verbs: ["get", "list", "watch", "update", "patch"]
