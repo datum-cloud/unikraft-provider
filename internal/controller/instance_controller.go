@@ -97,12 +97,35 @@ type InstanceReconciler struct {
 //
 // Which Instances reach here is decided by the cache's runtime class field
 // selector, so the API server never delivers another provider's Instance.
-func (r *InstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *InstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, retErr error) {
 	logger := log.FromContext(ctx)
+	start := time.Now()
 
 	logger.Info("reconciling instance", "name", req.Name, "namespace", req.Namespace)
 
+	// Emit one context-rich event per reconcile on the way out, recording how
+	// the reconcile ended and how long it took. controller-runtime logs a
+	// reconcile error and a requeue but nothing on the success path, so without
+	// this there is no outcome, duration, or observed generation to correlate
+	// against an Instance that never becomes ready.
 	var instance computev1alpha.Instance
+	defer func() {
+		fields := []any{
+			"name", req.Name,
+			"namespace", req.Namespace,
+			"outcome", reconcileOutcome(result, retErr),
+			"duration", time.Since(start),
+		}
+		if instance.Name != "" {
+			fields = append(fields, "generation", instance.Generation)
+		}
+		if retErr != nil {
+			logger.Error(retErr, "instance reconcile finished", fields...)
+			return
+		}
+		logger.Info("instance reconcile finished", fields...)
+	}()
+
 	if err := r.Get(ctx, req.NamespacedName, &instance); err != nil {
 		if apierrors.IsNotFound(err) {
 			logger.Info("instance not found, may have been deleted")
@@ -155,6 +178,19 @@ func (r *InstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	return r.reconcileSandboxContainers(ctx, &instance)
+}
+
+// reconcileOutcome labels how a Reconcile call ended, for the per-reconcile
+// completion event.
+func reconcileOutcome(result ctrl.Result, err error) string {
+	switch {
+	case err != nil:
+		return "error"
+	case result.RequeueAfter > 0 || result.Requeue: //nolint:staticcheck // callers still set Requeue
+		return "requeue"
+	default:
+		return "success"
+	}
 }
 
 // handleDeletion tears down the backing Pod and Service for a deleting Instance
@@ -895,7 +931,7 @@ func (r *InstanceReconciler) syncInstancePowerState(
 			networkIP = instancePod.Status.PodIPs[0].IP
 		}
 
-		serviceFqdns := extractServiceFqdnsFromPod(instance, instancePod)
+		serviceFqdns := extractServiceFqdnsFromPod(ctx, instance, instancePod)
 
 		desiredInterfaces := buildNetworkInterfaceStatus(networkIP, serviceFqdns)
 		if !networkInterfacesEqual(instance.Status.NetworkInterfaces, desiredInterfaces) {
@@ -950,7 +986,7 @@ type podFqdns map[string]struct {
 	ServiceFqdn string `json:"serviceFqdn"`
 }
 
-func extractServiceFqdnsFromPod(instance *computev1alpha.Instance, pod *core.Pod) []string {
+func extractServiceFqdnsFromPod(ctx context.Context, instance *computev1alpha.Instance, pod *core.Pod) []string {
 	if pod == nil {
 		return nil
 	}
@@ -961,6 +997,15 @@ func extractServiceFqdnsFromPod(instance *computev1alpha.Instance, pod *core.Pod
 
 	var fqdns podFqdns
 	if err := json.Unmarshal([]byte(raw), &fqdns); err != nil {
+		// The annotation is written by kraftlet. If it cannot be parsed the
+		// Instance keeps no external addresses; record the failure instead of
+		// dropping it silently, so a missing address points at the annotation.
+		log.FromContext(ctx).Error(err, "ignoring unparseable instance fqdn annotation; instance will have no external addresses",
+			"pod", pod.Name,
+			"namespace", pod.Namespace,
+			"annotation", ukcInstanceFqdnsAnnotation,
+			"value", raw,
+		)
 		return nil
 	}
 
