@@ -125,4 +125,5 @@ jobs:
           body-path: /tmp/ukp-bump-body.md
           branch: chore/bump-ukp-versions
           delete-branch: true
+          sign-commits: true
           labels: dependencies
