@@ -70,20 +70,20 @@ COPY unikraft-cloud-staging.sources /etc/apt/sources.list.d/unikraft-cloud-stagi
 # itself. Taking only some packages from staging installs both, and the two
 # write the same files. Move the set back to stable once the vendor ships the
 # feature there.
-ARG UKP_AGENT_VERSION=6:0.2.5-237+a3865dc-2staging+deb13
+ARG UKP_AGENT_VERSION=6:0.2.5-241+a64c5aa-2staging+deb13
 ARG UKP_CONFIG_VERSION=6:1.4.19-f470bf1-2staging+deb13
-ARG UKP_COREDNS_VERSION=6:1.14.6-20+a3e6bc6-2staging+deb13
-ARG UKP_FIRECRACKER_VERSION=6:1.16.1-77+1627833-2staging+deb13
+ARG UKP_COREDNS_VERSION=6:1.15.0-18+30c51ce-2staging+deb13
+ARG UKP_FIRECRACKER_VERSION=6:1.16.1-112+3925282-2staging+deb13
 ARG UKP_NETWORKING_VERSION=6:1.7.3-6ec339b-2staging+deb13
-ARG UKP_OPENRESTY_VERSION=6:1.31.1.1-39+a8aad8c-2staging+deb13
-ARG UKP_PLATFORM_VERSION=6:0.14.0-143+aed885c-2staging+deb13
+ARG UKP_OPENRESTY_VERSION=6:1.31.8.1-40+d3ab76d-2staging+deb13
+ARG UKP_PLATFORM_VERSION=6:0.15.0+1992777-2staging+deb13
 
 # ukp-remote-cni: server-side CNI shim for kraftlet.
 ARG UKP_REMOTE_CNI_VERSION=6:0.1.1-19+b84b457-2staging+deb13
 
 # The kernel ukpd gives to images packaged without one. The ukpd launcher
 # imports it from /usr/lib/ukp/guest/linux when the package is installed.
-ARG UKP_GUESTKERNEL_LINUX_VERSION=1.0.55~08e64a0-2staging+deb13
+ARG UKP_GUESTKERNEL_LINUX_VERSION=6:0.14.2-5e28b01-2staging+deb13
 
 # Install the ukp packages from the vendor repo. The BuildKit secret provides
 # the apt basic-auth credentials at /etc/apt/auth.conf.d/unikraft.conf for the
