@@ -16,6 +16,10 @@ during migration; do not enable both on the same nodes.
 
 Unikraft Cloud integrates seamlessly with any Kubernetes cluster through a virtual kubelet known as Kraftlet. More information in [Unikraft docs](https://unikraft.com/docs/integrations/kubernetes).
 
+### Host maintenance restarts instances
+
+Kraftlet does not support live migration, so an instance cannot move to another node while it runs. Rebooting, upgrading or replacing a Kraftlet node restarts every instance on it: each comes back as a fresh instance, without its running state or standby snapshot. Plan host maintenance as a restart of everything on the host. Live migration is tracked in [#252](https://github.com/datum-cloud/unikraft-provider/issues/252).
+
 ### Prerequisites
 
 1. **Kubernetes cluster** - A running Kubernetes cluster for Kraftlet to join as node
