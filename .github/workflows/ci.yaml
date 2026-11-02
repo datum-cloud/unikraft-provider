@@ -1,0 +1,18 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: datum-cloud/actions/.github/workflows/ci-basic.yaml@v1.26.0
+    with:
+      skip: docker,test
+      run: |
+        go install sigs.k8s.io/controller-runtime/tools/setup-envtest@32759fab31191897ae86091d8831b2d4b890aedd
+        KUBEBUILDER_ASSETS="$(setup-envtest use 1.31.0 -p path)" go test $(go list ./... | grep -v /e2e) -timeout 10m

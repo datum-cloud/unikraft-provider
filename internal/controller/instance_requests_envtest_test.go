@@ -10,6 +10,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
@@ -28,7 +30,14 @@ func TestInstancePodRequestsSurviveAPIServerDefaulting(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = env.Stop() })
 
-	c, err := client.New(cfg, client.Options{})
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+	if err := computev1alpha.AddToScheme(scheme); err != nil {
+		t.Fatalf("add compute scheme: %v", err)
+	}
+	c, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
@@ -46,7 +55,7 @@ func TestInstancePodRequestsSurviveAPIServerDefaulting(t *testing.T) {
 			},
 		},
 	}
-	spec, err := (&InstanceReconciler{}).buildPodSpecFromContainers(ctx, instance, instance.Spec.Runtime.Sandbox.Containers)
+	spec, err := (&InstanceReconciler{Client: c}).buildPodSpecFromContainers(ctx, instance, instance.Spec.Runtime.Sandbox.Containers)
 	if err != nil {
 		t.Fatalf("build pod spec: %v", err)
 	}

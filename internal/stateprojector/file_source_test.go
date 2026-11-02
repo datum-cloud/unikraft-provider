@@ -71,7 +71,9 @@ func TestFileSourceTailsAppendedLines(t *testing.T) {
 	src := newTestFileSource(path, handler, &stats{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() { _ = src.Run(ctx) }()
+	runDone := make(chan struct{})
+	go func() { defer close(runDone); _ = src.Run(ctx) }()
+	t.Cleanup(func() { cancel(); <-runDone })
 
 	appendLine(t, path, `{"type":"vm.state_change","timestamp":"1970-01-01T00:00:01Z","data":{"vm":"u1","prev":"stopped","new":"starting"}}`)
 	handler.waitForEvents(t, 1)
@@ -95,7 +97,9 @@ func TestFileSourceIgnoresPartialTrailingLine(t *testing.T) {
 	src := newTestFileSource(path, handler, &stats{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() { _ = src.Run(ctx) }()
+	runDone := make(chan struct{})
+	go func() { defer close(runDone); _ = src.Run(ctx) }()
+	t.Cleanup(func() { cancel(); <-runDone })
 
 	// Write a complete line followed by a partial one (no trailing newline).
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
@@ -143,7 +147,9 @@ func TestFileSourceResumesFromPersistedOffset(t *testing.T) {
 	src := newTestFileSource(path, handler, &stats{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() { _ = src.Run(ctx) }()
+	runDone := make(chan struct{})
+	go func() { defer close(runDone); _ = src.Run(ctx) }()
+	t.Cleanup(func() { cancel(); <-runDone })
 
 	handler.waitForEvents(t, 1)
 	time.Sleep(100 * time.Millisecond)
@@ -166,7 +172,9 @@ func TestFileSourceHandlesRotation(t *testing.T) {
 	src := newTestFileSource(path, handler, &stats{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() { _ = src.Run(ctx) }()
+	runDone := make(chan struct{})
+	go func() { defer close(runDone); _ = src.Run(ctx) }()
+	t.Cleanup(func() { cancel(); <-runDone })
 	handler.waitForEvents(t, 1)
 
 	// Simulate an external rotation: rename the current file away, then have
@@ -194,7 +202,9 @@ func TestFileSourceToleratesMissingFileAtBoot(t *testing.T) {
 	src := newTestFileSource(path, handler, &stats{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() { _ = src.Run(ctx) }()
+	runDone := make(chan struct{})
+	go func() { defer close(runDone); _ = src.Run(ctx) }()
+	t.Cleanup(func() { cancel(); <-runDone })
 
 	time.Sleep(50 * time.Millisecond) // must not panic/error while the file is absent
 
