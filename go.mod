@@ -2,6 +2,8 @@ module go.datum.net/unikraft-provider
 
 go 1.26.4
 
+toolchain go1.27.3
+
 require (
 	go.datum.net/compute v0.12.10
 	go.datum.net/network-services-operator v0.27.0
