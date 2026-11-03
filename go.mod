@@ -1,21 +1,17 @@
 module go.datum.net/unikraft-provider
 
-go 1.26.4
+go 1.27.0
 
 toolchain go1.27.3
 
 require (
 	go.datum.net/compute v0.12.10
 	go.datum.net/network-services-operator v0.27.0
-	golang.org/x/sync v0.24.0 // indirect
 	k8s.io/api v0.37.1
 	k8s.io/apimachinery v0.37.1
 	k8s.io/client-go v0.37.1
-	sigs.k8s.io/controller-runtime v0.25.2
-)
-
-require (
 	k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3
+	sigs.k8s.io/controller-runtime v0.25.2
 	sigs.k8s.io/yaml v1.6.0
 )
 
@@ -83,6 +79,7 @@ require (
 	golang.org/x/exp v0.0.0-20260603202125-055de637280b // indirect
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
