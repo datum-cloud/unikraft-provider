@@ -107,7 +107,7 @@ data:
         type: http
         inputs:
           - meter_unikraft_usage
-        uri: "${BILLING_GATEWAY_URL}/v1/usage/events:batchIngest"
+        uri: "http://mock-billing-gateway.unikraft-system.svc.cluster.local:8080/v1/usage/events:batchIngest"
         method: post
         encoding:
           codec: json
@@ -186,13 +186,10 @@ spec:
       containers:
         - name: vector
           # Pin the tag the production Vector (datum-infra / NSO) chart uses.
-          image: timberio/vector:0.55.0-alpine
+          image: timberio/vector:0.61.0-alpine
           args:
             - --config-dir
             - /etc/vector
-          env:
-            - name: BILLING_GATEWAY_URL
-              value: "http://mock-billing-gateway.unikraft-system.svc.cluster.local:8080"
           volumeMounts:
             - name: config
               mountPath: /etc/vector
