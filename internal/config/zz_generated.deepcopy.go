@@ -42,6 +42,11 @@ func (in *DownstreamResourceManagementConfig) DeepCopyInto(out *DownstreamResour
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.EnableCNI != nil {
+		in, out := &in.EnableCNI, &out.EnableCNI
+		*out = new(bool)
+		**out = **in
+	}
 	if in.ScaleToZeroCooldownMS != nil {
 		in, out := &in.ScaleToZeroCooldownMS, &out.ScaleToZeroCooldownMS
 		*out = new(int64)

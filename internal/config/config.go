@@ -151,9 +151,12 @@ type DownstreamResourceManagementConfig struct {
 	// Defaults to enabled; set to false only in environments that don't
 	// deploy ukp-remote-cni (e.g. the kind e2e overlay).
 	//
+	// A pointer so an explicit false survives defaulting: on a plain bool the
+	// generated defaulter can't tell false from unset and turns it back on.
+	//
 	// +optional
 	// +default=true
-	EnableCNI bool `json:"enableCNI,omitempty"`
+	EnableCNI *bool `json:"enableCNI,omitempty"`
 
 	// EnableVPCNetworking attaches every Instance to the tenant network its
 	// interfaces belong to: the provider marks the Pod of an Instance that

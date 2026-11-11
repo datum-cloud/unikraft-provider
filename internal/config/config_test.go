@@ -2,7 +2,49 @@
 
 package config
 
-import "testing"
+import (
+	"testing"
+
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
+)
+
+// TestEnableCNIDefaulting decodes config the way cmd/main.go does, so an
+// explicit false must survive defaulting while an unset field defaults on.
+func TestEnableCNIDefaulting(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterDefaults(scheme); err != nil {
+		t.Fatal(err)
+	}
+	codecs := serializer.NewCodecFactory(scheme, serializer.EnableStrict)
+
+	for name, tc := range map[string]struct {
+		field string
+		want  bool
+	}{
+		"unset defaults on": {field: "", want: true},
+		"explicit true":     {field: "enableCNI: true", want: true},
+		"explicit false":    {field: "enableCNI: false", want: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			data := []byte("apiVersion: apiserver.config.datumapis.com/v1alpha1\n" +
+				"kind: UnikraftProvider\n" +
+				"downstreamResourceManagement:\n" +
+				"  " + tc.field + "\n")
+			var cfg UnikraftProvider
+			if err := runtime.DecodeInto(codecs.UniversalDecoder(), data, &cfg); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			got := cfg.DownstreamResourceManagement.EnableCNI
+			if got == nil || *got != tc.want {
+				t.Errorf("EnableCNI = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
 
 func TestInstanceDNSConfig_Validate(t *testing.T) {
 	for name, tc := range map[string]struct {

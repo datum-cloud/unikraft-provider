@@ -720,7 +720,7 @@ func TestReconcileSandboxContainers_CNIEnabledByConfig(t *testing.T) {
 		Client: cl,
 		Scheme: s,
 		Config: &config.UnikraftProvider{
-			DownstreamResourceManagement: config.DownstreamResourceManagementConfig{EnableCNI: true},
+			DownstreamResourceManagement: config.DownstreamResourceManagementConfig{EnableCNI: new(true)},
 		},
 	}
 

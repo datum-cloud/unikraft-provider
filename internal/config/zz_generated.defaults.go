@@ -24,8 +24,9 @@ func SetObjectDefaults_UnikraftProvider(in *UnikraftProvider) {
 	if in.WebhookServer.Port == 0 {
 		in.WebhookServer.Port = 9443
 	}
-	if in.DownstreamResourceManagement.EnableCNI == false {
-		in.DownstreamResourceManagement.EnableCNI = true
+	if in.DownstreamResourceManagement.EnableCNI == nil {
+		var ptrVar1 bool = true
+		in.DownstreamResourceManagement.EnableCNI = &ptrVar1
 	}
 	if in.LocationClassName == "" {
 		in.LocationClassName = "self-managed"
