@@ -290,7 +290,7 @@ func (r *InstanceReconciler) reconcileSandboxContainers(
 		// config rather than letting it flow through from the Instance, so a
 		// tenant can't enable or disable it by setting the annotation
 		// themselves.
-		if r.Config != nil && r.Config.DownstreamResourceManagement.EnableCNI {
+		if r.Config != nil && ptr.Deref(r.Config.DownstreamResourceManagement.EnableCNI, true) {
 			instancePod.Annotations[ukcCniEnabledAnnotation] = "true"
 		} else {
 			delete(instancePod.Annotations, ukcCniEnabledAnnotation)
