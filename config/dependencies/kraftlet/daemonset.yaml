@@ -114,3 +114,10 @@ spec:
             # Must match UKP_PLUGIN_URL in build/ukp-runtime/Dockerfile.
             - name: KRAFTLET_EXEC_PLUGIN_IMAGE
               value: "oci://unikraft.io/plugins/sandbox@sha256:00e3bd0ad2982db3c9a51453a30cd8e00a5ea5aec2d758b4fe35b734d0bc6096"
+            # Reach the exec plugin on the instance's link-local address, which
+            # only the host can reach. Link-local needs private-URL mode, and
+            # plugin calls are unauthenticated in it.
+            - name: KRAFTLET_EXEC_PRIVATE_URL
+              value: "true"
+            - name: KRAFTLET_EXEC_LINK_LOCAL
+              value: "true"
