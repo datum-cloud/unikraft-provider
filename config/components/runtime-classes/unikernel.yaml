@@ -31,6 +31,7 @@ spec:
       - secretVolumes
       - envFrom
       - imagePullSecrets
+      - exec
       - gracefulTermination
     compatibility: >-
       Runs images whose application binary is position-independent. The root
