@@ -113,4 +113,4 @@ spec:
               value: "300s"
             # Must match UKP_PLUGIN_URL in build/ukp-runtime/Dockerfile.
             - name: KRAFTLET_EXEC_PLUGIN_IMAGE
-              value: "oci://unikraft.io/plugins/sandbox@sha256:f50ec87bcd06c5606ec6df41c61293799ffc5d51869cd57858928b9eae2ac055"
+              value: "oci://unikraft.io/plugins/sandbox@sha256:00e3bd0ad2982db3c9a51453a30cd8e00a5ea5aec2d758b4fe35b734d0bc6096"
