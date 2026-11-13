@@ -8,6 +8,7 @@ import (
 
 	"go.datum.net/compute/api/v1alpha"
 	core "k8s.io/api/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // instanceTypeReader fetches the InstanceType object the instance selects from
@@ -98,6 +99,18 @@ func resolveContainerResources(
 			if sizing, ok := lookupHardcodedInstanceType(it); ok {
 				catalogCPU, catalogMem = sizing.cpuMillicores, sizing.memoryMiB
 				resolved = true
+				// The published InstanceType is not served in this cell, so the
+				// Pod is sized from the temporary local catalog. Surface which
+				// source sized the Pod: this fallback can drift from the
+				// footprint compute claimed against quota, and an operator
+				// otherwise cannot tell where a Pod's size came from.
+				log.FromContext(ctx).Info("sizing from fallback instance type catalog; published InstanceType not found",
+					"instanceType", it,
+					"instance", instance.Name,
+					"namespace", instance.Namespace,
+					"cpuMillicores", catalogCPU,
+					"memoryMiB", catalogMem,
+				)
 			} else {
 				return 0, 0, fmt.Errorf("instance type %q not found in published or fallback catalog", it)
 			}
