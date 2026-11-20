@@ -121,3 +121,9 @@ spec:
               value: "true"
             - name: KRAFTLET_EXEC_LINK_LOCAL
               value: "true"
+            # Probe the instance's link-local address, which only the host
+            # can reach, rather than its address on the tenant network.
+            - name: KRAFTLET_ENABLE_STARTUP_PROBES
+              value: "true"
+            - name: KRAFTLET_PROBE_LINK_LOCAL
+              value: "true"
