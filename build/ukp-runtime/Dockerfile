@@ -70,7 +70,7 @@ COPY unikraft-cloud-staging.sources /etc/apt/sources.list.d/unikraft-cloud-stagi
 # itself. Taking only some packages from staging installs both, and the two
 # write the same files. Move the set back to stable once the vendor ships the
 # feature there.
-ARG UKP_AGENT_VERSION=6:0.2.5-295+7ee3501-2staging+deb13
+ARG UKP_AGENT_VERSION=6:0.2.5-301+12b33ad-2staging+deb13
 ARG UKP_CONFIG_VERSION=6:1.4.20-58996bb-2staging+deb13
 ARG UKP_COREDNS_VERSION=6:1.15.0-19+79107d3-2staging+deb13
 ARG UKP_FIRECRACKER_VERSION=6:1.16.1-119+62edbf3-2staging+deb13
