@@ -27,7 +27,7 @@ RUN --mount=type=cache,target=/go/pkg/mod/ \
 # distroless/static, run as root: like the other ukp-runtime node containers,
 # the projector must write the root-owned ukp-run hostPath (/var/run/ukp) where
 # the usage stream lives and read the root-owned ukp-data hostPath.
-FROM gcr.io/distroless/static@sha256:448810357cc8e67b7208988abdba0f5ec3d3aebee0a5b13eb624979792cffc0f
+FROM gcr.io/distroless/static@sha256:4c2cd1dee442c9a99924a378c7c126fac8fef14771579ef567c3f2bdd7a5122a
 WORKDIR /
 COPY --from=builder /workspace/state-projector .
 USER 0:0
